@@ -1,42 +1,31 @@
-## CodePilot v0.50.3
+## CodePilot v0.51.1
 
-> Agent 引擎选择简化 + 入口引导收敛。此版本把 0.50.2 后冒出的 FileTree 崩溃、OpenAI OAuth 用户被错误拦截、阿里云百炼缺 Qwen 3.6 Plus 等问题一次性清掉；同时落地了之前积累已久的改动：Agent 引擎去掉"自动"选项、发消息时没配置服务商直接引导去设置中心。cc-switch 纯用户升级后首次发消息会被引导去添加 CodePilot 服务商，这是本版的**主要行为变化**，见下方说明。
-
-### 新增功能
-
-- **阿里云百炼增加 Qwen 3.6 Plus 模型**（#483）：替换原有 Qwen 3.5 Plus。已经在会话里显式选过旧模型名的用户，下次发消息时模型选择器会自动回到默认，手动重选即可
-- **没配置服务商时自动打开引导**：首次安装或没在 CodePilot 里添加过任何服务商的用户，发消息时不会再出一条莫名其妙的"No provider credentials"错误，而是直接弹出 SetupCenter 的服务商卡片引导添加
-
-### 改进体验
-
-- **Agent 引擎选择从三项变两项**：设置页的"Agent 内核"下拉只剩 **Claude Code** 和 **AI SDK** 两项，删掉了原先含义模糊的"自动"选项。原先选"自动"的用户，首次打开设置页时会按当前环境自动迁移到具体值（装了 Claude Code CLI → Claude Code，没装 → AI SDK），持久化写回，之后不再变动
-- **聊天页引擎标识同步**：右侧聊天页的引擎 badge 不再出现"Agent: Auto"，读到 legacy 'auto' 值会立即按同一规则折算显示具体引擎
-- **错误提示统一引导到"设置 → 服务商"**：Claude Code CLI 的 "Not logged in · Please run /login" 和 CodePilot 自己的"No provider credentials available"两种错误，现在统一归类为"未配置服务商"，文案一致、都带"打开设置"按钮，不再让用户看到 `/login` 这种在 CodePilot 里走不通的引导
-- **OpenAI OAuth 登录 / 登出同步 SetupCenter**：之前 OAuth 登录成功、设置面板的 Provider 卡片不会实时翻绿；登出后也不会回灰。现在两条路径都立即更新
+> 修复长会话在上下文压缩之后 Claude Code 引擎下的严重行为异常：工具调用被模型以纯文本形式写入聊天、反复触发自动压缩、压缩状态不更新等问题。强烈建议所有使用 Claude Code 引擎且会话偏长的用户升级。
 
 ### 修复问题
 
-- **打开聊天页时 FileTree 崩溃**（0.50.2 回归）：Next.js 16 + Turbopack 生产构建在某种编译模式下会对解构默认参数里的 `new Set()` 报 `ReferenceError: defaultExpanded is not defined`。将默认值提到模块顶层常量
-- **OpenAI OAuth 用户发消息被 412 拦截**：本版新加的"入口拦截"最初漏识别 OpenAI OAuth 这个虚拟服务商，导致用 OAuth 登录的用户一律被错误引导去配服务商。现补上 OAuth 存在性判定
-- **Bedrock / Vertex 供应商被误判为"未配置"**：新 UI 把路由 flag 存到 `env_overrides_json`，旧代码只读 `extra_env`。改成和 resolver 一样的 `env_overrides_json || extra_env` 优先级 + JSON 解析
-- **SetupCenter 对只装了 Claude Code CLI 的用户显示"服务商已配置"**：这些用户被新的入口拦截挡住，但 SetupCenter 还告诉他们"provider 已完成"，陷入无可操作的死循环。现在两边判定口径对齐
-- **OAuth 登出后 Provider 卡片不降级**：之前只能升 completed 不能降 not-configured，登出后 SetupCenter 继续显示绿色假态
-- **legacy 'auto' 迁移可能把装了 CLI 的用户错写成 AI SDK**：迁移逻辑之前依赖异步 hook 状态，首次加载时 hook 还是 null 会被误判为 "CLI 未装"。改为迁移分支内直接查一次 `/api/claude-status`，状态查询失败时不持久化，保留旧值待下次重试
+- **压缩后模型不再调用工具，而是把工具调用写成文本** — 这是最严重的一个问题。到会话中段（通常是第一次自动压缩或手动 `/compact` 之后），模型会开始输出类似 `(used Read: {"file_path":"..."})` 这样的纯文本，工具实际上没有执行，聊天气泡里只是在"叙述"它本该做的事情。本版从压缩时的历史重写机制入手彻底修复
+- **手动 `/compact` 之后反复被自动压缩** — 之前压缩只是把摘要写入数据库，但 Claude Code SDK 会继续用它自己的完整历史做 resume，摘要实际上没有被模型看到，下一轮又会命中上下文上限再次触发压缩。现在压缩成功后会强制切换到"摘要 + 最近消息 + 当前提问"的新会话，SDK 会从干净的状态继续
+- **`/compact` 的"上下文已压缩..."系统提示被错误写入对话历史** — 这条本意是给用户看的消息被保存成了 assistant 消息，之后模型每轮都会看到它，多次压缩后甚至会被下一次压缩连同正文一起总结进新摘要。现在这条提示只在当轮通过 SSE 推给前端，不再进数据库
+- **对话很短时使用 `/compact` 的"新消息不多"提示同样被错误持久化** — 同上处理，只推前端不入库
+- **压缩成功后前端"已压缩"指示器偶尔不翻转** — 之前反应式压缩（上下文超长时后台自动触发的压缩重试）走的状态事件格式与前端期待的不一致，导致 `hasSummary` 不更新。三条压缩路径的事件格式现在收敛到同一个 helper，前端一致识别
+- **反应式压缩成功后新 SDK 会话未持久化** — 超长上下文触发的自动压缩重试如果成功，下一轮应该走新的 SDK 会话继续；之前没有把新 session id 写回数据库，下一轮又会走 fallback 全量历史，等于压缩白做。现在反应式压缩也会持久化新 session id
+- **二次手动 `/compact` 重复总结已压缩内容** — 第二次 `/compact` 之前会把已经被上次压缩覆盖过的全部历史再喂给摘要器一次，不仅浪费 token，还可能让新摘要里重复或偏移原内容。现在只会压缩"上次 boundary 之后的新消息"
 
-### 重要行为变化（cc-switch 用户必读）
+### 优化改进
 
-从 0.50.3 起，CodePilot 的"有没有可用服务商"判定**不再**把 `~/.claude/settings.json`（cc-switch / 手动编辑）视作有效服务商。如果你之前纯靠 cc-switch 管理 Claude Code 凭据、**从未在 CodePilot 设置里添加过任何服务商**，升级后首次发消息会被引导去"设置 → 服务商"添加一个 CodePilot 自己的服务商记录。
-
-这是为了让 CodePilot 的每个请求都能精确地知道该走哪个服务商的凭据，避免之前 cc-switch 代理模式下占位符 token 被错当成真凭据而导致的各种诡异失败。你仍可以继续用 cc-switch 管理 Claude Code CLI 本身的凭据——两者是独立的。
+- **压缩覆盖边界改用 SQLite rowid**，不再用秒级时间戳。之前在消息写入速度足够快时（比如自动压缩和当前用户消息同秒落库），基于时间戳的边界判断可能把一条未被摘要的用户消息当成"已覆盖"误丢；rowid 是单调递增的，彻底消除了这类歧义
+- **长会话再次压缩时覆盖边界只会前进、不会回退**。任何"降级路径"（比如拿不到消息元数据时）都会保留原有边界而非重置为 0，避免之前刚建立的边界被意外清除
+- **新增技术交接文档** `docs/handover/compact-coverage-boundary.md`，记录压缩覆盖边界的所有不变量、数据库 schema、三条压缩路径的写法，供后续维护
 
 ## 下载地址
 
 ### macOS
-- [Apple Silicon (M1/M2/M3/M4)](https://github.com/op7418/CodePilot/releases/download/v0.50.3/CodePilot-0.50.3-arm64.dmg)
-- [Intel](https://github.com/op7418/CodePilot/releases/download/v0.50.3/CodePilot-0.50.3-x64.dmg)
+- [Apple Silicon (M1/M2/M3/M4)](https://github.com/op7418/CodePilot/releases/download/v0.51.1/CodePilot-0.51.1-arm64.dmg)
+- [Intel](https://github.com/op7418/CodePilot/releases/download/v0.51.1/CodePilot-0.51.1-x64.dmg)
 
 ### Windows
-- [Windows 安装包](https://github.com/op7418/CodePilot/releases/download/v0.50.3/CodePilot.Setup.0.50.3.exe)
+- [Windows 安装包](https://github.com/op7418/CodePilot/releases/download/v0.51.1/CodePilot.Setup.0.51.1.exe)
 
 ## 安装说明
 
@@ -46,5 +35,5 @@
 ## 系统要求
 
 - macOS 12.0+ / Windows 10+ / Linux (glibc 2.31+)
-- 需要配置 API 服务商（Anthropic / OpenRouter / OpenAI 等）
+- 需要配置 API 服务商（Anthropic / OpenRouter 等）
 - 推荐安装 Claude Code CLI 以获得完整功能

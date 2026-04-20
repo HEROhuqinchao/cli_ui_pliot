@@ -73,10 +73,13 @@ export type IconComponent = ComponentType<
   SVGAttributes<SVGSVGElement> & RefAttributes<SVGSVGElement> & { size?: number | string; className?: string }
 >;
 
+export type MentionNodeType = 'file' | 'directory';
+
 /** Shared model for popover items (slash commands, file mentions, skills). */
 export interface PopoverItem {
   label: string;
   value: string;
+  display?: string;
   description?: string;
   descriptionKey?: TranslationKey;
   builtIn?: boolean;
@@ -85,6 +88,7 @@ export interface PopoverItem {
   source?: 'global' | 'project' | 'plugin' | 'installed' | 'sdk';
   kind?: SkillKind;
   icon?: IconComponent;
+  nodeType?: MentionNodeType;
 }
 
 /** Which popover is currently active in the command input. */
@@ -138,6 +142,13 @@ export interface Message {
   created_at: string;
   token_usage: string | null; // JSON string of TokenUsage
   is_heartbeat_ack?: number; // 1 = heartbeat ack (prunable from transcript), 0 = normal
+  /**
+   * SQLite rowid, monotonically increasing per insert — used as the compact
+   * coverage boundary (see `context_summary_boundary_rowid`). Populated by
+   * `getMessages()` which does `SELECT *, rowid as _rowid`. Optional here
+   * because some code paths synthesize Message-like objects without DB origin.
+   */
+  _rowid?: number;
 }
 
 // Media content block (MCP-compatible: image/audio/video in tool results)
@@ -314,6 +325,7 @@ export interface SendMessageRequest {
   model?: string;
   mode?: string;
   provider_id?: string;
+  mentions?: MentionRef[];
 }
 
 export interface UpdateMCPConfigRequest {
@@ -494,6 +506,8 @@ export type SSEEventType =
   | 'task_update'        // SDK TodoWrite task sync
   | 'keep_alive'         // SDK keep-alive heartbeat (resets idle timer)
   | 'rewind_point'       // SDK user message with rewind checkpoint
+  | 'rate_limit'         // SDK 0.2.111 subscription rate-limit telemetry
+  | 'context_usage'      // SDK 0.2.111 post-turn context usage snapshot
   | 'done';              // stream complete
 
 export interface SSEEvent {
@@ -762,6 +776,16 @@ export interface ReferenceImage {
   localPath?: string;  // file path (generated result)
 }
 
+export interface MentionRef {
+  path: string;
+  nodeType: MentionNodeType;
+  display: string;
+  sourceRange: {
+    start: number;
+    end: number;
+  };
+}
+
 // ==========================================
 // File Attachment Types
 // ==========================================
@@ -989,6 +1013,36 @@ export interface SessionStreamSnapshot {
    * message — those continue to flow through error-classifier.ts.
    */
   terminalReason?: string;
+  /**
+   * SDK 0.2.111 subscription rate-limit telemetry (Phase 2 of
+   * agent-sdk-0-2-111-adoption). Populated from rate_limit_event
+   * stream messages; only present on claude.ai subscription paths.
+   * ChatView consumes this to render warning / rejected UIs.
+   */
+  rateLimitInfo?: {
+    status: 'allowed' | 'allowed_warning' | 'rejected';
+    resetsAt?: number;
+    rateLimitType?: 'five_hour' | 'seven_day' | 'seven_day_opus' | 'seven_day_sonnet' | 'overage';
+    utilization?: number;
+    overageStatus?: 'allowed' | 'allowed_warning' | 'rejected';
+    overageResetsAt?: number;
+    overageDisabledReason?: string;
+    isUsingOverage?: boolean;
+  };
+  /**
+   * Post-turn context-usage snapshot captured via Query.getContextUsage()
+   * (SDK 0.2.111 Phase 5). Consumers should treat this as authoritative
+   * for ~60s after capturedAt, then fall back to the char-based estimator.
+   */
+  contextUsageSnapshot?: {
+    totalTokens: number;
+    maxTokens: number;
+    rawMaxTokens: number;
+    percentage: number;
+    model: string;
+    /** Epoch ms at which the snapshot was taken */
+    capturedAt: number;
+  };
 }
 
 export interface StreamEvent {
@@ -998,6 +1052,22 @@ export interface StreamEvent {
 }
 
 export type StreamEventListener = (event: StreamEvent) => void;
+
+/**
+ * One history row passed via ClaudeStreamOptions.conversationHistory.
+ *
+ * `_rowid` is the SQLite rowid of the original DB row, propagated so that
+ * reactive compact (claude-client.ts) can write a correct
+ * context_summary_boundary_rowid on CONTEXT_TOO_LONG retry. Synthesized /
+ * non-DB-origin rows may omit it — callers that only have {role, content}
+ * pairs (e.g. bridge transports, fallback paths) don't need to fabricate a
+ * rowid; the boundary helper falls back to the existing session boundary.
+ */
+export type ConversationHistoryItem = {
+  role: 'user' | 'assistant';
+  content: string;
+  _rowid?: number;
+};
 
 export interface ClaudeStreamOptions {
   prompt: string;
@@ -1018,9 +1088,13 @@ export interface ClaudeStreamOptions {
   /** Session's stored provider ID — passed to resolveForClaudeCode */
   sessionProviderId?: string;
   /** Recent conversation history from DB — used as fallback context when SDK resume is unavailable or fails */
-  conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>;
+  conversationHistory?: ConversationHistoryItem[];
   /** Compressed session summary — used as context skeleton in fallback mode */
   sessionSummary?: string;
+  /** Existing compact coverage boundary (rowid). Reactive compact preserves this
+   *  rather than resetting to 0 when it cannot derive a new boundary from _rowid
+   *  metadata in conversationHistory. */
+  sessionSummaryBoundaryRowid?: number;
   /** Token budget for fallback history — messages beyond this budget are truncated */
   fallbackTokenBudget?: number;
   onRuntimeStatusChange?: (status: string) => void;

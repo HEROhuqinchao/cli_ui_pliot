@@ -6,6 +6,7 @@ import os from 'os';
 import type { ChatSession, Message, SettingsMap, TaskItem, TaskStatus, ApiProvider, CreateProviderRequest, UpdateProviderRequest, MediaJob, MediaJobStatus, MediaJobItem, MediaJobItemStatus, MediaContextEvent, BatchConfig, CustomCliTool, ScheduledTask } from '@/types';
 import type { ChannelType, ChannelBinding } from './bridge/types';
 import { getLocalDateString, localDayStartAsUTC } from './utils';
+import { inferProtocolFromLegacy } from './provider-catalog';
 
 const dataDir = process.env.CLAUDE_GUI_DATA_DIR || path.join(os.homedir(), '.codepilot');
 const DB_PATH = path.join(dataDir, 'codepilot.db');
@@ -387,6 +388,24 @@ function migrateDb(db: Database.Database): void {
   }
   if (!colNames.includes('context_summary_updated_at')) {
     safeAddColumn(db, "ALTER TABLE chat_sessions ADD COLUMN context_summary_updated_at TEXT NOT NULL DEFAULT ''");
+  }
+  // Coverage boundary (legacy, timestamp-based): created_at string of the
+  // last covered message. Superseded by context_summary_boundary_rowid
+  // because second-precision wall-clock timestamps can't distinguish a
+  // last-compressed message from a first-kept message written in the same
+  // second. Kept as a column for migration / UI-debug compatibility; NO
+  // CODE PATH should read or write it for filtering decisions.
+  if (!colNames.includes('context_summary_boundary_at')) {
+    safeAddColumn(db, "ALTER TABLE chat_sessions ADD COLUMN context_summary_boundary_at TEXT NOT NULL DEFAULT ''");
+  }
+  // Coverage boundary (authoritative): SQLite rowid of the last message
+  // actually covered by the current summary. rowid is monotonic per insert,
+  // so it can disambiguate same-second writes the timestamp column cannot.
+  // 0 = "no boundary" (legacy rows, reactive-compact paths with no DB rowid
+  // metadata, sessions whose summary predates this column). Filter passes
+  // history through unchanged when boundaryRowid is 0.
+  if (!colNames.includes('context_summary_boundary_rowid')) {
+    safeAddColumn(db, "ALTER TABLE chat_sessions ADD COLUMN context_summary_boundary_rowid INTEGER NOT NULL DEFAULT 0");
   }
   db.exec("CREATE INDEX IF NOT EXISTS idx_sessions_runtime_status ON chat_sessions(runtime_status)");
 
@@ -862,8 +881,9 @@ function migrateDb(db: Database.Database): void {
         "SELECT id, base_url FROM api_providers WHERE provider_type = 'custom' AND (protocol = '' OR protocol IS NULL)"
       ).all() as { id: string; base_url: string }[];
       if (legacyCustom.length > 0) {
-        // eslint-disable-next-line @typescript-eslint/no-require-imports -- dynamic require to avoid circular import at module load
-        const { inferProtocolFromLegacy } = require('./provider-catalog');
+        // Use the top-level static import; no circular-import risk since
+        // provider-catalog doesn't depend on db. The previous dynamic
+        // require tripped Turbopack's NFT into tracing the whole project.
         const updateStmt = db.prepare("UPDATE api_providers SET protocol = ? WHERE id = ?");
         for (const row of legacyCustom) {
           const protocol = inferProtocolFromLegacy('custom', row.base_url || '');
@@ -948,23 +968,47 @@ export function getSession(id: string): ChatSession | undefined {
   return db.prepare('SELECT * FROM chat_sessions WHERE id = ?').get(id) as ChatSession | undefined;
 }
 
-export function getSessionSummary(sessionId: string): { summary: string; updatedAt: string } {
+export function getSessionSummary(sessionId: string): {
+  summary: string;
+  /** Wall-clock time the summary row was written (UI/debug only — do NOT use as coverage boundary) */
+  updatedAt: string;
+  /** SQLite rowid of the last message covered by the summary; 0 = no boundary known */
+  boundaryRowid: number;
+} {
   const db = getDb();
   const row = db.prepare(
-    'SELECT context_summary, context_summary_updated_at FROM chat_sessions WHERE id = ?'
-  ).get(sessionId) as { context_summary: string; context_summary_updated_at: string } | undefined;
+    'SELECT context_summary, context_summary_updated_at, context_summary_boundary_rowid FROM chat_sessions WHERE id = ?'
+  ).get(sessionId) as { context_summary: string; context_summary_updated_at: string; context_summary_boundary_rowid: number } | undefined;
   return {
     summary: row?.context_summary || '',
     updatedAt: row?.context_summary_updated_at || '',
+    boundaryRowid: row?.context_summary_boundary_rowid ?? 0,
   };
 }
 
-export function updateSessionSummary(sessionId: string, summary: string): void {
+/**
+ * Write a new context summary together with its coverage boundary.
+ *
+ * `boundaryRowid` MUST be the SQLite rowid of the last message actually
+ * covered by this summary (i.e. the last entry in messagesToCompress for the
+ * auto pre-compression path, or the last row of allMsgs for manual /compact).
+ * Pass 0 only when the caller has no DB rowid available (reactive compact
+ * inside streamClaude receives {role, content} pairs with no DB metadata);
+ * 0 causes filterHistoryByCompactBoundary to passthrough — degraded but safe.
+ *
+ * Do NOT pass `new Date()` or any wall-clock time here: write time and
+ * coverage boundary diverge on the auto pre-compression path (see
+ * filterHistoryByCompactBoundary doc). And do NOT reuse an earlier timestamp
+ * column for filtering — second-precision timestamps can't distinguish a
+ * last-compressed message from a first-kept message written in the same
+ * second. rowid is the only robust boundary.
+ */
+export function updateSessionSummary(sessionId: string, summary: string, boundaryRowid: number): void {
   const db = getDb();
   const now = new Date().toISOString().replace('T', ' ').split('.')[0];
   db.prepare(
-    'UPDATE chat_sessions SET context_summary = ?, context_summary_updated_at = ? WHERE id = ?'
-  ).run(summary, now, sessionId);
+    'UPDATE chat_sessions SET context_summary = ?, context_summary_updated_at = ?, context_summary_boundary_rowid = ? WHERE id = ?'
+  ).run(summary, now, boundaryRowid, sessionId);
 }
 
 export function createSession(
@@ -1203,6 +1247,8 @@ export interface SessionSearchResult {
   createdAt: string;
   /** Snippet extracted from content with query context (up to ~200 chars). */
   snippet: string;
+  /** Derived message type for search UI icons/filtering. */
+  contentType: 'user' | 'assistant' | 'tool';
 }
 
 /**
@@ -1282,10 +1328,26 @@ export function searchMessages(
     role: row.role,
     createdAt: row.createdAt,
     snippet: buildSnippet(row.content, lowerQuery),
+    contentType: deriveContentType(row.role, row.content),
   }));
 }
 
-/** Extract a ~200-char snippet around the first match (case-insensitive). */
+function deriveContentType(role: 'user' | 'assistant', content: string): 'user' | 'assistant' | 'tool' {
+  if (role === 'user') return 'user';
+  try {
+    const parsed = JSON.parse(content);
+    if (Array.isArray(parsed)) {
+      if (parsed.some((b: unknown) => typeof b === 'object' && b !== null && (b as { type?: string }).type === 'tool_use')) {
+        return 'tool';
+      }
+    }
+  } catch {
+    // fallback to plain text assistant
+  }
+  return 'assistant';
+}
+
+/** Extract a ~140-char snippet with the match near the front so it survives single-line truncation in UI lists. */
 function buildSnippet(content: string, lowerQuery: string): string {
   if (!content) return '';
   const lowerContent = content.toLowerCase();
@@ -1295,8 +1357,10 @@ function buildSnippet(content: string, lowerQuery: string): string {
     // and the query matches bytes inside quoted strings.
     return content.length > 200 ? content.slice(0, 200) + '…' : content;
   }
-  const start = Math.max(0, idx - 80);
-  const end = Math.min(content.length, idx + lowerQuery.length + 120);
+  const LEADING = 28;
+  const TAIL = 100;
+  const start = Math.max(0, idx - LEADING);
+  const end = Math.min(content.length, idx + lowerQuery.length + TAIL);
   const prefix = start > 0 ? '…' : '';
   const suffix = end < content.length ? '…' : '';
   return prefix + content.slice(start, end) + suffix;

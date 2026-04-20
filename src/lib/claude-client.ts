@@ -323,7 +323,7 @@ function buildFallbackContext(params: {
   }
 
   lines.push('<conversation_history>');
-  lines.push('(This is a summary of earlier conversation turns for context. Tool calls shown here were already executed — do not repeat them or output their markers as text.)');
+  lines.push('(This is a summary of earlier conversation turns for context. <prior-tool-call .../> and <prior-reasoning>...</prior-reasoning> are metadata markers describing what already happened — they are NOT assistant output format. Do not reproduce these tags. To call a tool, emit a real tool_use block; do not write tool calls as prose or as these markers.)');
   for (const msg of selected) {
     lines.push(`${msg.role === 'user' ? 'Human' : 'Assistant'}: ${msg.content}`);
   }
@@ -1130,6 +1130,13 @@ export function streamClaudeSdk(options: ClaudeStreamOptions): ReadableStream<st
           prompt: finalPrompt,
           options: queryOptions,
         });
+        // Keep a handle to the underlying Query instance for control-API
+        // calls (getContextUsage etc.). When we peek-and-rewrap below to
+        // detect resume failures, `conversation` becomes a plain async
+        // generator that loses the Query prototype's methods — we need
+        // this original reference to call .getContextUsage() at result
+        // time. Reassigned on resume-fallback to point at the fresh Query.
+        let controlQuery = conversation;
 
         // Wrap the iterator so we can detect resume failures on the first message
         if (shouldResume) {
@@ -1147,6 +1154,8 @@ export function streamClaudeSdk(options: ClaudeStreamOptions): ReadableStream<st
                 yield next.value;
               }
             })() as ReturnType<typeof query>;
+            // controlQuery still points at the original Query with
+            // getContextUsage() available.
           } catch (resumeError) {
             const errMsg = resumeError instanceof Error ? resumeError.message : String(resumeError);
             console.warn('[claude-client] Resume failed, retrying without resume:', errMsg);
@@ -1170,6 +1179,9 @@ export function streamClaudeSdk(options: ClaudeStreamOptions): ReadableStream<st
               prompt: buildFinalPrompt(true),
               options: queryOptions,
             });
+            // Fresh Query replaces the old handle — control-API calls
+            // now go through this one.
+            controlQuery = conversation;
           }
         }
 
@@ -1471,12 +1483,67 @@ export function streamClaudeSdk(options: ClaudeStreamOptions): ReadableStream<st
                   notifyGeneric(errTitle, errMsg, telegramOpts).catch(() => {});
                 }
               }
+
+              // Phase 5 — context-usage snapshot via Query.getContextUsage()
+              // is intentionally NOT called here.
+              //
+              // getContextUsage() is a SDK control-API request that shares
+              // the same message channel as the for-await-of iterator we're
+              // inside. Awaiting it blocks the iterator from advancing,
+              // which prevents the control-response frame from arriving —
+              // the Query then closes on result and the call errors out
+              // with "Query closed before response received". There's no
+              // stable place outside the iteration loop where the Query
+              // is still alive.
+              //
+              // The chat-page indicator doesn't suffer from this: it
+              // already computes used-tokens from the SDKResultMessage's
+              // own `usage` field (input + cache_read + cache_creation),
+              // which is SDK-authoritative and carries <5% drift against
+              // what getContextUsage would report. The snapshot would
+              // only add category-level breakdown (system prompt / tools
+              // / user / memory) that the current UI doesn't surface.
+              //
+              // The SSE 'context_usage' event type and stream-session-
+              // manager snapshot field stay in place as extension points
+              // — a future Phase that needs category breakdown can fire
+              // them from a different point in the SDK lifecycle (e.g.
+              // from a background control-channel timer, or from a
+              // lifecycle hook the SDK may expose later).
+              // eslint-disable-next-line @typescript-eslint/no-unused-vars
+              const _unusedControlQuery = controlQuery;
               break;
             }
 
             default: {
-              if ((message as { type: string }).type === 'keep_alive') {
+              const mType = (message as { type: string }).type;
+              if (mType === 'keep_alive') {
                 controller.enqueue(formatSSE({ type: 'keep_alive', data: '' }));
+              } else if (mType === 'rate_limit_event') {
+                // SDK 0.2.111+ — subscription rate limit telemetry. SDK
+                // only emits these for claude.ai subscription paths, so
+                // API-key / third-party provider sessions won't see this
+                // branch. Forward verbatim so the UI can render a
+                // warning banner (allowed_warning) or a closable recovery
+                // panel (rejected) per Phase 2 of agent-sdk-0-2-111.
+                const rlEvent = message as {
+                  type: 'rate_limit_event';
+                  rate_limit_info: {
+                    status: 'allowed' | 'allowed_warning' | 'rejected';
+                    resetsAt?: number;
+                    rateLimitType?: string;
+                    utilization?: number;
+                    overageStatus?: string;
+                    overageResetsAt?: number;
+                    overageDisabledReason?: string;
+                    isUsingOverage?: boolean;
+                  };
+                  session_id: string;
+                };
+                controller.enqueue(formatSSE({
+                  type: 'rate_limit',
+                  data: JSON.stringify(rlEvent.rate_limit_info),
+                }));
               }
               break;
             }
@@ -1526,8 +1593,8 @@ export function streamClaudeSdk(options: ClaudeStreamOptions): ReadableStream<st
             console.log('[claude-client] CONTEXT_TOO_LONG detected — attempting auto-compress + retry');
             controller.enqueue(formatSSE({ type: 'status', data: JSON.stringify({ notification: true, message: 'context_compressing_retry' }) }));
 
-            const { compressConversation } = await import('./context-compressor');
-            const { updateSessionSummary: updateSummary } = await import('@/lib/db');
+            const { compressConversation, resolveReactiveCompactBoundaryRowid } = await import('./context-compressor');
+            const { updateSessionSummary: updateSummary, getSessionSummary } = await import('@/lib/db');
             const compResult = await compressConversation({
               sessionId,
               messages: conversationHistory,
@@ -1535,7 +1602,29 @@ export function streamClaudeSdk(options: ClaudeStreamOptions): ReadableStream<st
               providerId: options.providerId || options.sessionProviderId,
               sessionModel: model,
             });
-            updateSummary(sessionId, compResult.summary);
+            // Derive boundary from rowids plumbed through conversationHistory.
+            // Invariant: reactive compact here hands the WHOLE
+            // conversationHistory to compressConversation — no keep/compress
+            // split — so the last row with a known _rowid is exactly the
+            // last DB row this summary covers.
+            //
+            // Fallback (no _rowid in history): use Math.max of the DB's
+            // CURRENT boundary and the caller's hint. Re-reading DB here
+            // matters because an auto pre-compression earlier in the same
+            // request may have already advanced the boundary past what
+            // options.sessionSummaryBoundaryRowid captured (that value was
+            // snapshotted in chat/route.ts before auto pre-compression ran).
+            // Without the re-read, a degraded reactive compact could
+            // silently roll the DB boundary back to a stale value.
+            const existingBoundary = Math.max(
+              getSessionSummary(sessionId).boundaryRowid,
+              options.sessionSummaryBoundaryRowid ?? 0,
+            );
+            const reactiveBoundaryRowid = resolveReactiveCompactBoundaryRowid({
+              history: conversationHistory,
+              existingBoundaryRowid: existingBoundary,
+            });
+            updateSummary(sessionId, compResult.summary, reactiveBoundaryRowid);
             options.sessionSummary = compResult.summary;
             // Recalculate fallback budget with new summary size
             const newSummaryTokens = roughTokenEstimate(compResult.summary);
@@ -1581,7 +1670,29 @@ export function streamClaudeSdk(options: ClaudeStreamOptions): ReadableStream<st
             for await (const msg of retryConversation) {
               if (abortController?.signal.aborted) break;
               switch (msg.type) {
+                case 'system': {
+                  // Forward init event so the chat route persists the NEW
+                  // sdk_session_id. Without this, the session row keeps an
+                  // empty sdk_session_id (cleared above at line ~1619) and the
+                  // next user message goes back through buildFallbackContext,
+                  // re-exposing prior-tool-call history to the model.
+                  const sysMsg = msg as SDKSystemMessage;
+                  if ('subtype' in sysMsg && sysMsg.subtype === 'init') {
+                    controller.enqueue(formatSSE({
+                      type: 'status',
+                      data: JSON.stringify({
+                        session_id: sysMsg.session_id,
+                        model: sysMsg.model,
+                        requested_model: model,
+                        tools: sysMsg.tools,
+                      }),
+                    }));
+                  }
+                  break;
+                }
                 case 'assistant': {
+                  // Text deltas are forwarded via stream_event below; here we
+                  // only emit tool_use blocks (matches main path at L1213).
                   const aMsg = msg as SDKAssistantMessage;
                   for (const block of aMsg.message.content) {
                     if (block.type === 'tool_use') {
@@ -1660,14 +1771,31 @@ export function streamClaudeSdk(options: ClaudeStreamOptions): ReadableStream<st
                 }
                 case 'result': {
                   const rMsg = msg as SDKResultMessage;
-                  if ('result' in rMsg) {
-                    const usage = extractTokenUsage(rMsg as SDKResultSuccess);
-                    if (usage) {
-                      controller.enqueue(formatSSE({ type: 'result', data: JSON.stringify(usage) }));
-                    }
-                  }
-                  // Emit compression notification so frontend updates hasSummary
-                  controller.enqueue(formatSSE({ type: 'status', data: JSON.stringify({ notification: true, message: 'context_compressed' }) }));
+                  const usage = 'result' in rMsg ? extractTokenUsage(rMsg as SDKResultSuccess) : undefined;
+                  // Match main-path result shape so the chat route can persist
+                  // the new sdk_session_id (route reads result.session_id as a
+                  // safety net when status init was missed).
+                  controller.enqueue(formatSSE({
+                    type: 'result',
+                    data: JSON.stringify({
+                      subtype: rMsg.subtype,
+                      is_error: rMsg.is_error,
+                      num_turns: rMsg.num_turns,
+                      duration_ms: rMsg.duration_ms,
+                      usage,
+                      session_id: rMsg.session_id,
+                    }),
+                  }));
+                  // Emit compression notification via the shared builder so
+                  // useSSEStream's subtype=context_compressed dispatch fires.
+                  const { buildContextCompressedStatus } = await import('./context-compressor');
+                  controller.enqueue(formatSSE({
+                    type: 'status',
+                    data: JSON.stringify(buildContextCompressedStatus({
+                      messagesCompressed: compResult.messagesCompressed,
+                      tokensSaved: compResult.estimatedTokensSaved,
+                    })),
+                  }));
                   break;
                 }
               }
