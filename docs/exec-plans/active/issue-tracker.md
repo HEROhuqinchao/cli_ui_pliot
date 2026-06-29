@@ -1,7 +1,7 @@
 # Issue Tracker — 统一问题跟踪
 
 > 创建时间：2026-04-13
-> 最后更新：2026-06-06（新增 B-024 Codex Runtime Stop 后恢复发送：#578 前端 force-abort 已修，但 `/api/chat/interrupt` 漏掉 `codex_runtime` fan-out，待 Claude Code 按 [codex-stop-recovery.md](codex-stop-recovery.md) 修）
+> 最后更新：2026-06-26（#632 状态同步：假百分比/>100% 已修——effective-base-URL 写入 gate + 渲染期 trusted gate + clamp 落地；item3 显示分母对齐压缩阈值待续，整体标 🟡 部分修复）
 > 合并自：`open-issues-2026-03-12.md` + `v0.48-post-release-issues.md` + GitHub Issues 最新盘点
 
 **AI 须知：**
@@ -9,6 +9,22 @@
 - 修复后标注状态、修复版本、关键 commit
 - 定期检查 Sentry 和 GitHub Issues 是否有新增项
 - 状态说明：🔴 未修复 | 🟡 部分修复 | 🟢 已修复 | ⚪ 需验证 | 🔵 设计如此
+
+---
+
+## 〇、v0.56.x Stability / Trust 治理 issue（2026-06-19 纳入）
+
+GitHub milestone `v0.56.x Stability / Trust`（#1）+ P0/P1 label 体系已建（见 [.github/TRIAGE.md](../../../.github/TRIAGE.md)）。以下 7 个 issue 已用**当前源码**重新核验（不采信 issue 自述根因），逐条证据与修法见 [v0.56.x-stability-trust.md](v0.56.x-stability-trust.md) 的「2026-06-19 Claude Code 源码复核」表，此处只做看板索引、不重复分析。
+
+| Issue | 复核 | label | Phase | 状态 |
+|-------|------|-------|-------|------|
+| [#635](https://github.com/op7418/CodePilot/issues/635) 频繁自动中断 | 根因已定（SDK 排队期 app 层完全静默：keep_alive 被 SDK 传输层过滤、api_retry 仅失败后发被丢、首 token 前无 stream_event）；分级超时核心已实现（首字节前 600s / 后 330s）+ api_retry 接线 | P0-crash-or-interrupt, needs-repro | 2 | 🟡 分级超时核心已实现（防误杀），待真实慢 proxy smoke + 首条 /chat UI follow-up |
+| [#632](https://github.com/op7418/CodePilot/issues/632) 上下文膨胀/>100% | ">100%" 确认显示 bug；跨会话不成立；假%/>100% 已修（effective-base-URL 写入 gate + 渲染期 trusted gate + clamp） | P1-context | 2 | 🟡 假%已修，item3 分母对齐待续 |
+| [#629](https://github.com/op7418/CodePilot/issues/629) resume 400 空 assistant | POC-B 实证 4 proxy 文案 → 读 errors[] 判别 + 补 `no conversation found` pattern + claude-client 清 id；Codex 复审 smoke 抓到 route.ts 把 result.session_id **无条件写回覆盖了清理**（P1）+ is_error result 不落错误气泡（P2），已补：route 对 session-state is_error 不写回坏 id + 用 errors 设 errorMessage | P1-runtime-session | 2 | 🟢 已修（Codex 端到端 smoke 通过：两轮坏 resume → 第二轮 fresh、不再 No conversation found） |
+| [#628](https://github.com/op7418/CodePilot/issues/628) @file 误改上传副本 | 真实风险（fileResponseToAttachment 丢真实路径 → route 把 mention 也写 .codepilot-uploads 副本 → AI 改副本）；核心已修：FileAttachment 加 originPath、mention 保留真实路径、route 校验 cwd 内（复用 `assertRealPathInBase` + `rejectIfSymlink`，拒 in-tree symlink 逃逸，Codex P1）后引真实路径跳过 copy，AI Read/Edit 落真实文件 | P1-file-reference | 3 | 🟢 已修（Codex 真机 smoke 通过：@file → AI Edit → git diff 真实文件变更；symlink 走降级不逃逸） |
+| [#634](https://github.com/op7418/CodePilot/issues/634) Native 工具不可用 | 根因不成立——工具齐全；疑旧版 | P1-runtime-session, needs-repro | — | ⚪ 待 Native smoke + 版本 |
+| [#626](https://github.com/op7418/CodePilot/issues/626) 更新提示高 CPU | polling 排除；候选 pulse 动画×backdrop blur | P1-performance | 4 | 🔴 待 profiler |
+| [#633](https://github.com/op7418/CodePilot/issues/633) Win11 装不上 | mac 无法复现；NSIS-only+未签名+无 portable+CI 不验安装 | P1-installer-update, needs-repro | 4 | 🔴 待 Windows repro |
 
 ---
 

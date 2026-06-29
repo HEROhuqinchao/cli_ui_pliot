@@ -1,5 +1,7 @@
 import { NextRequest } from 'next/server';
 import { streamClaude } from '@/lib/claude-client';
+import { isSessionStateResultError } from '@/lib/error-classifier';
+import { resolveInTreeAttachmentPath } from '@/lib/in-tree-attachment';
 import { addMessage, getMessages, getSession, getSessionSummary, updateSessionTitle, updateSdkSessionId, updateSessionModel, updateSessionProvider, updateSessionProviderId, updateSessionRuntime, getSetting, acquireSessionLock, renewSessionLock, releaseSessionLock, setSessionRuntimeStatus, syncSdkTasks } from '@/lib/db';
 import { resolveProviderForSession } from '@/lib/provider-resolver';
 import { resolveRuntimeForSession } from '@/lib/chat-runtime';
@@ -307,7 +309,7 @@ export async function POST(request: NextRequest) {
         if (!fs.existsSync(uploadDir)) {
           fs.mkdirSync(uploadDir, { recursive: true });
         }
-        fileMeta = files.map((f) => {
+        fileMeta = await Promise.all(files.map(async (f) => {
           // Directory references travel through the same files[] pipeline
           // (so they render as chips in the message bubble), but they
           // don't have file content — skip the disk write and just
@@ -317,12 +319,22 @@ export async function POST(request: NextRequest) {
           if (f.type === 'inode/directory') {
             return { id: f.id, name: f.name, type: f.type, size: 0, filePath: f.filePath || '' };
           }
+          // #628 — @-mention of an in-tree project file: preserve the REAL path so
+          // the AI's Read/Edit lands on the user's actual file, not a copy. Never
+          // trust the client path — resolveInTreeAttachmentPath realpath-resolves
+          // it (rejecting symlinks that escape cwd, Codex P1) and requires
+          // containment; out-of-cwd / symlink / missing → null → fall through to
+          // the copy below (non-destructive).
+          const inTreeReal = await resolveInTreeAttachmentPath(f.originPath, workDir);
+          if (inTreeReal) {
+            return { id: f.id, name: f.name, type: f.type, size: f.size, filePath: inTreeReal };
+          }
           const safeName = path.basename(f.name).replace(/[^a-zA-Z0-9._-]/g, '_');
           const filePath = path.join(uploadDir, `${Date.now()}-${safeName}`);
           const buffer = Buffer.from(f.data, 'base64');
           fs.writeFileSync(filePath, buffer);
           return { id: f.id, name: f.name, type: f.type, size: buffer.length, filePath };
-        });
+        }));
         savedContent = `<!--files:${JSON.stringify(fileMeta)}-->${displayOverride || content}`;
       }
       addMessage(session_id, 'user', savedContent);
@@ -932,9 +944,24 @@ async function collectStreamResponse(
                 }
                 if (resultData.is_error) {
                   hasError = true;
+                  // #629 — surface the result error so the empty-assistant guard
+                  // below persists a visible **Error:** bubble; otherwise a failed
+                  // is_error result turn looks like "no answer" after refresh.
+                  if (!errorMessage) {
+                    errorMessage =
+                      (Array.isArray(resultData.errors) && resultData.errors.length
+                        ? resultData.errors.join('\n')
+                        : resultData.subtype) || 'The conversation ended with an error';
+                  }
                 }
-                // Also capture session_id from result if we missed it from init
-                if (resultData.session_id) {
+                // Also capture session_id from result if we missed it from init.
+                // #629 — EXCEPT a stale-resume is_error result: resultData.session_id
+                // is the BAD id; persisting it would overwrite claude-client's clear
+                // and make the next turn retry the broken resume. Clear it instead so
+                // the next message starts fresh (DB-history rebuild).
+                if (resultData.is_error && isSessionStateResultError(resultData.errors)) {
+                  updateSdkSessionId(sessionId, '');
+                } else if (resultData.session_id) {
                   updateSdkSessionId(sessionId, resultData.session_id);
                 }
                 // Memory flush tracking: log high turn counts for assistant sessions.

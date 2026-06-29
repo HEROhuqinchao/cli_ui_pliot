@@ -69,6 +69,18 @@ function abortComposerSubmit(reason: string): never {
   throw new Error(reason);
 }
 
+/**
+ * sessionStorage key for the per-session composer draft. Exported so the
+ * first-message page (page.tsx) can clear it at send-accept: that flow flips
+ * the layout (isStreaming) which REMOUNTS the composer, and the remounted
+ * MessageInput re-seeds `inputValue` from this draft — so the persisted draft is
+ * the one piece of composer state that survives the remount. Clearing it at
+ * accept makes the remounted composer come up empty (#4/#5). A new chat has no
+ * sessionId → the 'new' bucket.
+ */
+export const composerDraftKey = (sessionId?: string): string =>
+  `codepilot:draft:${sessionId || 'new'}`;
+
 interface MessageInputProps {
   // Returns false when the submit was NOT accepted for delivery (provider still
   // loading / no compatible provider / runtime-incompatible). The composer then
@@ -162,6 +174,7 @@ async function fileResponseToAttachment(
   response: Response,
   filename: string,
   idPrefix: string,
+  originPath?: string,
 ): Promise<FileAttachment> {
   const mimeType = response.headers.get('content-type') || 'application/octet-stream';
   const buffer = await response.arrayBuffer();
@@ -171,6 +184,9 @@ async function fileResponseToAttachment(
     type: mimeType,
     size: buffer.byteLength,
     data: arrayBufferToBase64(buffer),
+    // #628 — preserve the real in-tree path for @-mentions so the chat route can
+    // reference the user's actual file instead of a `.codepilot-uploads` copy.
+    ...(originPath ? { originPath } : {}),
   };
 }
 
@@ -208,7 +224,7 @@ export function MessageInput({
   // submission.
   const bypassBlockingRef = useRef(false);
   // Persist draft per session so switching chats doesn't lose typed text.
-  const draftKey = `codepilot:draft:${sessionId || 'new'}`;
+  const draftKey = composerDraftKey(sessionId);
   const [inputValue, setInputValueRaw] = useState(() => {
     if (initialValue) return initialValue;
     try { return sessionStorage.getItem(draftKey) || ''; } catch { return ''; }
@@ -454,7 +470,7 @@ export function MessageInput({
         if (Number.isFinite(headerSize) && headerSize > MAX_MENTION_FILE_BYTES) {
           return { attachment: null, limitNote: `@${safePath}: omitted (file too large > 256KB).` };
         }
-        const attachment = await fileResponseToAttachment(res, filename, 'mention');
+        const attachment = await fileResponseToAttachment(res, filename, 'mention', safePath);
         if (attachment.size > MAX_MENTION_FILE_BYTES) {
           return { attachment: null, limitNote: `@${safePath}: omitted (file too large > 256KB).` };
         }
@@ -469,7 +485,7 @@ export function MessageInput({
       if (Number.isFinite(headerSize) && headerSize > MAX_MENTION_FILE_BYTES) {
         return { attachment: null, limitNote: `@${safePath}: omitted (file too large > 256KB).` };
       }
-      const attachment = await fileResponseToAttachment(res, filename, 'mention');
+      const attachment = await fileResponseToAttachment(res, filename, 'mention', safePath);
       if (attachment.size > MAX_MENTION_FILE_BYTES) {
         return { attachment: null, limitNote: `@${safePath}: omitted (file too large > 256KB).` };
       }
@@ -1046,10 +1062,13 @@ export function MessageInput({
           <QuickActions
             isAssistantProject={!!isAssistantProject}
             hasMessages={!!hasMessages}
-            onAction={(text) => {
-              onSend(text);
-              // Clear input after send to avoid stale text
-              setInputValue('');
+            onAction={async (text) => {
+              // #615 — await delivery and clear ONLY when the send was actually
+              // delivered. A gated send (provider / model / runtime / directory
+              // not ready → onSend returns false) must keep the composer instead
+              // of silently eating the user's text. Mirrors handleSubmit.
+              const delivered = await onSend(text);
+              if (delivered !== false) setInputValue('');
             }}
           />
 

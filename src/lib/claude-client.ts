@@ -17,17 +17,18 @@ import type { SdkModelUsage } from './sdk-model-usage';
 import type { ClaudeStreamOptions, SSEEvent, TokenUsage, MCPServerConfig, PermissionRequestEvent, FileAttachment, MediaBlock } from '@/types';
 import { isImageFile } from '@/types';
 import { pickModelUsage } from './sdk-model-usage';
-import { registerPendingPermission } from './permission-registry';
+import { registerPendingPermission, buildPermissionResolvedEvent } from './permission-registry';
 import { registerConversation, unregisterConversation } from './conversation-registry';
 import { captureCapabilities, isCacheFresh, setCachedPlugins } from './agent-sdk-capabilities';
 import { normalizeMessageContent, microCompactMessage } from './message-normalizer';
 import { roughTokenEstimate } from './context-estimator';
 import { getSetting, updateSdkSessionId, createPermissionRequest } from './db';
-import { resolveForClaudeCode } from './provider-resolver';
+import { resolveForClaudeCode, resolveEffectiveAnthropicBaseUrl } from './provider-resolver';
+import { isFirstPartyAnthropicEndpoint } from './ai-provider';
 import { sanitizeClaudeModelOptions } from './claude-model-options';
 import { findClaudeBinary, invalidateClaudePathCache } from './platform';
 import { notifyPermissionRequest, notifyGeneric } from './telegram-bot';
-import { classifyError, formatClassifiedError } from './error-classifier';
+import { classifyError, formatClassifiedError, isSessionStateResultError } from './error-classifier';
 import { resolveWorkingDirectory } from './working-directory';
 import { wrapController } from './safe-stream';
 import { type ShadowHome } from './claude-home-shadow';
@@ -236,7 +237,7 @@ function extractTextFromMessage(msg: SDKAssistantMessage): string {
  */
 function extractTokenUsage(
   msg: SDKResultMessage,
-  modelHints: { requested?: string; upstream?: string } = {},
+  modelHints: { requested?: string; upstream?: string; trustContextWindow?: boolean } = {},
 ): TokenUsage | null {
   if (!msg.usage) return null;
   const base: TokenUsage = {
@@ -246,19 +247,28 @@ function extractTokenUsage(
     cache_creation_input_tokens: msg.usage.cache_creation_input_tokens ?? 0,
     cost_usd: 'total_cost_usd' in msg ? msg.total_cost_usd : undefined,
   };
-  // Pull contextWindow / maxOutputTokens straight from the SDK when
-  // available — this is the path that finally lights up % + Context bar
-  // in RunCockpit for GLM / Bailian / MiniMax / Kimi / Volcengine / etc.
-  // We deliberately keep the lookup permissive (try requested key,
-  // upstream key, single-entry, first-with-window). Missing modelUsage
-  // is not an error — the older runtime path and some adapters don't
-  // populate it, in which case useContextUsage falls back to the
-  // static catalog window via getContextWindow().
+  // Pull contextWindow / maxOutputTokens straight from the SDK when available.
+  // NOTE (#632): contextWindow is only PERSISTED for a first-party Anthropic
+  // endpoint (see the trustWindow gate below). For GLM / Bailian / MiniMax /
+  // Kimi / Volcengine and other third-party Anthropic-compatible proxies the
+  // SDK reports a generic ~200K default, so we leave context_window absent and
+  // RunCockpit shows used-tokens only (no fabricated %). maxOutputTokens /
+  // usage_model_id are unaffected. The lookup stays permissive (try requested
+  // key, upstream key, single-entry, first-with-window); missing modelUsage is
+  // not an error — useContextUsage then falls back to the untrusted catalog.
   const modelUsage = (msg as { modelUsage?: Record<string, SdkModelUsage> }).modelUsage;
   const picked = pickModelUsage(modelUsage, modelHints);
   if (picked) {
     const [key, usage] = picked;
-    if (usage.contextWindow > 0) base.context_window = usage.contextWindow;
+    // v0.56.x #632: `modelUsage.contextWindow` is the SDK's bundled-catalog
+    // value, NOT the provider's API. Reliable for first-party Anthropic; for a
+    // third-party Anthropic-compatible proxy (custom base_url, e.g. GLM) it's a
+    // generic default (~200000) that misrepresents the real window. Only persist
+    // it when the caller vouches the endpoint is first-party — otherwise leave
+    // context_window absent so useContextUsage treats the window as untrusted
+    // (catalog fallback) and shows used-tokens only, no fabricated percentage.
+    const trustWindow = modelHints.trustContextWindow !== false;
+    if (trustWindow && usage.contextWindow > 0) base.context_window = usage.contextWindow;
     if (usage.maxOutputTokens > 0) base.max_output_tokens = usage.maxOutputTokens;
     base.usage_model_id = key;
   }
@@ -738,6 +748,17 @@ export function streamClaudeSdk(options: ClaudeStreamOptions): ReadableStream<st
         providerId: options.providerId,
         sessionProviderId: options.sessionProviderId,
       });
+
+      // #632: trust the SDK-reported context window only for a first-party
+      // Anthropic endpoint. Derive it from the EFFECTIVE base URL the SDK will
+      // use (provider row → settings.anthropic_base_url → process.env.ANTHROPIC_BASE_URL),
+      // not just resolved.provider — env / legacy / cc-switch sessions with no
+      // owning provider can STILL point at a third-party proxy whose
+      // modelUsage.contextWindow is the SDK's generic ~200K default (the GLM
+      // "200K" the user reported). Computed once; both result handlers reuse it.
+      const trustSdkContextWindow = isFirstPartyAnthropicEndpoint(
+        resolveEffectiveAnthropicBaseUrl(resolved),
+      );
 
       // Phase 7 Context Accounting — accumulator must outlive try/catch so
       // the CONTEXT_TOO_LONG retry path (alt path inside catch) can drain
@@ -1357,8 +1378,16 @@ export function streamClaudeSdk(options: ClaudeStreamOptions): ReadableStream<st
           onRuntimeStatusChange?.('waiting_permission');
 
           // Wait for user response (resolved by POST /api/chat/permission)
-          // Store original input so registry can inject updatedInput on allow
-          const result = await registerPendingPermission(permissionRequestId, input, opts.signal);
+          // Store original input so registry can inject updatedInput on allow.
+          // onTimeout pushes a permission_resolved(timeout) event down this
+          // same SSE stream so the chat UI shows the auto-deny (A5 Step 2).
+          const result = await registerPendingPermission(permissionRequestId, input, opts.signal, () => {
+            try {
+              controller.enqueue(formatSSE(buildPermissionResolvedEvent(permissionRequestId)));
+            } catch {
+              // stream already closed — deny still applies
+            }
+          });
 
           // Restore runtime status after permission resolved
           onRuntimeStatusChange?.('running');
@@ -1810,6 +1839,22 @@ export function streamClaudeSdk(options: ClaudeStreamOptions): ReadableStream<st
                   if (!autoTrigger) {
                     notifyGeneric(title, taskMsg.summary || '', telegramOpts).catch(() => {});
                   }
+                } else if ((sysMsg.subtype as string) === 'api_retry') {
+                  // #635 — api_retry (SDKAPIRetryMessage) is the one real upstream-
+                  // liveness signal during a slow turn: the SDK's own keep_alive is
+                  // filtered out before the app iterator (see issue-635 design), so
+                  // forward it as a status SSE → client onStatus → markActive resets
+                  // the idle timer. Don't abort a turn that's actively retrying
+                  // upstream. (UI copy "上游重试中" is a follow-up.)
+                  const retryMsg = message as { attempt?: number; max_retries?: number };
+                  controller.enqueue(formatSSE({
+                    type: 'status',
+                    data: JSON.stringify({
+                      apiRetry: true,
+                      attempt: retryMsg.attempt,
+                      maxRetries: retryMsg.max_retries,
+                    }),
+                  }));
                 }
               }
               break;
@@ -1850,6 +1895,9 @@ export function streamClaudeSdk(options: ClaudeStreamOptions): ReadableStream<st
               tokenUsage = extractTokenUsage(resultMsg, {
                 requested: model,
                 upstream: resolved.upstreamModel,
+                // #632: only persist the SDK-reported window for a first-party
+                // Anthropic endpoint (effective base URL, computed above).
+                trustContextWindow: trustSdkContextWindow,
               });
               // terminal_reason is an optional field added in SDK 0.2.111.
               // When present, it enriches the end-of-turn UI chip (Phase 1 of
@@ -1885,6 +1933,9 @@ export function streamClaudeSdk(options: ClaudeStreamOptions): ReadableStream<st
                 tokenUsage && contextAccountingSnapshot
                   ? { ...tokenUsage, context_accounting: contextAccountingSnapshot }
                   : tokenUsage;
+              // #629 — SDKResultError carries errors[]; SDKResultSuccess doesn't,
+              // so read it via cast (mirrors the terminal_reason access above).
+              const resultErrors = (resultMsg as SDKResultMessage & { errors?: string[] }).errors ?? [];
               controller.enqueue(formatSSE({
                 type: 'result',
                 data: JSON.stringify({
@@ -1894,12 +1945,31 @@ export function streamClaudeSdk(options: ClaudeStreamOptions): ReadableStream<st
                   duration_ms: resultMsg.duration_ms,
                   usage: usageWithAccounting,
                   session_id: resultMsg.session_id,
+                  // #629 — surface raw errors / stop_reason for diagnostics so the
+                  // UI and logs see more than the generic `error_during_execution`.
+                  ...(resultMsg.is_error && resultErrors.length ? { errors: resultErrors } : {}),
+                  ...(resultMsg.stop_reason ? { stop_reason: resultMsg.stop_reason } : {}),
                   ...(terminalReason ? { terminal_reason: terminalReason } : {}),
                 }),
               }));
               resultEmitted = true; // #577 — turn succeeded; suppress any post-result error
               // Notify on conversation-level errors (e.g. rate limit, auth failure)
               if (resultMsg.is_error) {
+                // #629 — a stale/bad resume returns as an is_error RESULT (not a
+                // throw): third-party Anthropic proxies send errors[0]="No
+                // conversation found with session ID: <sid>". The resume-peek catch
+                // (~1574) and the crash cleanup (~2350, gated on !resultEmitted)
+                // don't cover this — resultEmitted is already true here. Clear the
+                // bad sdk_session_id so the next message starts fresh, but ONLY for
+                // resume/session-state errors; transient rate-limit/auth/budget must
+                // keep it (clearing drops SDK-side context). Orthogonal to #577:
+                // that guard is in the post-result catch; this is the result itself.
+                if (sessionId && isSessionStateResultError(resultErrors, {
+                  providerName: resolved.provider?.name,
+                  baseUrl: resolved.provider?.base_url,
+                })) {
+                  try { updateSdkSessionId(sessionId, ''); } catch { /* best effort */ }
+                }
                 const errTitle = 'Conversation error';
                 const errMsg = resultMsg.subtype || 'The conversation ended with an error';
                 controller.enqueue(formatSSE({
@@ -1946,6 +2016,11 @@ export function streamClaudeSdk(options: ClaudeStreamOptions): ReadableStream<st
             default: {
               const mType = (message as { type: string }).type;
               if (mType === 'keep_alive') {
+                // #635 — DEAD BRANCH: the SDK transport (Query.readMessages) does
+                // `continue` on keep_alive before the app iterator, so the public
+                // query() iterator never yields it. Kept for completeness; the real
+                // fix for slow-proxy idle is the two-tier budget in
+                // stream-session-manager + the api_retry status above.
                 controller.enqueue(formatSSE({ type: 'keep_alive', data: '' }));
               } else if (mType === 'rate_limit_event') {
                 // SDK 0.2.111+ — subscription rate limit telemetry. SDK
@@ -2209,6 +2284,8 @@ export function streamClaudeSdk(options: ClaudeStreamOptions): ReadableStream<st
                     ? extractTokenUsage(rMsg as SDKResultSuccess, {
                         requested: model,
                         upstream: resolved.upstreamModel,
+                        // #632: see the primary result path above.
+                        trustContextWindow: trustSdkContextWindow,
                       })
                     : undefined;
                   // Phase 7 — alt path also produces Context Accounting snapshot

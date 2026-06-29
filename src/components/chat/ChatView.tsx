@@ -244,7 +244,30 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
     resolvedProviderId,
     resolvedModel,
     providerWasFilteredOut,
+    providerGroups,
   } = useProviderModels(currentProviderId, currentModel, sessionRuntimeParam);
+
+  // #632 item 1 — does the active session provider report a TRUSTWORTHY context
+  // window? `false` only for a third-party Anthropic-compat proxy (e.g. GLM),
+  // whose persisted token_usage.context_window is the SDK's bogus ~200K default.
+  // Forwarded to RunCockpit → useContextUsage so existing third-party sessions
+  // stop rendering a fake capacity %. currentProviderId '' is the historic
+  // env-mode value → the 'env' group.
+  //
+  // FAIL-CLOSED until provider models load (Codex P3, 2026-06-20): while
+  // providerFetchState !== 'loaded' we pass `false`, so an existing third-party
+  // session never FLASHES its persisted bogus window as a % before we know the
+  // provider isn't first-party. Cost: a first-party session briefly shows
+  // used-only before the % appears — honest progressive disclosure, never a
+  // wrong number. Once loaded, a found group is always annotated; a not-found
+  // (stale/removed) provider defaults to trusted for back-compat.
+  const activeProviderGroup = providerGroups.find(
+    g => g.provider_id === (currentProviderId || 'env'),
+  );
+  const activeProviderReportsTrustedWindow =
+    providerFetchState === 'loaded'
+      ? (activeProviderGroup?.reportedContextWindowTrusted ?? true)
+      : false;
 
   // Phase 2 Step 3b — was: silently set state + PATCH the session row
   // when the runtime filter excluded the saved provider. That made an
@@ -369,6 +392,10 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
     [checkpointReasons],
   );
   const handleCheckpointAction = useCallback((actionId: string) => {
+    // Generic confirm→bypass bridge (MessageInput listens for this event and
+    // re-runs submit with bypass=true). As of #632 no built-in reason emits
+    // 'confirm-context-cost' — context-cost is now a non-blocking heads-up;
+    // this is retained dormant for any future real-danger confirm reason.
     if (actionId === 'confirm-context-cost') {
       window.dispatchEvent(new Event('run-checkpoint-confirm-send'));
     }
@@ -1343,6 +1370,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
                   pendingContextTokens={pendingContextTokens}
                   pendingContextSubTotals={pendingContextSubTotals}
                   sessionRuntimePin={runtimePin}
+                  reportedContextWindowTrusted={activeProviderReportsTrustedWindow}
                 />
               }
             />
@@ -1616,6 +1644,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
             pendingContextTokens={pendingContextTokens}
             pendingContextSubTotals={pendingContextSubTotals}
             sessionRuntimePin={runtimePin}
+            reportedContextWindowTrusted={activeProviderReportsTrustedWindow}
           />
         }
       />

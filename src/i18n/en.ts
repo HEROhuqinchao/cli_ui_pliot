@@ -86,6 +86,7 @@ const en = {
   'streaming.allowForSession': 'Allow for Session',
   'streaming.allowed': 'Allowed',
   'streaming.denied': 'Denied',
+  'streaming.permissionTimedOut': 'Auto-denied — request timed out',
 
   // ── Skill Nudge ──
   'skillNudge.message': 'This workflow involved {step} steps across {toolCount} distinct tools. Save as a Skill for one-click replay.',
@@ -2017,7 +2018,7 @@ const en = {
   'runCheckpoint.runtimeFallback.description': 'The selected runtime is unavailable, so CodePilot will use the available fallback for this message.',
   'runCheckpoint.runtimeFallback.action': 'Review runtime',
   'runCheckpoint.contextCost.title': 'This message adds substantial context',
-  'runCheckpoint.contextCost.description': 'The attached context is large enough to noticeably change this run. Confirm before sending.',
+  'runCheckpoint.contextCost.description': 'The attached context is large enough to noticeably change this run.',
   'runCheckpoint.contextCost.action': 'Continue sending',
   'runCheckpoint.permissionElevation.title': 'Full access is enabled',
   'runCheckpoint.permissionElevation.description': 'This message will run with fewer confirmations. Use it only for trusted projects.',

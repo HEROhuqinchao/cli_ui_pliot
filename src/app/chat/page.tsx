@@ -4,7 +4,7 @@ import { Suspense, useState, useCallback, useRef, useEffect, useMemo } from 'rea
 import { useRouter, useSearchParams } from 'next/navigation';
 import type { Message, SSEEvent, SessionResponse, TokenUsage, PermissionRequestEvent, FileAttachment, MentionRef } from '@/types';
 import { MessageList } from '@/components/chat/MessageList';
-import { MessageInput } from '@/components/chat/MessageInput';
+import { MessageInput, composerDraftKey } from '@/components/chat/MessageInput';
 import { ChatComposerActionBar } from '@/components/chat/ChatComposerActionBar';
 import { ModeIndicator } from '@/components/chat/ModeIndicator';
 import { ChatPermissionSelector } from '@/components/chat/ChatPermissionSelector';
@@ -77,6 +77,14 @@ function NewChatPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const prefillText = searchParams.get('prefill') || '';
+  // #4/#5 (Codex P2) — the prefill enters the composer via `initialValue`, which
+  // MessageInput prioritises OVER the draft. So clearing only the sessionStorage
+  // draft at send-accept (below) leaves the URL prefill, and the accept-time
+  // composer remount re-seeds the just-sent text from `initialValue`. Track which
+  // prefill we've already sent and feed '' for it so the remount comes up empty;
+  // a genuinely NEW prefill (different text) still shows.
+  const [consumedPrefill, setConsumedPrefill] = useState<string | null>(null);
+  const effectivePrefill = prefillText && prefillText !== consumedPrefill ? prefillText : '';
   const { setPendingApprovalSessionId } = usePanel();
   const { t } = useTranslation();
   const { isElectron, openNativePicker } = useNativeFolderPicker();
@@ -139,7 +147,7 @@ function NewChatPageInner() {
     return '';
   });
   const [pendingPermission, setPendingPermission] = useState<PermissionRequestEvent | null>(null);
-  const [permissionResolved, setPermissionResolved] = useState<'allow' | 'deny' | null>(null);
+  const [permissionResolved, setPermissionResolved] = useState<'allow' | 'deny' | 'timeout' | null>(null);
   const [streamingToolOutput, setStreamingToolOutput] = useState('');
   const [permissionProfile, setPermissionProfile] = useState<'default' | 'full_access'>('default');
   const [pendingContextTokens, setPendingContextTokens] = useState(0);
@@ -289,8 +297,10 @@ function NewChatPageInner() {
     [checkpointReasons],
   );
   const handleCheckpointAction = useCallback((actionId: string) => {
-    // The context-cost confirm unblocks the pending send; MessageInput
-    // listens for this event and re-runs submit with bypass=true.
+    // Generic confirm→bypass bridge (MessageInput listens for this event and
+    // re-runs submit with bypass=true). As of #632 no built-in reason emits
+    // 'confirm-context-cost' — context-cost is now a non-blocking heads-up;
+    // this is retained dormant for any future real-danger confirm reason.
     if (actionId === 'confirm-context-cost') {
       window.dispatchEvent(new Event('run-checkpoint-confirm-send'));
     }
@@ -911,6 +921,14 @@ function NewChatPageInner() {
         // stream is opening) — from here the screenshot is committed
         // server-side, so a later error must NOT preserve the composer (#615).
         accepted = true;
+        // #4/#5 — clear the persisted composer draft at accept. The imminent
+        // isStreaming flip REMOUNTS the composer, which re-seeds inputValue from
+        // this draft (the only composer state surviving the remount); without
+        // clearing it the just-sent text lingers all turn (CDP repro).
+        try { sessionStorage.removeItem(composerDraftKey()); } catch { /* unavailable */ }
+        // #4/#5 (Codex P2) — also mark the URL prefill consumed so the remount's
+        // `initialValue` (which outranks the draft) doesn't re-seed the sent text.
+        if (prefillText) setConsumedPrefill(prefillText);
 
         // Flip the layout-driving state ONLY now: show streaming + push the
         // optimistic user bubble. Deferring to here keeps `isNewChat` true
@@ -1016,6 +1034,14 @@ function NewChatPageInner() {
                       // (useSSEStream via stream-session-manager).
                       maybeShowStatusToast(statusData);
                       setStatusText(statusData.message || statusData.title || undefined);
+                    } else if (statusData.apiRetry) {
+                      // #635 — show human copy, not raw JSON. The first-message
+                      // path doesn't run the idle checker, so this is display-only.
+                      setStatusText(
+                        typeof statusData.attempt === 'number'
+                          ? `Retrying upstream (attempt ${statusData.attempt})…`
+                          : 'Retrying upstream…',
+                      );
                     } else {
                       setStatusText(event.data || undefined);
                     }
@@ -1085,6 +1111,25 @@ function NewChatPageInner() {
                     setPendingApprovalSessionId(sessionId);
                   } catch {
                     // skip malformed permission_request data
+                  }
+                  break;
+                }
+                case 'permission_resolved': {
+                  // A5 Step 2 — registry timed out the pending request and
+                  // auto-denied it. The inline first-message flow has a single
+                  // active prompt and the registry only emits this for a still-
+                  // unresolved request, so marking resolved without an explicit
+                  // id-guard is safe here (entry 2 / stream-session-manager
+                  // id-guards because it has fresh mutable snapshot access).
+                  // Also clear the sidebar "needs approval" badge: the prompt
+                  // now shows the timeout one-liner, nothing's left to approve
+                  // (A5 follow-up — without this the badge lingers till stream end).
+                  try {
+                    const data = JSON.parse(event.data) as { status: 'timeout' };
+                    setPermissionResolved(data.status);
+                    setPendingApprovalSessionId('');
+                  } catch {
+                    // skip malformed permission_resolved data
                   }
                   break;
                 }
@@ -1300,7 +1345,7 @@ function NewChatPageInner() {
         workingDirectory={workingDir}
         effort={selectedEffort}
         onEffortChange={setSelectedEffort}
-        initialValue={prefillText}
+        initialValue={effectivePrefill}
         onPendingContextTokensChange={setPendingContextTokens}
         onPendingContextSubTotalsChange={setPendingContextSubTotals}
         blockingReasonIds={blockingReasonIds}

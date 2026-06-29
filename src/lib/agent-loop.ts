@@ -25,6 +25,8 @@ import { buildCoreMessages } from './message-builder';
 import { sanitizeClaudeModelOptions } from './claude-model-options';
 import { getMessages } from './db';
 import { wrapController } from './safe-stream';
+import { buildNativeErrorEventData } from './agent-loop-error-event';
+import type { ToolInvocationRecord } from './harness/auto-invoke-accounting';
 
 // ── Types ───────────────────────────────────────────────────────
 
@@ -629,44 +631,24 @@ export function runAgentLoop(options: AgentLoopOptions): ReadableStream<string> 
         // Skills/MCP/Tools now come from real per-turn invocations accumulated
         // during streaming, not from filesystem guesses).
         //
-        // Context window fallback (2026-05-20): Vercel AI SDK's
-        // LanguageModelUsage doesn't expose model context window, so unlike
+        // Context window (2026-06-19, v0.56.x #632): Native's Vercel AI SDK
+        // LanguageModelUsage doesn't expose a model context window — unlike
         // ClaudeCode (SDKResultMessage.modelUsage) and Codex
-        // (ThreadTokenUsage.modelContextWindow) which get it from upstream,
-        // Native has no native source. Fall back to the static catalog
-        // (model-context.ts) so the popover header can show capacity for
-        // GLM / Kimi / DeepSeek / etc.
-        if (!totalUsage.context_window) {
-          try {
-            const { getContextWindow } = await import('./model-context');
-            const catalogWindow = getContextWindow(modelId);
-            if (catalogWindow && catalogWindow > 0) {
-              totalUsage.context_window = catalogWindow;
-            }
-          } catch {
-            // best-effort
-          }
-        }
+        // (ThreadTokenUsage.modelContextWindow), which get it from upstream.
+        // We DELIBERATELY no longer fall back to the static catalog here:
+        // writing the catalog GUESS into `context_window` laundered it into
+        // the field `useContextUsage` treats as SDK-authoritative, so the UI
+        // rendered a "trusted" capacity / percentage against a window the
+        // runtime never reported (the GLM "200K" the user flagged). Leaving it
+        // absent lets useContextUsage fall back to the catalog as UNtrusted →
+        // used-tokens only, no fabricated percentage. The runtime-agnostic
+        // TRUSTED source is a real per-model window override (provider config)
+        // — see the v0.56.x plan Phase 2 context-window source-priority design.
 
-        let nativeAccountingSnapshot:
-          | import('@/types').RuntimeContextAccountingSnapshot
-          | undefined;
-        try {
-          const { collectAutoInvokeSnapshot, resolveWorkspaceClaudeMdRules } =
-            await import('@/lib/harness/auto-invoke-accounting');
-          nativeAccountingSnapshot = collectAutoInvokeSnapshot({
-            workspacePath: workingDirectory || process.cwd(),
-            records: toolInvocationAccumulator.drain(),
-            producedBy: 'codepilot_runtime',
-            // Native unsupported list — same as ClaudeCode (system_prompt is
-            // ai-sdk preset opaque; memory not wired; files_attachments via
-            // composer pending channel not Runtime).
-            unsupported: ['system_prompt', 'memory', 'files_attachments'],
-            resolveRulesEntry: resolveWorkspaceClaudeMdRules,
-          });
-        } catch {
-          // best-effort — snapshot omitted on producer failure
-        }
+        const nativeAccountingSnapshot = await buildNativeAccountingSnapshot(
+          toolInvocationAccumulator.drain(),
+          workingDirectory || process.cwd(),
+        );
         const usageWithAccounting =
           totalUsage && nativeAccountingSnapshot
             ? { ...totalUsage, context_accounting: nativeAccountingSnapshot }
@@ -691,12 +673,24 @@ export function runAgentLoop(options: AgentLoopOptions): ReadableStream<string> 
         if (!isAbort) {
           console.error('[agent-loop] Error:', err instanceof Error ? err.message : err);
           reportNativeError('NATIVE_STREAM_ERROR', err, { sessionId });
+          // A3 (audit 2026-06): the success path drains the accumulator at
+          // result time; if we threw inside the step loop that drain never
+          // ran, so drain here too and attach the snapshot to the error event
+          // (the same context_accounting field the result event carries).
+          // Only collect when this turn actually invoked tools before the
+          // throw — an empty turn would otherwise pay collectAutoInvokeSnapshot's
+          // CLAUDE.md file read for nothing. (Codex P2)
+          const errorRecords = toolInvocationAccumulator.drain();
+          const errorAccounting =
+            errorRecords.length > 0
+              ? await buildNativeAccountingSnapshot(
+                  errorRecords,
+                  workingDirectory || process.cwd(),
+                )
+              : undefined;
           controller.enqueue(formatSSE({
             type: 'error',
-            data: JSON.stringify({
-              category: 'AGENT_ERROR',
-              userMessage: err instanceof Error ? err.message : String(err),
-            }),
+            data: JSON.stringify(buildNativeErrorEventData(err, errorAccounting)),
           }));
         }
 
@@ -717,6 +711,35 @@ export function runAgentLoop(options: AgentLoopOptions): ReadableStream<string> 
 }
 
 // ── Helpers ─────────────────────────────────────────────────────
+
+/**
+ * Build the Native-runtime context-accounting snapshot from the turn's drained
+ * tool records. Shared by the success path (result event) and the error path
+ * (error event) so an error-terminated turn reports the same snapshot shape it
+ * would have had on success. Best-effort: returns undefined if the producer
+ * import or collection fails. (audit A3)
+ */
+async function buildNativeAccountingSnapshot(
+  records: readonly ToolInvocationRecord[],
+  workspacePath: string,
+): Promise<import('@/types').RuntimeContextAccountingSnapshot | undefined> {
+  try {
+    const { collectAutoInvokeSnapshot, resolveWorkspaceClaudeMdRules } =
+      await import('@/lib/harness/auto-invoke-accounting');
+    return collectAutoInvokeSnapshot({
+      workspacePath,
+      records,
+      producedBy: 'codepilot_runtime',
+      // Native unsupported list — same as ClaudeCode (system_prompt is ai-sdk
+      // preset opaque; memory not wired; files_attachments via composer
+      // pending channel not Runtime).
+      unsupported: ['system_prompt', 'memory', 'files_attachments'],
+      resolveRulesEntry: resolveWorkspaceClaudeMdRules,
+    });
+  } catch {
+    return undefined; // best-effort — snapshot omitted on producer failure
+  }
+}
 
 function formatSSE(event: SSEEvent): string {
   return `data: ${JSON.stringify(event)}\n\n`;

@@ -37,6 +37,10 @@ export interface SSECallbacks {
    *  capture. */
   onContextUsage?: (snapshot: ContextUsageSnapshot) => void;
   onPermissionRequest: (data: PermissionRequestEvent) => void;
+  /** Server-side auto-resolve of a pending permission (currently only
+   *  'timeout'). Lets the chat UI show "auto-denied — timed out" instead of
+   *  the prompt silently vanishing (codebase-health A5 Step 2). */
+  onPermissionResolved?: (permissionRequestId: string, status: 'timeout') => void;
   onToolTimeout: (toolName: string, elapsedSeconds: number) => void;
   onModeChanged: (mode: string) => void;
   onTaskUpdate: (sessionId: string) => void;
@@ -245,6 +249,17 @@ function handleSSEEvent(
           // whitelist without duplicating the toast import logic.
           maybeShowStatusToast(statusData);
           callbacks.onStatus(statusData.message || statusData.title || undefined);
+        } else if (statusData.apiRetry) {
+          // #635 — api_retry status has no display text of its own; show human
+          // copy (NOT the raw JSON) and still call onStatus so the idle timer is
+          // refreshed (markActive). `attempt` is the SDK's raw value. (Full i18n
+          // of the status bar — incl. the existing English "Connected" — is a
+          // separate follow-up.)
+          callbacks.onStatus(
+            typeof statusData.attempt === 'number'
+              ? `Retrying upstream (attempt ${statusData.attempt})…`
+              : 'Retrying upstream…',
+          );
         } else {
           callbacks.onStatus(typeof event.data === 'string' ? event.data : undefined);
         }
@@ -295,6 +310,17 @@ function handleSSEEvent(
         callbacks.onPermissionRequest(permData);
       } catch {
         // skip malformed permission_request data
+      }
+      return accumulated;
+    }
+
+    case 'permission_resolved': {
+      // A5 Step 2 — registry timed out a pending request and auto-denied it.
+      try {
+        const data = JSON.parse(event.data) as { permissionRequestId: string; status: 'timeout' };
+        callbacks.onPermissionResolved?.(data.permissionRequestId, data.status);
+      } catch {
+        // skip malformed permission_resolved data
       }
       return accumulated;
     }
@@ -479,6 +505,7 @@ export function useSSEStream() {
         onStatus: (t) => callbacksRef.current?.onStatus(t),
         onResult: (u, meta) => callbacksRef.current?.onResult(u, meta),
         onPermissionRequest: (d) => callbacksRef.current?.onPermissionRequest(d),
+        onPermissionResolved: (id, s) => callbacksRef.current?.onPermissionResolved?.(id, s),
         onToolTimeout: (n, s) => callbacksRef.current?.onToolTimeout(n, s),
         onModeChanged: (m) => callbacksRef.current?.onModeChanged(m),
         onTaskUpdate: (s) => callbacksRef.current?.onTaskUpdate(s),

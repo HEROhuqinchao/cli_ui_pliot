@@ -318,6 +318,16 @@ export interface ProviderModelGroup {
   /** Provider-layer runtime compat. Computed from preset + protocol; a single
    * source of truth across Provider Card / Models page / chat picker. */
   compat?: ProviderRuntimeCompat;
+  /**
+   * #632 item 1 — whether a `token_usage.context_window` persisted for a
+   * session on this provider reflects a REAL capacity. `false` only for an
+   * anthropic-protocol provider on a third-party base_url: the Claude Agent
+   * SDK reports a generic ~200K default there (the GLM "200K" the user
+   * reported). Non-anthropic runtimes (Codex's modelContextWindow, etc.)
+   * report their own real window, so they stay trusted. Undefined = trusted
+   * (back-compat; consumers must gate on `=== false`, not falsiness).
+   */
+  reportedContextWindowTrusted?: boolean;
   models: Array<{
     value: string;           // internal/UI model ID
     label: string;           // display name
@@ -690,12 +700,14 @@ export interface TokenUsage {
   /**
    * Context window the SDK reports for the model that handled this turn.
    * Source: `SDKResultMessage.modelUsage[<key>].contextWindow` (Claude
-   * Agent SDK ≥ 0.2.111). Optional because (a) older DB rows don't have
-   * it and (b) some adapters / fallback paths don't populate it. When
-   * present, `useContextUsage` prefers it over the static
-   * `model-context.ts` lookup so models the catalog doesn't know about
-   * (GLM / Bailian / Volcengine / MiniMax / Kimi / etc.) still get a
-   * proper percent + Context bar in RunCockpit.
+   * Agent SDK ≥ 0.2.111) — but it's the SDK's BUNDLED-catalog value, not the
+   * provider's API. #632: claude-client only persists this for a first-party
+   * Anthropic endpoint; for third-party Anthropic-compatible proxies (GLM /
+   * Bailian / Volcengine / MiniMax / Kimi via custom base_url) the SDK reports
+   * a generic ~200K default, so this field is left ABSENT there and RunCockpit
+   * shows used-tokens only (no fabricated %). Also absent for older DB rows and
+   * adapters that don't populate modelUsage. When present, `useContextUsage`
+   * treats it as the trusted window over the static `model-context.ts` lookup.
    */
   context_window?: number;
   /** Max output tokens reported by the SDK alongside contextWindow. */
@@ -913,6 +925,7 @@ export type SSEEventType =
   | 'result'             // final result with usage stats
   | 'error'              // error occurred
   | 'permission_request' // permission approval needed
+  | 'permission_resolved' // permission auto-resolved server-side (timeout) — A5 Step 2
   | 'mode_changed'       // SDK permission mode changed (e.g. plan → code)
   | 'task_update'        // SDK TodoWrite task sync
   | 'keep_alive'         // SDK keep-alive heartbeat (resets idle timer)
@@ -1223,6 +1236,13 @@ export interface FileAttachment {
   size: number;
   data: string; // base64 encoded content
   filePath?: string; // persisted disk path (for messages reloaded from DB)
+  /** #628 — real in-tree source path for an @-mention of a project file
+   *  (cwd-relative). When set AND server-validated inside cwd, the chat route
+   *  references the real file instead of writing a `.codepilot-uploads` copy, so
+   *  the AI's Read/Edit lands on the user's actual file. Absent for true uploads
+   *  (no in-tree path) — those still get copied. Never trusted server-side: it is
+   *  re-resolved + containment-checked against the working dir. */
+  originPath?: string;
 }
 
 // Check if a MIME type is an image
@@ -1425,7 +1445,10 @@ export interface SessionStreamSnapshot {
   streamingToolOutput: string;
   statusText: string | undefined;
   pendingPermission: PermissionRequestEvent | null;
-  permissionResolved: 'allow' | 'deny' | null;
+  // 'timeout' = auto-denied because the user never responded within the
+  // 5-minute window (codebase-health A5 Step 2). Rendered distinctly from a
+  // manual 'deny' so the user knows they didn't click it.
+  permissionResolved: 'allow' | 'deny' | 'timeout' | null;
   tokenUsage: TokenUsage | null;
   startedAt: number;
   completedAt: number | null;
