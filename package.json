@@ -1,6 +1,6 @@
 {
   "name": "codepilot",
-  "version": "0.58.0",
+  "version": "0.58.4",
   "private": true,
   "license": "BUSL-1.1",
   "workspaces": [
@@ -32,7 +32,7 @@
     "lint:docs-drift": "node scripts/lint-docs-drift.mjs",
     "prepare": "node -e \"try{require('husky')()}catch(e){}\"",
     "electron:dev": "node scripts/build-electron-dev.mjs && concurrently -k -n next,esbuild,electron \"next dev\" \"node scripts/build-electron-dev.mjs --watch\" \"wait-on http://localhost:${PORT:-3000} && electron .\"",
-    "electron:build": "next build && node scripts/build-electron.mjs",
+    "electron:build": "node scripts/clean-electron-build.mjs && next build && node scripts/build-electron.mjs",
     "electron:pack": "npm run electron:build && electron-builder --config electron-builder.yml",
     "electron:pack:mac": "npm run electron:build && electron-builder --mac --config electron-builder.yml",
     "electron:pack:win": "npm run electron:build && electron-builder --win --config electron-builder.yml",
@@ -87,6 +87,7 @@
     "discord.js": "^14.25.1",
     "dompurify": "^3.3.3",
     "electron-updater": "^6.8.3",
+    "geist": "^1.7.2",
     "html-to-image": "^1.11.13",
     "jdenticon": "^3.3.0",
     "lucide-react": "^1.14.0",

@@ -148,7 +148,12 @@ export interface CodexThreadStartParams {
 
 export interface CodexThreadStartResponse {
   thread: { id: string; status?: string; ephemeral?: boolean };
+  /** Effective reviewer echoed by current app-server builds. Optional here so
+   *  old/malformed responses can be detected and degraded rather than trusted. */
+  approvalsReviewer?: string;
 }
+
+export type CodexThreadResumeResponse = CodexThreadStartResponse;
 
 /**
  * A single Codex app-server `turn/start` input block. Wire format confirmed
@@ -211,11 +216,11 @@ export type CodexAvailability =
   /** Binary found, but the app-server has not been initialized in this process yet. */
   | { kind: 'installed_idle'; binary: string }
   /** Binary found but version is below our minimum supported. */
-  | { kind: 'too_old'; version: string; minimum: string }
+  | { kind: 'too_old'; version: string; minimum: string; binary?: string }
   /** Binary found and version OK, but spawn failed. */
-  | { kind: 'spawn_failed'; reason: string }
+  | { kind: 'spawn_failed'; reason: string; binary?: string }
   /** App-server initialized successfully. */
-  | { kind: 'ready'; version: string; codexHome: string };
+  | { kind: 'ready'; version: string; codexHome: string; binary: string };
 
 /**
  * Codex Compliance Logs name for this integration. Per app-server

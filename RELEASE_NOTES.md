@@ -1,42 +1,28 @@
-## CodePilot v0.58.0
+## CodePilot v0.58.4
 
-> 稳定性、长会话性能与安全加固版本：更可靠的「停止 / 中断」、更顺滑的长对话滚动、代码高亮移到后台线程，以及一批安全修复。默认聊天行为不变，推荐升级。
-
-### 新增功能
-
-- **代码高亮移到后台线程** — 语法高亮从主线程卸载到 Web Worker：包含大量代码块的长对话，滚动和输入更顺滑，主线程不再被高亮阻塞；高亮失败会自动回退到原有方式，不会出现空白代码块。
+> 紧急修复 v0.58.3 更新后部分电脑一直停留在 “Starting CodePilot...” 的启动故障。
 
 ### 修复问题
 
-- **「停止 / 中断」在长会话里更可靠** — 进一步收口停止 / 中断的所有权与生命周期：长回复期间点停止 / 中断能干净停下，不再出现停不掉、会话卡在「生成中」、输入框残留或同一条消息被重复发送。
-- **「加载更早的消息」不再被拉回底部** — 修复长会话里点「加载更早的消息」后，视图被自动拽回最新消息、看不到刚加载出来的旧消息的问题。
-- **一批稳定性修复** — 收口了会话状态、流式渲染、首轮导航劫持、排队消息上移等一组影响长时间使用稳定性的机械问题。
-- **安全加固** — 修复错误诊断上报中的数据盲区、限制辅助路径的文件写盘范围、收紧应用内导航的协议白名单。
+- **修复更新后无法进入主界面** — 补齐安装包中缺失的后台服务运行依赖，CodePilot 现在可以正常完成启动，不会再无限停留在启动页。
 
 ### 优化改进
 
-- **长对话虚拟化渲染** — 消息列表改为按需渲染可见部分：打开和滚动长会话更快、更省内存，流式输出时不再因为历史消息过多而掉帧；置底跟随、上滚查看、加载更早的锚点等行为保持不变。
-
-### 已知问题
-
-以下问题已记录、不影响主流程，仍在跟进（欢迎到 GitHub Issues 反馈复现细节）：
-
-- 在 CodePilot Runtime 场景下，预期会自动触发的自家 Widget 工具链尚未自动调用（工具注入 / 能力判定待定位）；已记录为后续专项修复，本版本未处理。
-- 能力 / 权限 / 密钥相关的一批增强（更细的 per-runtime 能力适配、API key 系统级加密存储等）为有意暂缓项，将在后续版本评估。
+- **新增安装包真实启动门禁** — macOS 和 Windows 发布包在上传前都会实际启动后台服务并检查健康状态，避免出现“构建成功但用户无法启动”的版本。
 
 ## 下载地址
 
 ### macOS
-- [Apple Silicon (M1/M2/M3/M4)](https://github.com/op7418/CodePilot/releases/download/v0.58.0/CodePilot-0.58.0-arm64.dmg)
-- [Intel](https://github.com/op7418/CodePilot/releases/download/v0.58.0/CodePilot-0.58.0-x64.dmg)
+- [Apple Silicon (M1/M2/M3/M4)](https://github.com/op7418/CodePilot/releases/download/v0.58.4/CodePilot-0.58.4-arm64.dmg)
+- [Intel](https://github.com/op7418/CodePilot/releases/download/v0.58.4/CodePilot-0.58.4-x64.dmg)
 
 ### Windows
-- [Windows 安装包](https://github.com/op7418/CodePilot/releases/download/v0.58.0/CodePilot.Setup.0.58.0.exe)
+- [Windows 安装包](https://github.com/op7418/CodePilot/releases/download/v0.58.4/CodePilot.Setup.0.58.4.exe)
 
 ## 安装说明
 
-**macOS**: 下载 DMG → 拖入 Applications → 首次启动如遇安全提示，在系统设置 > 隐私与安全中点击"仍要打开"
-**Windows**: 下载 exe 安装包 → 双击安装
+**macOS**：下载 DMG → 拖入 Applications → 首次启动如遇安全提示，在系统设置 > 隐私与安全中点击“仍要打开”
+**Windows**：下载 exe 安装包 → 双击安装
 
 ## 系统要求
 
