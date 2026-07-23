@@ -1,23 +1,29 @@
-## CodePilot v0.58.4
+## CodePilot v0.59.1
 
-> 紧急修复 v0.58.3 更新后部分电脑一直停留在 “Starting CodePilot...” 的启动故障。
+> 修复开启系统代理时 xAI Grok OAuth 可能在浏览器授权成功后仍无法完成登录的问题。
 
 ### 修复问题
 
-- **修复更新后无法进入主界面** — 补齐安装包中缺失的后台服务运行依赖，CodePilot 现在可以正常完成启动，不会再无限停留在启动页。
+- **修复 xAI OAuth 代理分流** — 系统浏览器和 CodePilot 后台的授权请求现在会使用一致的 HTTP(S) 代理路径，避免网页已经授权、应用却在换取 token 时提示网络失败。
+- **覆盖完整 OAuth 生命周期** — 浏览器授权码交换、设备码登录、token 刷新以及登录后的 Grok 请求都会遵循 HTTP(S) 系统代理和 `NO_PROXY` 设置。
 
 ### 优化改进
 
-- **新增安装包真实启动门禁** — macOS 和 Windows 发布包在上传前都会实际启动后台服务并检查健康状态，避免出现“构建成功但用户无法启动”的版本。
+- 网络失败现在会显示经过脱敏的底层错误类型，便于区分 DNS、连接拒绝和连接重置，同时不会记录代理地址或凭据。
+- 代理仅应用于 xAI 的外部请求，不会全局改写其他 Provider 或本地 OAuth callback 的网络行为。
+
+### 已知限制
+
+- SOCKS/PAC 代理暂不由 CodePilot 后台直接解析，此类配置维持直连；由 TUN 模式接管系统流量的代理不受影响。
 
 ## 下载地址
 
 ### macOS
-- [Apple Silicon (M1/M2/M3/M4)](https://github.com/op7418/CodePilot/releases/download/v0.58.4/CodePilot-0.58.4-arm64.dmg)
-- [Intel](https://github.com/op7418/CodePilot/releases/download/v0.58.4/CodePilot-0.58.4-x64.dmg)
+- [Apple Silicon (M1/M2/M3/M4)](https://github.com/op7418/CodePilot/releases/download/v0.59.1/CodePilot-0.59.1-arm64.dmg)
+- [Intel](https://github.com/op7418/CodePilot/releases/download/v0.59.1/CodePilot-0.59.1-x64.dmg)
 
 ### Windows
-- [Windows 安装包](https://github.com/op7418/CodePilot/releases/download/v0.58.4/CodePilot.Setup.0.58.4.exe)
+- [Windows 安装包](https://github.com/op7418/CodePilot/releases/download/v0.59.1/CodePilot.Setup.0.59.1.exe)
 
 ## 安装说明
 
@@ -27,5 +33,5 @@
 ## 系统要求
 
 - macOS 12.0+ / Windows 10+ / Linux (glibc 2.31+)
-- 需要配置 API 服务商（Anthropic / OpenRouter 等）
+- 需要配置 API 服务商或受支持的套餐凭据
 - 推荐安装 Claude Code CLI 以获得完整功能
