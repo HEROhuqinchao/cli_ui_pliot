@@ -9,6 +9,7 @@ import {
 } from '@/components/ai-elements/message';
 import { ToolActionsGroup } from '@/components/ai-elements/tool-actions-group';
 import { MediaPreview } from './MediaPreview';
+import { SearchSources } from './SearchSources';
 import { Button } from '@/components/ui/button';
 import { Shimmer } from '@/components/ai-elements/shimmer';
 import { ImageGenConfirmation } from './ImageGenConfirmation';
@@ -16,7 +17,13 @@ import { BatchPlanInlinePreview } from './batch-image-gen/BatchPlanInlinePreview
 import { WidgetRenderer } from './WidgetRenderer';
 import { parseAllShowWidgets, computePartialWidgetKey, MalformedWidgetNotice } from './MessageItem';
 import { PENDING_KEY, buildReferenceImages } from '@/lib/image-ref-store';
-import type { PlannerOutput, MediaBlock } from '@/types';
+import type { PlannerOutput, MediaBlock, ExternalSource } from '@/types';
+import { SubagentCard } from './SubagentCard';
+import {
+  buildSubagentRunView,
+  collapseLogicalSubagentRuns,
+  isSubagentToolCall,
+} from '@/lib/subagent-view';
 
 interface ImageGenRequest {
   prompt: string;
@@ -100,6 +107,7 @@ interface ToolResultInfo {
   content: string;
   is_error?: boolean;
   media?: MediaBlock[];
+  sources?: ExternalSource[];
 }
 
 interface StreamingMessageProps {
@@ -308,6 +316,33 @@ export function StreamingMessage({
     () => toolUses.filter((tool) => !toolResultsById.has(tool.id)),
     [toolUses, toolResultsById]
   );
+  const subagentTools = useMemo(
+    () => toolUses.filter((tool) => {
+      const result = toolResultsById.get(tool.id);
+      return isSubagentToolCall(tool.name, tool.input, result?.content);
+    }),
+    [toolUses, toolResultsById],
+  );
+  const subagentRuns = useMemo(
+    () => collapseLogicalSubagentRuns(subagentTools.map((tool) => {
+      const result = toolResultsById.get(tool.id);
+      return buildSubagentRunView({
+        id: tool.id,
+        name: tool.name,
+        toolInput: tool.input,
+        result: result?.content,
+        isError: result?.is_error,
+      });
+    })),
+    [subagentTools, toolResultsById],
+  );
+  const regularTools = useMemo(
+    () => toolUses.filter((tool) => {
+      const result = toolResultsById.get(tool.id);
+      return !isSubagentToolCall(tool.name, tool.input, result?.content);
+    }),
+    [toolUses, toolResultsById],
+  );
 
   // Extract a human-readable summary of the running command
   const getRunningCommandSummary = (): string | undefined => {
@@ -331,9 +366,9 @@ export function StreamingMessage({
     <AIMessage from="assistant">
       <MessageContent>
         {/* Tool calls + thinking — single collapsible group */}
-        {(toolUses.length > 0 || thinkingContent) && (
+        {(regularTools.length > 0 || thinkingContent) && (
           <ToolActionsGroup
-            tools={toolUses.map((tool) => {
+            tools={regularTools.map((tool) => {
               const result = toolResultsById.get(tool.id);
               return {
                 id: tool.id,
@@ -355,6 +390,8 @@ export function StreamingMessage({
           const allMedia = toolResults.flatMap(r => r.media || []);
           return allMedia.length > 0 ? <MediaPreview media={allMedia} /> : null;
         })()}
+
+        <SearchSources sources={toolResults.flatMap(result => result.sources || [])} />
 
         {/* Streaming text content rendered via Streamdown */}
         {content && (() => {
@@ -591,6 +628,20 @@ export function StreamingMessage({
           })() : undefined)
           || (content && content.length > 0 ? t('streaming.generating') : undefined)
         } onForceStop={onForceStop} startedAt={startedAt} />}
+
+        {/* Compact Sub Agent capsules follow the parent's live output and wrap
+            into the available row width. */}
+        {subagentRuns.length > 0 && (
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            {subagentRuns.map(run => (
+              <SubagentCard
+                key={run.id}
+                run={run}
+                sessionId={sessionId}
+              />
+            ))}
+          </div>
+        )}
       </MessageContent>
     </AIMessage>
   );
