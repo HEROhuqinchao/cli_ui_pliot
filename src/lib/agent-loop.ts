@@ -11,7 +11,7 @@
  */
 
 import { streamText, type LanguageModel, type ToolSet, type ModelMessage } from 'ai';
-import type { SSEEvent, TokenUsage, MediaBlock } from '@/types';
+import type { SSEEvent, TokenUsage, MediaBlock, ExternalSource } from '@/types';
 import { subscribeBuiltinEvents } from './harness/builtin-event-bus';
 import { createModel } from './ai-provider';
 import { assembleTools, READ_ONLY_TOOLS } from './agent-tools';
@@ -25,6 +25,7 @@ import { buildCoreMessages } from './message-builder';
 import { sanitizeClaudeModelOptions } from './claude-model-options';
 import { buildAnthropicProviderOptions } from './agent-loop-anthropic-wire';
 import { buildSamplingIgnoredNotice } from './anthropic-sampling-notice';
+import { buildEffortAdjustmentNotice } from './anthropic-effort-adjustment-notice';
 import { buildXaiProviderOptions } from './xai-provider-options';
 import { getMessages } from './db';
 import { wrapController } from './safe-stream';
@@ -39,6 +40,14 @@ import {
 import { isAiSdkTraceEnabled, createRedactedTraceTelemetry } from './aisdk-trace';
 import type { ToolInvocationRecord } from './harness/auto-invoke-accounting';
 import type { ProviderCallScene } from './provider-call-policy';
+import {
+  appendUniqueExternalSource,
+  buildXaiHostedSearchTools,
+  mergeHostedTools,
+  normalizeExternalUrlSource,
+  XAI_X_SEARCH_SYSTEM_GUIDANCE,
+  XAI_X_SEARCH_TOOL_NAME,
+} from './xai-hosted-search';
 
 // ── Types ───────────────────────────────────────────────────────
 
@@ -196,6 +205,7 @@ export function runAgentLoop(options: AgentLoopOptions): ReadableStream<string> 
       // emits without subscribers, no buffering — see contract note
       // in `harness/builtin-event-bus.ts`).
       const pendingMediaByCallId = new Map<string, MediaBlock[]>();
+      let xaiSearchEnabled = false;
 
       // Phase 7 Context Accounting — per-turn ToolInvocationAccumulator.
       // Lives in start(controller) closure so step loop tool_use/tool_result
@@ -242,9 +252,16 @@ export function runAgentLoop(options: AgentLoopOptions): ReadableStream<string> 
             workingDirectory: workingDirectory || process.cwd(),
             prompt,
             mode: permissionMode,
+            sessionId,
+            emitSSE: (event) => {
+              controller.enqueue(formatSSE(event as SSEEvent));
+            },
+            abortSignal: timeoutCtl.signal,
             providerId,
             sessionProviderId,
             model: modelOverride || sessionModel,
+            callScene,
+            bypassPermissions,
             permissionContext: bypassPermissions ? undefined : {
               sessionId,
               permissionMode: (permissionMode || 'normal') as PermissionMode,
@@ -274,7 +291,7 @@ export function runAgentLoop(options: AgentLoopOptions): ReadableStream<string> 
         // silently dropped toolSystemPrompts whenever the base was
         // empty. Now both halves combine through filter(Boolean) so
         // either side can be empty without losing the other.
-        const effectiveSystemPrompt =
+        let effectiveSystemPrompt =
           [systemPrompt, ...toolSystemPrompts].filter(Boolean).join('\n\n') ||
           undefined;
 
@@ -286,6 +303,15 @@ export function runAgentLoop(options: AgentLoopOptions): ReadableStream<string> 
           model: modelOverride,
           sessionModel,
         });
+        const hostedSearchTools = buildXaiHostedSearchTools(config, callScene);
+        xaiSearchEnabled = Object.keys(hostedSearchTools).length > 0;
+        if (xaiSearchEnabled) {
+          tools = mergeHostedTools(tools, hostedSearchTools);
+          effectiveSystemPrompt = [
+            effectiveSystemPrompt,
+            XAI_X_SEARCH_SYSTEM_GUIDANCE,
+          ].filter(Boolean).join('\n\n');
+        }
 
         // 2. Load conversation history from DB
         const { messages: dbMessages } = getMessages(sessionId, { limit: 200, excludeHeartbeatAck: true });
@@ -342,6 +368,7 @@ export function runAgentLoop(options: AgentLoopOptions): ReadableStream<string> 
         let lastToolNames: string[] = []; // for doom loop detection
         const distinctTools = new Set<string>(); // for skill-nudge heuristic
         let messages = historyMessages;
+        let runtimeReportedModel: string | undefined;
 
         while (step < maxSteps) {
           step++;
@@ -371,6 +398,22 @@ export function runAgentLoop(options: AgentLoopOptions): ReadableStream<string> 
             topP,
             topK,
           });
+          const effortAdjustmentNotice = buildEffortAdjustmentNotice({
+            model: config.modelId,
+            sanitized,
+          });
+          if (effortAdjustmentNotice && !isThirdPartyProxy && step === 1) {
+            console.warn(
+              `[agent-loop] ${config.modelId}: effort '${effortAdjustmentNotice.params.requested}' is incompatible with disabled thinking; sending '${effortAdjustmentNotice.params.effective}' instead.`,
+            );
+            controller.enqueue(formatSSE({
+              type: 'status',
+              data: JSON.stringify({
+                notification: true,
+                ...effortAdjustmentNotice,
+              }),
+            }));
+          }
           if (sanitized.thinkingForcedOn && step === 1) {
             // Fable 5: thinking cannot be turned off — the sanitizer omitted
             // the user's thinking:'disabled' to stay wire-valid, but adaptive
@@ -423,10 +466,10 @@ export function runAgentLoop(options: AgentLoopOptions): ReadableStream<string> 
           if (config.sdkType === 'anthropic') {
             // Build the exact `providerOptions.anthropic` wire object. Effort
             // rides GA output_config.effort on the official path, but only for
-            // models on Anthropic's effort list; unsupported models and
-            // third-party proxies drop it and raise their own drop signal so we
-            // surface a one-shot toast. See buildAnthropicProviderOptions for
-            // the full policy + s05 rationale.
+            // exact model + tier pairs on Anthropic's effort list. Unsupported
+            // models/tiers and explicit picks on third-party proxies raise
+            // distinct drop signals; synthesized Auto defaults never masquerade
+            // as user picks. See buildAnthropicProviderOptions.
             const wire = buildAnthropicProviderOptions({
               isThirdPartyProxy,
               model: config.modelId,
@@ -448,16 +491,36 @@ export function runAgentLoop(options: AgentLoopOptions): ReadableStream<string> 
               }));
             }
             if (wire.effortDroppedForProxy && step === 1) {
+              const requestedEffort = wire.effortDroppedForProxyRequested || 'unknown';
               console.warn(
-                `[agent-loop] Third-party Anthropic proxy: dropping explicit effort='${sanitized.effort}' — effort GA beta header may not be supported by proxies. Switch to SDK runtime or the official Anthropic endpoint to control effort.`,
+                `[agent-loop] Third-party Anthropic proxy: dropping explicit effort='${requestedEffort}' — effort GA beta header may not be supported by proxies. Switch to SDK runtime or the official Anthropic endpoint to control effort.`,
               );
               controller.enqueue(formatSSE({
                 type: 'status',
                 data: JSON.stringify({
                   notification: true,
                   code: 'RUNTIME_EFFORT_IGNORED',
-                  title: 'Effort ignored on this runtime',
-                  message: `Third-party Anthropic proxies may not support the effort parameter — your "${sanitized.effort}" choice wasn't sent. Switch to SDK runtime or an official Anthropic provider to control effort explicitly.`,
+                  reason: 'third-party-proxy',
+                  params: { effort: requestedEffort },
+                }),
+              }));
+            }
+            if (wire.effortDroppedUnsupportedTier && step === 1) {
+              const { requested, supported } = wire.effortDroppedUnsupportedTier;
+              console.warn(
+                `[agent-loop] ${config.modelId} does not accept effort='${requested}' — supported tiers: ${supported.join(', ')}. The unsupported tier was omitted.`,
+              );
+              controller.enqueue(formatSSE({
+                type: 'status',
+                data: JSON.stringify({
+                  notification: true,
+                  code: 'RUNTIME_EFFORT_IGNORED',
+                  reason: 'unsupported-tier',
+                  params: {
+                    model: config.modelId || '',
+                    effort: requested,
+                    supported: supported.join(', '),
+                  },
                 }),
               }));
             }
@@ -493,7 +556,10 @@ export function runAgentLoop(options: AgentLoopOptions): ReadableStream<string> 
           const isPlanMode = permissionMode === 'plan';
           const hasTools = tools && Object.keys(tools).length > 0;
           const activeToolNames = isPlanMode && hasTools
-            ? Object.keys(tools).filter(name => READ_ONLY_TOOLS.includes(name as typeof READ_ONLY_TOOLS[number]))
+            ? Object.keys(tools).filter(name =>
+                READ_ONLY_TOOLS.includes(name as typeof READ_ONLY_TOOLS[number]) ||
+                name === XAI_X_SEARCH_TOOL_NAME
+              )
             : undefined; // undefined = all tools active
 
           // Phase 4 ① — arm connect + first-token budgets for this step's
@@ -587,6 +653,26 @@ export function runAgentLoop(options: AgentLoopOptions): ReadableStream<string> 
           let hasToolCalls = false;
           let hasContent = false; // tracks whether any actual content was produced
           const stepToolNames: string[] = [];
+          let externalSources: ExternalSource[] = [];
+          const providerSearchResults = new Map<string, {
+            content: string;
+            isError: boolean;
+          }>();
+          const isXSearchTool = (toolName: string | undefined): boolean =>
+            toolName === XAI_X_SEARCH_TOOL_NAME || toolName === 'xai.x_search';
+          const emitProviderSearchResult = (toolCallId: string): void => {
+            const stored = providerSearchResults.get(toolCallId);
+            if (!stored) return;
+            controller.enqueue(formatSSE({
+              type: 'tool_result',
+              data: JSON.stringify({
+                tool_use_id: toolCallId,
+                content: stored.content,
+                ...(stored.isError ? { is_error: true } : {}),
+                ...(externalSources.length > 0 ? { sources: externalSources } : {}),
+              }),
+            }));
+          };
 
           // guardStream: a fired budget must unblock this loop even when a
           // hung tool ignores the abort signal (ai@7 awaits execute() and
@@ -608,7 +694,11 @@ export function runAgentLoop(options: AgentLoopOptions): ReadableStream<string> 
                 break;
 
               case 'tool-call':
-                hasToolCalls = true;
+                // Provider-executed tools already ran upstream. They remain
+                // visible/auditable, but must not force another manual loop
+                // step as though CodePilot needed to execute them locally.
+                if (!event.providerExecuted) hasToolCalls = true;
+                else hasContent = true;
                 stepToolNames.push(event.toolName);
                 distinctTools.add(event.toolName);
                 // Phase 7 — accumulate for Context Accounting at result time.
@@ -644,6 +734,12 @@ export function runAgentLoop(options: AgentLoopOptions): ReadableStream<string> 
                   : JSON.stringify(event.output);
                 // Phase 7 — accumulate for Context Accounting.
                 toolInvocationAccumulator.recordToolResult(event.toolCallId, resultText);
+                if (event.providerExecuted && isXSearchTool(event.toolName)) {
+                  providerSearchResults.set(event.toolCallId, {
+                    content: resultText,
+                    isError: false,
+                  });
+                }
                 controller.enqueue(formatSSE({
                   type: 'tool_result',
                   data: JSON.stringify({
@@ -651,6 +747,9 @@ export function runAgentLoop(options: AgentLoopOptions): ReadableStream<string> 
                     content: resultText,
                     is_error: false,
                     ...(media && media.length > 0 ? { media } : {}),
+                    ...(event.providerExecuted && isXSearchTool(event.toolName) && externalSources.length > 0
+                      ? { sources: externalSources }
+                      : {}),
                   }),
                 }));
                 break;
@@ -679,10 +778,33 @@ export function runAgentLoop(options: AgentLoopOptions): ReadableStream<string> 
                 break;
               }
 
+              case 'source': {
+                const source = normalizeExternalUrlSource(event);
+                if (!source) break;
+                externalSources = appendUniqueExternalSource(externalSources, source);
+                // xAI emits citations as separate source parts, commonly
+                // after the provider-executed tool result. Re-emit the same
+                // tool_result id with richer evidence; all consumers use
+                // last-wins replacement, so no duplicate tool card appears.
+                for (const toolCallId of providerSearchResults.keys()) {
+                  emitProviderSearchResult(toolCallId);
+                }
+                break;
+              }
+
               case 'error':
                 controller.enqueue(formatSSE({
                   type: 'error',
-                  data: typeof event.error === 'string' ? event.error : JSON.stringify({ userMessage: String(event.error) }),
+                  data: xaiSearchEnabled
+                    ? JSON.stringify(buildNativeErrorEventData(
+                        event.error,
+                        undefined,
+                        undefined,
+                        { xaiSearchEnabled: true },
+                      ))
+                    : (typeof event.error === 'string'
+                        ? event.error
+                        : JSON.stringify({ userMessage: String(event.error) })),
                 }));
                 break;
 
@@ -694,6 +816,14 @@ export function runAgentLoop(options: AgentLoopOptions): ReadableStream<string> 
 
           // Step's stream fully consumed — clear step-scoped timeout budgets.
           timeoutCtl.onStepEnd();
+
+          // AI SDK's response metadata is the Runtime/Provider fact for the
+          // model that actually answered. Keep the last step's value and
+          // expose it in the terminal SSE result so managed Native Sub Agents
+          // can fail closed on an upstream fallback instead of echoing the
+          // requested catalog route as though it were effective.
+          const responseData = await result.response;
+          runtimeReportedModel = responseData.modelId?.trim() || runtimeReportedModel;
 
           // Usage is accumulated in onStepFinish callback above
 
@@ -728,7 +858,6 @@ export function runAgentLoop(options: AgentLoopOptions): ReadableStream<string> 
           // Update messages for next iteration.
           // streamText returns the full message list including our input + model response.
           // Use response.messages which contains properly typed ModelMessage[].
-          const responseData = await result.response;
           messages = [...messages, ...responseData.messages] as ModelMessage[];
         }
 
@@ -785,6 +914,7 @@ export function runAgentLoop(options: AgentLoopOptions): ReadableStream<string> 
             usage: usageWithAccounting,
             session_id: sessionId,
             num_turns: step,
+            ...(runtimeReportedModel ? { model_id: runtimeReportedModel } : {}),
           }),
         }));
 
@@ -825,7 +955,12 @@ export function runAgentLoop(options: AgentLoopOptions): ReadableStream<string> 
               : undefined;
           controller.enqueue(formatSSE({
             type: 'error',
-            data: JSON.stringify(buildNativeErrorEventData(err, errorAccounting, timedOut)),
+            data: JSON.stringify(buildNativeErrorEventData(
+              err,
+              errorAccounting,
+              timedOut,
+              { xaiSearchEnabled },
+            )),
           }));
         }
 

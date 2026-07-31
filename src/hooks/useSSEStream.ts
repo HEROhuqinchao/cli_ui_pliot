@@ -1,5 +1,5 @@
 import { useRef, useCallback } from 'react';
-import type { SSEEvent, TokenUsage, PermissionRequestEvent, MediaBlock } from '@/types';
+import type { SSEEvent, TokenUsage, PermissionRequestEvent, MediaBlock, ExternalSource } from '@/types';
 import {
   isReviewEventState,
   isReviewerSource,
@@ -19,6 +19,7 @@ interface ToolResultInfo {
   content: string;
   is_error?: boolean;
   media?: MediaBlock[];
+  sources?: ExternalSource[];
 }
 
 export interface SkillNudgeData {
@@ -122,8 +123,10 @@ export interface RateLimitInfo {
  */
 export const TOAST_STATUS_CODES = new Set<string>([
   'RUNTIME_EFFORT_IGNORED', // Opus 4.7+ family on native runtime — explicit effort dropped
+  'RUNTIME_EFFORT_ADJUSTED', // Opus 5: disabled thinking caps xhigh/max to high
   'THINKING_ALWAYS_ON', // Fable 5 — thinking:'disabled' cannot be honored, adaptive runs anyway
   'SAMPLING_PARAMS_IGNORED', // temperature/top_p/top_k stripped or unsendable on this model/runtime
+  'SUBAGENT_MODEL_UNAVAILABLE', // Current Claude Code provider cannot route the requested child model
 ]);
 
 /**
@@ -163,8 +166,10 @@ export function maybeShowStatusToast(
   void import('./useToast').then(({ showToast }) => {
     showToast({
       type: statusData.code === 'RUNTIME_EFFORT_IGNORED'
+        || statusData.code === 'RUNTIME_EFFORT_ADJUSTED'
         || statusData.code === 'THINKING_ALWAYS_ON'
         || statusData.code === 'SAMPLING_PARAMS_IGNORED'
+        || statusData.code === 'SUBAGENT_MODEL_UNAVAILABLE'
         ? 'warning'
         : 'info',
       message: text || 'Status notification',
@@ -219,6 +224,9 @@ function handleSSEEvent(
           ...(resultData.is_error ? { is_error: true } : {}),
           ...(Array.isArray(resultData.media) && resultData.media.length > 0
             ? { media: resultData.media }
+            : {}),
+          ...(Array.isArray(resultData.sources) && resultData.sources.length > 0
+            ? { sources: resultData.sources }
             : {}),
         });
       } catch (err) {

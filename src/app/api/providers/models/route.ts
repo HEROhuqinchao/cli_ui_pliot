@@ -5,38 +5,13 @@ import { isFirstPartyAnthropicEndpoint } from '@/lib/ai-provider';
 import { getDefaultModelsForProvider, getEffectiveProviderProtocol, findPresetForLegacy, ENV_CLAUDE_CODE_MODELS } from '@/lib/provider-catalog';
 import type { Protocol } from '@/lib/provider-catalog';
 import type { ErrorResponse, ProviderModelGroup } from '@/types';
-import { getOAuthStatus } from '@/lib/openai-oauth-manager';
-import { getXaiOAuthStatus } from '@/lib/xai-oauth-manager';
+import { listManagedVirtualProviderModelGroups } from '@/lib/managed-virtual-provider-models';
 import {
   getProviderCompat,
   getModelCompat,
   isOpenRouterAnthropicSkinUrl,
 } from '@/lib/runtime-compat';
 import { isChatRuntimeParam, resolveChatRuntimeParam, type ChatRuntime } from '@/lib/chat-runtime';
-
-// OpenAI models reachable through the legacy ChatGPT Plus/Pro OAuth login
-// (`openai-oauth`, compat: codepilot_only).
-//
-// NOT the same thing as the `codex_account` group built by
-// `@/lib/codex/models` further down (Phase 0, 2026-07-17):
-//   - openai-oauth  — this STATIC, hand-maintained list. Reasoning effort is
-//     fixed to 'medium' server-side and is NOT user-configurable, so these
-//     entries deliberately carry no effort capability metadata and the
-//     composer's effort selector stays hidden for them.
-//   - codex_account — DYNAMIC, sourced from the Codex app-server's
-//     `model/list`, per-model effort tiers, runtime `codex_runtime`.
-//
-// Because this list is static it necessarily LAGS upstream. Do not hand-add
-// models (e.g. GPT-5.6) to make the picker look current: an entry here is a
-// claim that THIS OAuth path can serve that model, which nothing verifies.
-// New Codex models must arrive through the codex_account group instead.
-const OPENAI_OAUTH_MODELS = [
-  { value: 'gpt-5.5', label: 'GPT-5.5' },
-  { value: 'gpt-5.4', label: 'GPT-5.4' },
-  { value: 'gpt-5.4-mini', label: 'GPT-5.4-Mini' },
-  { value: 'gpt-5.3-codex', label: 'GPT-5.3-Codex' },
-  { value: 'gpt-5.3-codex-spark', label: 'GPT-5.3-Codex-Spark' },
-];
 
 // Default Claude model options (for the built-in 'env' provider).
 // Capability metadata ensures `xhigh` appears in the effort dropdown even
@@ -131,6 +106,37 @@ export function normalizeModelCapabilitySurface(model: ModelEntry): ModelEntry {
 function sameModelIdentity(a: ModelEntry, b: ModelEntry): boolean {
   const aIds = new Set([a.value, a.upstreamModelId].filter((id): id is string => !!id));
   return [b.value, b.upstreamModelId].some(id => !!id && aIds.has(id));
+}
+
+/**
+ * The SDK's `supportedModels()` result is an additional runtime surface, not
+ * an authoritative replacement for CodePilot's canonical env catalog.
+ *
+ * In Claude Code 2.1.220 the SDK reports only five convenience entries
+ * (`default`, `opus[1m]`, `claude-fable-5[1m]`, `sonnet`, `haiku`). Replacing
+ * the catalog with that list made explicit, successfully-routed selections
+ * such as `opus-5 → claude-opus-5` disappear after the first response. The
+ * composer then auto-corrected the missing row to `default`, so the visible
+ * model changed even though `chat_sessions.model` and the wire route remained
+ * Opus 5.
+ *
+ * Keep canonical rows stable and append genuinely new SDK convenience
+ * entries. When identities overlap, the canonical row wins: a short SDK alias
+ * can describe a newer moving target (for example `sonnet` currently describes
+ * Sonnet 5) while CodePilot deliberately pins its canonical `sonnet` row to
+ * Sonnet 4.6 to avoid silently migrating saved sessions.
+ */
+export function mergeEnvCatalogWithSdkModels(
+  catalogModels: readonly ModelEntry[],
+  sdkModels: readonly ModelEntry[],
+): ModelEntry[] {
+  const merged = [...catalogModels];
+  for (const sdkModel of sdkModels) {
+    if (!merged.some(existing => sameModelIdentity(existing, sdkModel))) {
+      merged.push(sdkModel);
+    }
+  }
+  return merged;
 }
 
 /**
@@ -243,14 +249,17 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    // If SDK has discovered models, use them for the env group
+    // If SDK has discovered models, add its runtime-only convenience entries
+    // without deleting CodePilot's explicit canonical routes. The SDK list is
+    // intentionally incomplete (for example it may omit `opus-5` after a
+    // successful `claude-opus-5` turn), so it must never replace this group.
     const envGroup = groups.find(g => g.provider_id === 'env');
     if (envGroup) {
       try {
         const { getCachedModels } = await import('@/lib/agent-sdk-capabilities');
         const sdkModels = getCachedModels('env');
         if (sdkModels.length > 0) {
-          envGroup.models = sdkModels.map(m => {
+          const sdkModelEntries = sdkModels.map(m => {
             // SDK sometimes returns short aliases (e.g. 'opus') — map to
             // the concrete upstream so context window and downstream
             // sanitizer checks agree with the env provider's resolver.
@@ -267,6 +276,7 @@ export async function GET(request: NextRequest) {
               ...(cw != null ? { contextWindow: cw } : {}),
             };
           });
+          envGroup.models = mergeEnvCatalogWithSdkModels(envGroup.models, sdkModelEntries);
         }
       } catch {
         // SDK capabilities not available, keep defaults
@@ -472,36 +482,25 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    // Add OpenAI OAuth virtual provider when authenticated
-    try {
-      const oauthStatus = getOAuthStatus();
-      if (oauthStatus.authenticated) {
-        groups.push({
-          provider_id: 'openai-oauth',
-          provider_name: `OpenAI${oauthStatus.plan ? ` (${oauthStatus.plan})` : ''}`,
-          provider_type: 'openai-oauth',
-          preset_key: 'openai-oauth',
-          protocol: 'openai-compatible',
-          compat: 'codepilot_only',
-          models: OPENAI_OAUTH_MODELS,
-        });
-      }
-    } catch { /* OpenAI OAuth module not available */ }
-
-    try {
-      const xaiStatus = getXaiOAuthStatus();
-      if (xaiStatus.enabled && xaiStatus.authenticated) {
-        groups.push({
-          provider_id: 'xai-oauth',
-          provider_name: 'xAI Grok OAuth',
-          provider_type: 'xai-oauth',
-          preset_key: 'xai-oauth',
-          protocol: 'xai',
-          compat: 'codepilot_only',
-          models: [{ value: 'grok-4.5', label: 'Grok 4.5' }],
-        });
-      }
-    } catch { /* xAI OAuth module not available */ }
+    // Authenticated virtual providers share one catalog with managed
+    // Sub-agent route discovery. Do not hand-add a provider here: doing so
+    // caused v0.60.0 to show Grok in the picker while rejecting it as a child.
+    for (const virtual of listManagedVirtualProviderModelGroups()) {
+      groups.push({
+        provider_id: virtual.providerId,
+        provider_name: virtual.providerName,
+        provider_type: virtual.providerType,
+        preset_key: virtual.presetKey,
+        protocol: virtual.protocol,
+        compat: virtual.compat,
+        models: virtual.models.map(model => ({
+          value: model.modelId,
+          label: model.displayName,
+          ...(model.upstreamModelId ? { upstreamModelId: model.upstreamModelId } : {}),
+          ...(model.capabilities ? { capabilities: model.capabilities } : {}),
+        })),
+      });
+    }
 
     // Phase 5 Phase 2 (2026-05-13) — Codex Account virtual provider.
     //

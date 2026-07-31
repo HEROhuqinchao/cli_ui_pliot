@@ -63,20 +63,31 @@ import { getBuiltinTools } from './builtin-tools';
 import { checkPermission, type PermissionMode } from './permission-checker';
 import { registerPendingPermission, buildPermissionResolvedEvent } from './permission-registry';
 import { emit as emitEvent } from './runtime/event-bus';
-import { createPermissionRequest } from './db';
+import { createPermissionRequest, recordSubagentRunEvent } from './db';
 import { issueApprovalToken } from './permission-approval-token';
 import crypto from 'crypto';
+import type { ProviderCallScene } from './provider-call-policy';
 
 export interface AssembleToolsOptions {
   workingDirectory?: string;
   prompt?: string;
   mode?: string;
+  /** Runtime lifecycle identity. Kept separate from permission wrapping so
+   * full_access can skip approval checks without losing persistence/cancel. */
+  sessionId?: string;
+  emitSSE?: (event: { type: string; data: string }) => void;
+  abortSignal?: AbortSignal;
   /** Provider ID (passed to sub-agents for inheritance) */
   providerId?: string;
   /** Session provider ID (passed to sub-agents for inheritance) */
   sessionProviderId?: string;
   /** Model (passed to sub-agents for inheritance) */
   model?: string;
+  /** Scene of the parent invocation. Delegation is fail-closed outside chat. */
+  callScene?: ProviderCallScene;
+  /** Parent session already resolved the full-access profile. Child tools may
+   * inherit the unwrapped surface only when this explicit fact is present. */
+  bypassPermissions?: boolean;
   /** Permission context — when set, tools are wrapped with permission checks */
   permissionContext?: {
     sessionId: string;
@@ -84,6 +95,9 @@ export interface AssembleToolsOptions {
     /** Callback to emit SSE events (for permission_request) */
     emitSSE: (event: { type: string; data: string }) => void;
     abortSignal?: AbortSignal;
+    /** Optional child-run attribution while persisting against the parent chat session. */
+    agentRunId?: string;
+    childSessionId?: string;
   };
 }
 
@@ -104,13 +118,15 @@ export function assembleTools(options: AssembleToolsOptions = {}): AssembleTools
   // (Agent tool) can inherit the parent's permission mode and SSE emitter.
   const builtinTools = createBuiltinTools({
     workingDirectory: cwd,
-    sessionId: options.permissionContext?.sessionId,
+    sessionId: options.sessionId ?? options.permissionContext?.sessionId,
     providerId: options.providerId,
     sessionProviderId: options.sessionProviderId,
     model: options.model,
-    permissionMode: options.permissionContext?.permissionMode,
-    emitSSE: options.permissionContext?.emitSSE,
-    abortSignal: options.permissionContext?.abortSignal,
+    permissionMode: options.permissionContext?.permissionMode ?? options.mode,
+    bypassPermissions: options.bypassPermissions,
+    emitSSE: options.emitSSE ?? options.permissionContext?.emitSSE,
+    abortSignal: options.abortSignal ?? options.permissionContext?.abortSignal,
+    parentCallScene: options.callScene,
   });
 
   // In 'plan' mode, restrict to read-only tools — but #26: keep the
@@ -125,7 +141,7 @@ export function assembleTools(options: AssembleToolsOptions = {}): AssembleTools
     const { tools: safeMcpTools, systemPrompts } = getBuiltinTools({
       workspacePath: cwd,
       prompt: options.prompt,
-      sessionId: options.permissionContext?.sessionId,
+      sessionId: options.sessionId ?? options.permissionContext?.sessionId,
       safeReadOnly: true,
     });
     const safeBuiltin = Object.fromEntries(
@@ -143,7 +159,7 @@ export function assembleTools(options: AssembleToolsOptions = {}): AssembleTools
   const { tools: builtinMcpTools, systemPrompts } = getBuiltinTools({
     workspacePath: cwd,
     prompt: options.prompt,
-    sessionId: options.permissionContext?.sessionId,
+    sessionId: options.sessionId ?? options.permissionContext?.sessionId,
   });
 
   // External MCP tools from connected servers
@@ -253,8 +269,18 @@ export function wrapWithPermissions(
               toolInput: input,
               description: result.reason,
               approvalToken: issueApprovalToken(permId, expiresAt),
+              ...(ctx.agentRunId ? { agentRunId: ctx.agentRunId } : {}),
+              ...(ctx.childSessionId ? { childSessionId: ctx.childSessionId } : {}),
             }),
           });
+          if (ctx.agentRunId) {
+            recordSubagentRunEvent(ctx.agentRunId, {
+              type: 'permission_requested',
+              activity: `Waiting for permission: ${name}`,
+              toolName: name,
+              payload: { permissionRequestId: permId },
+            });
+          }
 
           // Wait for user response. onTimeout pushes a permission_resolved
           // (timeout) event down the same SSE stream so the chat UI shows the
@@ -265,7 +291,7 @@ export function wrapWithPermissions(
             ctx.abortSignal,
             () => {
               try {
-                ctx.emitSSE(buildPermissionResolvedEvent(permId));
+                ctx.emitSSE(buildPermissionResolvedEvent(permId, ctx));
               } catch {
                 // stream already closed — deny still applies
               }
@@ -273,6 +299,19 @@ export function wrapWithPermissions(
           );
 
           emitEvent('permission:resolved', { sessionId: ctx.sessionId, toolName: name, behavior: permResult.behavior });
+          if (ctx.agentRunId) {
+            recordSubagentRunEvent(ctx.agentRunId, {
+              type: 'permission_resolved',
+              activity: permResult.behavior === 'allow'
+                ? `Permission approved: ${name}`
+                : `Permission denied: ${name}`,
+              toolName: name,
+              payload: {
+                permissionRequestId: permId,
+                behavior: permResult.behavior,
+              },
+            });
+          }
 
           if (permResult.behavior === 'deny') {
             return `Permission denied by user: ${permResult.message || 'Denied'}`;
@@ -304,4 +343,3 @@ export function wrapWithPermissions(
 
   return wrapped;
 }
-

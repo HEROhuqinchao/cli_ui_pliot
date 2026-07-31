@@ -8,6 +8,7 @@
 
 | 文档 | 对应交接文档 | 主题 |
 |------|------------|------|
+| [same-runtime-multi-model-subagents.md](./same-runtime-multi-model-subagents.md) | [handover/same-runtime-multi-model-subagents.md](../handover/same-runtime-multi-model-subagents.md) | 为什么主控跟随当前会话、Profile 只做可选身份模板、为什么先 same-runtime/read-only、Agent 卡片与 requested/effective 诚实展示的产品取舍 |
 | [qwen-token-plan-grok-access.md](./qwen-token-plan-grok-access.md) | [handover/qwen-token-plan-grok-access.md](../handover/qwen-token-plan-grok-access.md) | 为什么套餐 identity 不能靠 URL、为什么订阅凭据需要场景 gate、xAI API Key/OAuth 双渠道取舍与真实 OAuth 完成感反馈 |
 | [cli-tools.md](./cli-tools.md) | [handover/cli-tools.md](../handover/cli-tools.md) | CLI 工具管理的 MCP 化、Agent-first CLI 趋势、凭证管理痛点 |
 | [new-chat-greeting.md](./new-chat-greeting.md) | [handover/new-chat-greeting.md](../handover/new-chat-greeting.md) | 新对话欢迎语为何按时间/场景变化：问候+问句拆分、场景优先级、首屏先中性句再替换的取舍、品牌语气可调 |
@@ -22,6 +23,7 @@
 | [models-provider-experience.md](./models-provider-experience.md) | [handover/models-provider-experience.md](../handover/models-provider-experience.md) | Models / Providers 体验收敛：只保留默认模型、可用模型、添加模型三条主路径，模型刷新和迁移状态降级为高级操作 |
 | [decouple-native-runtime.md](./decouple-native-runtime.md) | [handover/decouple-native-runtime.md](../handover/decouple-native-runtime.md) | 脱离 Claude Code：用户痛点（安装门槛/单一锁定）、双 Runtime 设计理由、OpenAI 集成、参考项目对比 |
 | [markdown-artifact-overhaul.md](./markdown-artifact-overhaul.md) | [handover/markdown-artifact-overhaul.md](../handover/markdown-artifact-overhaul.md) | Markdown/Artifact 重构：卡片点击 vs 自动弹、升级 DiffSummary、分档 50000 行 + 截断提示、PreviewPanel 编辑即核心能力、单文件 React 产品边界、长图走隐藏窗口复用、两段失败路径复盘 |
+| [markdown-live-preview-file-tree.md](./markdown-live-preview-file-tree.md) | [handover/markdown-live-preview-file-tree.md](../handover/markdown-live-preview-file-tree.md) | 为什么取消 Markdown 多主题并采用 CM6 单页 Live Preview；为什么文件操作需要跨 owner transaction；为什么文件夹 arrow-only、文件使用静态类型图标 |
 | [phase-4-markdown-artifact.md](./phase-4-markdown-artifact.md) | [handover/phase-4-markdown-artifact.md](../handover/phase-4-markdown-artifact.md) | Phase 4 Markdown 数据层 × HTML 表现层：Markdown 是数据 / HTML 是衍生表现、trust 三档而非 binary、同源路由 + path scope 取代 base 注入、CSP 4 轮收紧到禁 URL-shaped exfiltration、Save-HTML deferred 的产品判断、3 段弯路复盘 |
 | [chat-composer-redesign.md](./chat-composer-redesign.md) | [handover/chat-composer-redesign.md](../handover/chat-composer-redesign.md) | Chat 页从"工具集合"收敛到"Agent 工作入口"：按钮越少越好、出问题才显示、Run 状态聚合 vs 散落 chip、外部 review 防过拟合、Codex 决策日志 |
 | [chat-run-checkpoint.md](./chat-run-checkpoint.md) | [handover/chat-run-checkpoint.md](../handover/chat-run-checkpoint.md) | 发送前信任层 Round 1：为什么 inline banner 而不是 modal、为什么不能"在 settings 里关掉"、统一视觉=统一认知、Round 1 取舍（先做配置异常，最后做危险工具调用） |

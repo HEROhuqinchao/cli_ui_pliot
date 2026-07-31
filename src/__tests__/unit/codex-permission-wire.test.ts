@@ -20,7 +20,7 @@ describe('resolveCodexPermissionWire', () => {
     assert.deepEqual(wire.turn, {
       approvalPolicy: 'on-request',
       approvalsReviewer: 'auto_review',
-      sandboxPolicy: { type: 'workspaceWrite', writableRoots: [], networkAccess: false },
+      sandboxPolicy: { type: 'workspaceWrite', writableRoots: [], networkAccess: true },
     });
   });
 
@@ -42,7 +42,7 @@ describe('resolveCodexPermissionWire', () => {
       approvalsReviewer: 'user',
       sandbox: 'read-only',
     });
-    assert.deepEqual(wire.turn.sandboxPolicy, { type: 'readOnly', networkAccess: false });
+    assert.deepEqual(wire.turn.sandboxPolicy, { type: 'readOnly', networkAccess: true });
   });
 
   it('default asks the user inside a workspace sandbox', () => {
@@ -50,6 +50,11 @@ describe('resolveCodexPermissionWire', () => {
     assert.equal(wire.thread.approvalPolicy, 'on-request');
     assert.equal(wire.thread.approvalsReviewer, 'user');
     assert.equal(wire.thread.sandbox, 'workspace-write');
+    assert.deepEqual(wire.turn.sandboxPolicy, {
+      type: 'workspaceWrite',
+      writableRoots: [],
+      networkAccess: true,
+    });
   });
 });
 
@@ -89,7 +94,7 @@ describe('Codex runtime consumes the permission mapping at every sticky boundary
     'utf8',
   );
 
-  it('thread start/resume share permission-bearing threadParams', () => {
+  it('thread start/resume share permission-bearing base params while start may add start-only fields', () => {
     assert.match(source, /let codexPermission = resolveCodexPermissionWire\(/);
     assert.match(source, /getCodexAutoReviewCapability\(\)/);
     assert.match(
@@ -98,8 +103,16 @@ describe('Codex runtime consumes the permission mapping at every sticky boundary
     );
     assert.match(source, /const threadParams = \{[\s\S]{0,1200}\.\.\.codexPermission\.thread/);
     assert.match(source, /client\.request(?:<[^>]+>)?\('thread\/resume',[\s\S]{0,180}\.\.\.threadParams/);
-    const starts = [...source.matchAll(/['"]thread\/start['"],\s*\n?\s*threadParams/g)];
-    assert.ok(starts.length >= 2, 'fresh and resume-fallback thread/start must both receive threadParams');
+    assert.match(
+      source,
+      /const threadStartParams =[\s\S]{0,300}\.\.\.threadParams/,
+      'thread/start params must extend the same permission-bearing base used by resume',
+    );
+    const starts = [...source.matchAll(/['"]thread\/start['"],\s*\n?\s*threadStartParams/g)];
+    assert.ok(
+      starts.length >= 2,
+      'fresh and resume-fallback thread/start must both receive the shared start params',
+    );
   });
 
   it('validates every thread start/resume response before turn/start', () => {

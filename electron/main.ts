@@ -18,7 +18,7 @@ if (!sentryDisabled) {
   });
 }
 
-import { app, BrowserWindow, Notification, nativeImage, dialog, session, utilityProcess, ipcMain, shell, Tray, Menu } from 'electron';
+import { app, BrowserWindow, Notification, nativeImage, nativeTheme, dialog, session, utilityProcess, ipcMain, shell, Tray, Menu } from 'electron';
 import path from 'path';
 import { execFileSync, spawn, ChildProcess } from 'child_process';
 import fs from 'fs';
@@ -31,6 +31,8 @@ import { getTrayMenuLabels } from '../src/lib/tray-menu-labels';
 import { BoundedLineRing } from '../src/lib/logging/bounded-line-ring';
 import { createRotatingLogWriter, type RotatingLogWriter } from '../src/lib/logging/main-log-rotation';
 import { classifyNavigation } from '../src/lib/navigation-policy';
+import { buildProxySafeEnvironment } from '../src/lib/process-proxy-env';
+import { isNativeThemeSource } from '../src/lib/native-theme-source';
 
 // B-025: hard caps for the persistent main log + the in-memory server-output
 // ring. The 12.5 GB log a user hit came from an unbounded active file plus an
@@ -867,20 +869,28 @@ function startServer(port: number): Electron.UtilityProcess {
   const home = os.homedir();
   const constructedPath = getExpandedShellPath();
 
-  const env: Record<string, string> = {
-    ...userShellEnv,
-    ...sanitizedProcessEnv(),
-    // Ensure user shell env vars override (especially API keys)
-    ...userShellEnv,
-    // Inject system proxy (only if not already set in shell env)
-    ...(!userShellEnv.HTTP_PROXY && !userShellEnv.HTTPS_PROXY ? resolvedProxyEnv : {}),
-    PORT: String(port),
-    HOSTNAME: '127.0.0.1',
-    CLAUDE_GUI_DATA_DIR: path.join(home, '.codepilot'),
-    HOME: home,
-    USERPROFILE: home,
-    PATH: constructedPath,
-  };
+  const env = buildProxySafeEnvironment({
+    // Ensure user shell env vars override inherited values (especially API
+    // keys). On Windows loadUserShellEnv() is empty, so inherited process.env
+    // remains the explicit-proxy source of truth.
+    baseEnv: {
+      ...sanitizedProcessEnv(),
+      ...userShellEnv,
+    },
+    // Chromium's system proxy is only a fallback. The shared helper checks all
+    // upper/lower-case proxy keys before applying it, then ensures loopback
+    // traffic cannot be sent through Clash/Surge/etc.
+    fallbackProxyEnv: resolvedProxyEnv,
+    overrides: {
+      PORT: String(port),
+      HOSTNAME: '127.0.0.1',
+      CLAUDE_GUI_DATA_DIR: path.join(home, '.codepilot'),
+      HOME: home,
+      USERPROFILE: home,
+      PATH: constructedPath,
+    },
+    platform: process.platform,
+  }) as Record<string, string>;
 
   // Use Electron's utilityProcess to run the server in a child process
   // without spawning a separate Dock icon on macOS.
@@ -974,6 +984,50 @@ const LOADING_HTML = `data:text/html;charset=utf-8,${encodeURIComponent(`<!DOCTY
 </body>
 </html>`)}`;
 
+/**
+ * Give every editable renderer surface the platform-native editing menu.
+ *
+ * Chromium does not add a copy/paste context menu to Electron inputs by
+ * default. Keeping this in the main process covers ordinary inputs,
+ * textareas and contenteditable editors (including CodeMirror) without each
+ * React component having to reimplement clipboard behavior. Electron roles
+ * also supply native labels, shortcuts and enablement semantics per platform.
+ */
+function attachRendererEditingContextMenu(targetWindow: BrowserWindow): void {
+  targetWindow.webContents.on('context-menu', (_event, params) => {
+    const hasSelection = params.selectionText.length > 0;
+    const isPassword = params.inputFieldType === 'password';
+
+    if (!params.isEditable && !hasSelection) return;
+
+    const template: Electron.MenuItemConstructorOptions[] = params.isEditable
+      ? [
+          { role: 'undo', enabled: params.editFlags.canUndo },
+          { role: 'redo', enabled: params.editFlags.canRedo },
+          { type: 'separator' },
+          {
+            role: 'cut',
+            enabled: !isPassword && params.editFlags.canCut,
+          },
+          {
+            role: 'copy',
+            enabled: !isPassword && params.editFlags.canCopy,
+          },
+          { role: 'paste', enabled: params.editFlags.canPaste },
+          { role: 'delete', enabled: params.editFlags.canDelete },
+          { type: 'separator' },
+          { role: 'selectAll', enabled: params.editFlags.canSelectAll },
+        ]
+      : [
+          { role: 'copy', enabled: hasSelection },
+          { type: 'separator' },
+          { role: 'selectAll' },
+        ];
+
+    Menu.buildFromTemplate(template).popup({ window: targetWindow });
+  });
+}
+
 function createWindow(url?: string) {
   const windowOptions: Electron.BrowserWindowConstructorOptions = {
     width: 1280,
@@ -1005,9 +1059,11 @@ function createWindow(url?: string) {
     //   ELECTRON_VIBRANCY=menu|sidebar|under-window|content|fullscreen-ui|off
     //   ELECTRON_TRANSPARENT=true|false                   (default: true)
     //
-    // Defaults reflect what we know so far:
-    //   - `'menu'` is what /Applications/Codex.app actually uses
-    //     as its primary window material (verified in app.asar).
+    // Default material:
+    //   - `'under-window'` keeps the native translucent backing while
+    //     preserving more background definition than the heavier
+    //     `'menu'` material. The user selected this after a same-window
+    //     visual comparison on 2026-07-30.
     //   - `transparent: true` makes Electron honor an alpha-0
     //     backgroundColor on macOS — required for `vibrancy` to
     //     surface unless we go the davidcann route of native
@@ -1024,7 +1080,7 @@ function createWindow(url?: string) {
     const envVibrancy = process.env.ELECTRON_VIBRANCY;
     const vibrancyChoice = envVibrancy && (VIBRANCY_CANDIDATES.has(envVibrancy) || envVibrancy === 'off')
       ? envVibrancy
-      : 'menu';
+      : 'under-window';
     const envTransparent = process.env.ELECTRON_TRANSPARENT;
     const transparentChoice = envTransparent === 'false' ? false : true;
 
@@ -1061,6 +1117,7 @@ function createWindow(url?: string) {
   }
 
   mainWindow = new BrowserWindow(windowOptions);
+  attachRendererEditingContextMenu(mainWindow);
 
   // External links: open in system default browser instead of Electron
   mainWindow.webContents.setWindowOpenHandler(({ url: targetUrl }) => {
@@ -2016,6 +2073,16 @@ app.whenReady().then(async () => {
     } catch {
       return null;
     }
+  });
+
+  // Keep the NSVisualEffectView appearance aligned with the renderer's
+  // next-themes mode. Without this bridge, an app-level dark selection can
+  // sit over a light native material (or vice versa), which previously led us
+  // to hide the mismatch behind an almost-opaque CSS tint.
+  ipcMain.handle('theme:set-source', (_event, source: unknown) => {
+    if (!isNativeThemeSource(source)) return false;
+    nativeTheme.themeSource = source;
+    return true;
   });
 
   // Bridge status IPC
