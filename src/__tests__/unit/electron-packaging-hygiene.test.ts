@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, it } from 'node:test';
+import { createPackage } from '@electron/asar';
 
 const repoRoot = path.resolve(__dirname, '../../..');
 const hygieneScript = path.join(repoRoot, 'scripts/clean-electron-build.mjs');
@@ -34,6 +35,35 @@ describe('Electron packaging hygiene', () => {
       assert.equal(fs.existsSync(path.join(fixture, '.next')), false);
       assert.equal(fs.existsSync(path.join(fixture, 'dist-electron')), false);
       assert.equal(fs.readFileSync(path.join(fixture, 'keep.txt'), 'utf8'), 'keep');
+    } finally {
+      fs.rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses cleanup before touching a live Next dev output tree', () => {
+    const fixture = makeFixture();
+    try {
+      fs.mkdirSync(path.join(fixture, '.next/dev'), { recursive: true });
+      fs.writeFileSync(path.join(fixture, '.next/dev/lock'), 'locked');
+      fs.mkdirSync(path.join(fixture, 'release'), { recursive: true });
+      fs.writeFileSync(path.join(fixture, 'release/keep.txt'), 'keep');
+
+      const result = spawnSync(process.execPath, [hygieneScript], {
+        cwd: fixture,
+        encoding: 'utf8',
+      });
+
+      assert.notEqual(result.status, 0);
+      assert.match(result.stderr, /Refusing to build[\s\S]*next\/dev\/lock/);
+      assert.equal(
+        fs.readFileSync(path.join(fixture, 'release/keep.txt'), 'utf8'),
+        'keep',
+        'the guard must run before any build artifact is removed',
+      );
+      assert.equal(
+        fs.existsSync(path.join(fixture, '.next/dev/lock')),
+        true,
+      );
     } finally {
       fs.rmSync(fixture, { recursive: true, force: true });
     }
@@ -124,6 +154,14 @@ describe('Electron packaging hygiene', () => {
       packageJson.scripts['electron:build'],
       /^node scripts\/clean-electron-build\.mjs && next build && node scripts\/build-electron\.mjs$/,
     );
+    assert.equal(
+      packageJson.scripts.prebuild,
+      'node scripts/assert-next-build-safe.mjs',
+    );
+    assert.match(
+      fs.readFileSync(hygieneScript, 'utf8'),
+      /assertNoActiveNextDev\(root\)[\s\S]*for \(const relativeDir/,
+    );
     assert.match(
       fs.readFileSync(path.join(repoRoot, 'scripts/build-electron.mjs'), 'utf8'),
       /sanitizeStandaloneOutput\(process\.cwd\(\)\)/,
@@ -155,6 +193,11 @@ describe('Electron packaging hygiene', () => {
     assert.doesNotMatch(rootRuntimeFileSet, /!node_modules/);
     assert.doesNotMatch(rootRuntimeFileSet, /!release/);
     assert.match(builderConfig, /- from: \.next\/standalone\/node_modules\//);
+    assert.match(builderConfig, /!dist-electron\/\*\*\/\*\.map/);
+    assert.ok(
+      (builderConfig.match(/!\*\*\/\*\.map/g) ?? []).length >= 3,
+      'no JavaScript source map may be copied into a packaged app',
+    );
 
     const nextRuntimeFileSet = builderConfig.match(
       /- from: \.next\/standalone\/\.next\/[\s\S]*?(?=\n  - from: \.next\/standalone\/\.next\/node_modules\/)/,
@@ -181,5 +224,87 @@ describe('Electron packaging hygiene', () => {
     assert.match(releaseWorkflow, /node scripts\/verify-packaged-server\.mjs/);
     assert.match(packagedSmoke, /\/api\/health/);
     assert.match(packagedSmoke, /ELECTRON_RUN_AS_NODE/);
+    assert.match(packagedSmoke, /listPackage/);
+    assert.match(packagedSmoke, /Packaged source maps are forbidden/);
+  });
+
+  it('publishes Linux x64 and arm64 from native runners behind strict release gates', () => {
+    const releaseWorkflow = fs.readFileSync(
+      path.join(repoRoot, '.github/workflows/build.yml'),
+      'utf8',
+    );
+    const builderConfig = fs.readFileSync(
+      path.join(repoRoot, 'electron-builder.yml'),
+      'utf8',
+    );
+    const linuxJob = releaseWorkflow.match(
+      /  build-linux:\n[\s\S]*?(?=\n  release:)/,
+    )?.[0];
+
+    assert.ok(linuxJob, 'stable workflow must define a Linux build job');
+    assert.match(releaseWorkflow, /options:[\s\S]*?- linux/);
+    assert.match(linuxJob, /fail-fast:\s*false/);
+    assert.match(linuxJob, /arch:\s*x64[\s\S]*?runner:\s*ubuntu-22\.04/);
+    assert.match(linuxJob, /arch:\s*arm64[\s\S]*?runner:\s*ubuntu-22\.04-arm/);
+    assert.match(
+      linuxJob,
+      /electron-builder --linux --\$\{\{ matrix\.arch \}\}/,
+    );
+    assert.match(linuxJob, /Upload Linux source maps to Sentry/);
+    assert.match(linuxJob, /better-sqlite3 OK/);
+    assert.match(linuxJob, /node scripts\/verify-packaged-server\.mjs/);
+    for (const extension of ['AppImage', 'deb', 'rpm']) {
+      assert.match(linuxJob, new RegExp(`release/CodePilot-\\*\\.${extension}`));
+      assert.match(
+        releaseWorkflow,
+        new RegExp(`-name "\\\*\\.${extension}"`),
+      );
+    }
+    assert.match(
+      releaseWorkflow,
+      /needs:\s*\[build-macos, build-windows, build-linux\]/,
+    );
+    assert.match(builderConfig, /linux:[\s\S]*?target:[\s\S]*?- AppImage[\s\S]*?- deb[\s\S]*?- rpm/);
+  });
+
+  it('scans the real Resources tree and app.asar for source maps', async () => {
+    const fixture = makeFixture();
+    const resources = path.join(fixture, 'Resources');
+    const appSource = path.join(fixture, 'app-source');
+    const packagedSmoke = path.join(repoRoot, 'scripts/verify-packaged-server.mjs');
+    try {
+      fs.mkdirSync(resources, { recursive: true });
+      fs.mkdirSync(appSource, { recursive: true });
+      fs.writeFileSync(path.join(appSource, 'main.js'), 'console.log("ok")');
+      await createPackage(appSource, path.join(resources, 'app.asar'));
+
+      const clean = spawnSync(process.execPath, [packagedSmoke, '--source-maps-only', resources], {
+        encoding: 'utf8',
+      });
+      assert.equal(clean.status, 0, clean.stderr);
+      assert.match(clean.stdout, /Resources \+ app\.asar: 0 maps/);
+
+      fs.writeFileSync(path.join(appSource, 'hidden.js.map'), '{}');
+      fs.rmSync(path.join(resources, 'app.asar'));
+      await createPackage(appSource, path.join(resources, 'app.asar'));
+      const asarLeak = spawnSync(process.execPath, [packagedSmoke, '--source-maps-only', resources], {
+        encoding: 'utf8',
+      });
+      assert.notEqual(asarLeak.status, 0);
+      assert.match(asarLeak.stderr, /app\.asar:.*hidden\.js\.map/);
+
+      fs.rmSync(path.join(appSource, 'hidden.js.map'));
+      fs.rmSync(path.join(resources, 'app.asar'));
+      await createPackage(appSource, path.join(resources, 'app.asar'));
+      fs.mkdirSync(path.join(resources, 'standalone'), { recursive: true });
+      fs.writeFileSync(path.join(resources, 'standalone', 'server.js.map'), '{}');
+      const looseLeak = spawnSync(process.execPath, [packagedSmoke, '--source-maps-only', resources], {
+        encoding: 'utf8',
+      });
+      assert.notEqual(looseLeak.status, 0);
+      assert.match(looseLeak.stderr, /standalone.*server\.js\.map/);
+    } finally {
+      fs.rmSync(fixture, { recursive: true, force: true });
+    }
   });
 });

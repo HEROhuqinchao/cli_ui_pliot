@@ -29,6 +29,9 @@ import { parseDBDate } from '@/lib/utils';
 import { usePanel } from '@/hooks/usePanel';
 import { classifyPath } from '@/lib/preview-source';
 import { isWriteTool, isCreateTool, extractWritePath, resolveToolPath } from '@/lib/file-write-tools';
+import { archiveHtmlAsset } from '@/lib/archive-html-asset-client';
+import { inspectLocalPath, openHtmlFileWithSystem } from '@/lib/local-path-navigation';
+import { showToast } from '@/hooks/useToast';
 import { DevOutputSegment } from './DevOutputChips';
 import type { PlannerOutput } from '@/types';
 import { SubagentCard } from './SubagentCard';
@@ -857,7 +860,14 @@ export const MessageItem = memo(function MessageItem({ message, sessionId, isAss
             const resolvedPath = resolveToolPath(rawPath, workingDirectory);
             const parts = resolvedPath.split(/[/\\]/);
             const operation: 'created' | 'modified' = isCreateTool(t.name) ? 'created' : 'modified';
-            return { path: resolvedPath, name: parts[parts.length - 1] || resolvedPath, operation };
+            const archiveable =
+              classifyPath(resolvedPath, workingDirectory).trust === 'workspace';
+            return {
+              path: resolvedPath,
+              name: parts[parts.length - 1] || resolvedPath,
+              operation,
+              archiveable,
+            };
           })
           .filter(f => f.path);
         if (modifiedFiles.length === 0) return null;
@@ -885,6 +895,26 @@ export const MessageItem = memo(function MessageItem({ message, sessionId, isAss
                 ...(baseDir ? { baseDir } : {}),
                 readonly,
               });
+            }}
+            onOpenInSystemBrowser={async (file) => {
+              try {
+                if (!sessionId) throw new Error(t('localReference.unsupported'));
+                const inspection = await inspectLocalPath(file.path, { sessionId });
+                if (inspection.kind !== 'file') {
+                  throw new Error(t('localReference.unsupported'));
+                }
+                await openHtmlFileWithSystem({
+                  path: inspection.realPath,
+                  sessionId,
+                });
+              } catch (error) {
+                showToast({
+                  type: 'error',
+                  message: t('diffSummary.openSystemBrowserFailed', {
+                    reason: error instanceof Error ? error.message : String(error),
+                  }),
+                });
+              }
             }}
             // Phase 3: export long screenshot via the Electron IPC. Only
             // .html/.htm rows pass the PREVIEWABLE+LONGSHOT gate in
@@ -916,6 +946,14 @@ export const MessageItem = memo(function MessageItem({ message, sessionId, isAss
                 alert(`Export failed: ${err instanceof Error ? err.message : String(err)}`);
               }
             }}
+            onArchiveHtml={sessionId ? async (file) => {
+              await archiveHtmlAsset({
+                sessionId,
+                source: 'workspace',
+                filePath: file.path,
+                prompt: file.name,
+              });
+            } : undefined}
           />
         );
       })()}

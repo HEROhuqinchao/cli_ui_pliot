@@ -9,12 +9,16 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { defaultRemarkPlugins, Streamdown } from 'streamdown';
 
 import { CHAT_MARKDOWN_COMPONENTS } from '../../components/chat/markdown-components';
+import { DevOutputMarkdownLink } from '../../components/chat/DevOutputChips';
 import {
   BASE_MARKDOWN_COMPONENTS,
+  MARKDOWN_LINK_CLASS_NAME,
   PREVIEW_MARKDOWN_COMPONENTS,
 } from '../../components/markdown/markdown-contract';
+import { remarkResolveLocalLinks } from '../../lib/markdown/local-link-detector';
 
 const sharedKeys = [
   'h1',
@@ -71,6 +75,90 @@ describe('CodePilot Markdown component contract', () => {
     assert.match(paragraph, /leading-7/);
     assert.match(quote, /border-l-4/);
     assert.match(link, /target="_blank"/);
+    assert.match(link, /text-blue-600/);
+    assert.match(link, /dark:text-blue-400/);
     assert.match(inlineCode, /font-mono/);
+  });
+
+  it('keeps links visibly blue while preserving caller classes', () => {
+    const link = renderToStaticMarkup(
+      createElement(
+        PREVIEW_MARKDOWN_COMPONENTS.a,
+        { href: 'README.md', className: 'caller-link-class' },
+        'Local file',
+      ),
+    );
+
+    assert.match(MARKDOWN_LINK_CLASS_NAME, /text-blue-600/);
+    assert.match(MARKDOWN_LINK_CLASS_NAME, /hover:text-blue-700/);
+    assert.match(MARKDOWN_LINK_CLASS_NAME, /focus-visible:ring-2/);
+    assert.match(link, /text-blue-600/);
+    assert.match(link, /caller-link-class/);
+  });
+
+  it('uses the same blue contract for Codex remote and local links', () => {
+    const remoteLink = renderToStaticMarkup(
+      createElement(DevOutputMarkdownLink, { href: 'https://example.com' }, 'Remote'),
+    );
+    const localLink = renderToStaticMarkup(
+      createElement(DevOutputMarkdownLink, { href: '/tmp/example.md' }, 'Local'),
+    );
+
+    assert.match(remoteLink, /text-blue-600/);
+    assert.match(remoteLink, /target="_blank"/);
+    assert.match(localLink, /text-blue-600/);
+    assert.match(localLink, /data-codepilot-fileref-path="\/tmp\/example.md"/);
+  });
+
+  it('preserves Streamdown navigation attributes after the custom renderer runs', () => {
+    const localLink = renderToStaticMarkup(
+      createElement(
+        DevOutputMarkdownLink,
+        {
+          href: '/workspace/README.md',
+          target: '_blank',
+          rel: 'noreferrer',
+          title: '/workspace/README.md',
+        },
+        'README',
+      ),
+    );
+
+    assert.match(localLink, /href="\/workspace\/README.md"/);
+    assert.match(localLink, /target="_blank"/);
+    assert.match(localLink, /rel="noreferrer"/);
+    assert.match(localLink, /title="\/workspace\/README.md"/);
+  });
+
+  it('renders dangerous schemes as inert text even if upstream hardening changes', () => {
+    const blocked = renderToStaticMarkup(
+      createElement(DevOutputMarkdownLink, { href: 'javascript:alert(1)' }, 'Blocked'),
+    );
+    assert.match(blocked, /<span/);
+    assert.doesNotMatch(blocked, /href=/);
+    assert.doesNotMatch(blocked, /javascript:/);
+  });
+
+  it('routes a real Markdown parse through relative resolution and protocol hardening', () => {
+    const markup = renderToStaticMarkup(
+      createElement(
+        Streamdown,
+        {
+          mode: 'static',
+          components: { a: DevOutputMarkdownLink },
+          remarkPlugins: [
+            ...Object.values(defaultRemarkPlugins),
+            [remarkResolveLocalLinks, { workingDirectory: '/workspace' }],
+          ],
+        },
+        '[README](README.md) [Danger](javascript:alert(1))',
+      ),
+    );
+
+    assert.match(markup, /href="\/workspace\/README.md"/);
+    assert.match(markup, /data-codepilot-fileref-path="\/workspace\/README.md"/);
+    assert.match(markup, /title="\/workspace\/README.md"/);
+    assert.match(markup, /target="_blank"/);
+    assert.doesNotMatch(markup, /href="javascript:/);
   });
 });

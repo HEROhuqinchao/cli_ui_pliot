@@ -130,14 +130,28 @@ function MarkdownTBody(props: ComponentProps<"tbody">) {
   );
 }
 
-function MarkdownLink(props: ComponentProps<"a">) {
-  const external = props.href?.startsWith("http");
+export const MARKDOWN_LINK_CLASS_NAME = cn(
+  "text-blue-600 underline decoration-blue-500/40 underline-offset-4 transition-colors",
+  "hover:text-blue-700 hover:decoration-blue-600",
+  "focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/50",
+  "dark:text-blue-400 dark:hover:text-blue-300 dark:hover:decoration-blue-300",
+);
+
+function MarkdownLink({
+  className,
+  href,
+  target,
+  rel,
+  ...props
+}: ComponentProps<"a">) {
+  const external = href?.startsWith("http");
   return (
     <a
-      className="text-primary underline decoration-primary/30 underline-offset-4 hover:decoration-primary"
-      target={external ? "_blank" : undefined}
-      rel={external ? "noopener noreferrer" : undefined}
       {...props}
+      href={href}
+      className={cn(MARKDOWN_LINK_CLASS_NAME, className)}
+      target={target ?? (external ? "_blank" : undefined)}
+      rel={rel ?? (external ? "noopener noreferrer" : undefined)}
     />
   );
 }

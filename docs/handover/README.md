@@ -8,6 +8,7 @@
 
 | 文件 | 主题 |
 |------|------|
+| harness-home.md | **Harness Home 技术交接**：framework-neutral canonical repository、L0/L1 HarnessAdapter 与 L2/L3 RuntimeAdapter、单写者/事务写/一致性缓存、SecretRef、中立门禁、Asset/HTML 安全、Codex durable/preview-only 去重与当前未关闭门禁 |
 | same-runtime-multi-model-subagents.md | 同 Runtime 动态子模型：Native 白名单/child session、Claude SDK read-only worker、Codex collab 可见性、权限/取消、Agent 聊天卡片与侧栏 transcript |
 | qwen-token-plan-grok-access.md | 千问 Coding/Token Plan 稳定 identity、interactive-only 调用策略、xAI API Key/OAuth 双渠道、PKCE/device/refresh 生命周期与 Runtime 数据流 |
 | foundation-refresh-claude-review-2026-07-20.md | **基础体验更新 Claude 独立审查任务书**：汇总模型/推理强度、跨 Runtime 权限、自动命名、Claude DNS/延迟、全局字体与 K3 套餐改动；列明当前证据、未完成 smoke 和必须重点质疑的高风险边界 |
@@ -36,7 +37,7 @@
 | models-provider-experience.md | Models / Providers 体验收敛：服务商连接和模型管理职责拆分、模型拉取规则、添加模型统一入口、状态与术语约束 |
 | agentic-architecture-map.md | CodePilot Agentic 架构映射：Provider/Models、Plugins、Runtime/Agent、Health/Logs、Memory/Tasks 的分层边界与改动判断流程 |
 | provider-governance.md | 服务商治理系统：Zod Schema 防护、authStyle 修正 6 preset、宿主接管、连通性验证、引导 UX、错误恢复、模型 CRUD |
-| sentry-error-reporting.md | Sentry 匿名错误上报：三层覆盖（browser/server/electron）、opt-out 机制、隐私保护、上报策略 |
+| sentry-error-reporting.md | Sentry 匿名错误与崩溃率统计：U0 main-only Release Health、official-stable 三层初始化、default-deny 脱敏、provider anti-double-capture、private source-map 发布闭环与未关闭真实 smoke |
 | decouple-native-runtime.md | Native Agent Runtime：双 Runtime 架构、AI SDK agent-loop、OpenAI Codex 集成、文件快照 rewind、MCP 全链路、验证边界与剩余风险 |
 | provider-proxy-bridge.md | Provider Proxy Bridge Contract：Codex provider proxy / 任何新 Agent 框架接入的 8 个 hook（parseInbound / translateInput / translateTools / translateProviderOptions / translateStream / translateResponse / translateError / resumeThreadParams）、AI SDK v6 `tool({inputSchema: jsonSchema(...)})` schema 合约、Codex schema 来源清单、Smoke 矩阵收口标准；接新 Agent 框架前必读 |
 | markdown-artifact-overhaul.md | Markdown 渲染 × Artifact 预览体系：PreviewSource 联合、DiffSummary 卡片、Sandpack 单文件 React、CodeMirror 编辑+自动保存、长图导出 IPC、文件 I/O API 合同、loadedPath/freshPreview 防漂移 |

@@ -20,7 +20,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     },
   },
   shell: {
-    openPath: (folderPath: string) => ipcRenderer.invoke('shell:open-path', folderPath),
+    revealPath: (request: {
+      path: string;
+      sessionId?: string;
+      scope?: 'home';
+    }) => ipcRenderer.invoke('shell:reveal-path', request),
+    openHtmlFile: (request: { path: string; sessionId: string }) =>
+      ipcRenderer.invoke('shell:open-html-file', request),
   },
   app: {
     getLogPath: () => ipcRenderer.invoke('app:get-log-path') as Promise<string | null>,
@@ -68,6 +74,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
       maxHeightPx?: number;
       timeoutMs?: number;
     }) => ipcRenderer.invoke('artifact:export-long-shot', params),
+  },
+  asset: {
+    captureHtmlThumbnail: (params: {
+      previewUrl: string;
+      width?: number;
+      height?: number;
+    }) => ipcRenderer.invoke('asset:capture-html-thumbnail', params),
   },
   terminal: {
     create: (opts: { id: string; cwd: string; cols: number; rows: number }) =>

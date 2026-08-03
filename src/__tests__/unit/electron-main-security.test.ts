@@ -20,9 +20,16 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import {
+  deriveHtmlThumbnailRequestScope,
+  HtmlThumbnailCaptureTimeoutError,
+  isHtmlThumbnailRequestAllowed,
+  SerializedDeadlineQueue,
+} from '../../../electron/html-thumbnail-security';
 
 const MAIN = path.resolve(__dirname, '../../../electron/main.ts');
 const PRELOAD = path.resolve(__dirname, '../../../electron/preload.ts');
+const OPEN_ROUTE = path.resolve(__dirname, '../../app/api/files/open/route.ts');
 
 /** Strip line + block comments (same approach as sentry-dev-guard.test.ts). */
 function stripComments(src: string): string {
@@ -47,8 +54,10 @@ function balancedBlock(src: string, fromIndex: number): string {
 }
 
 describe('electron main security guardrails (audit 2026-07 Loop 1)', () => {
-  const main = stripComments(readFileSync(MAIN, 'utf-8'));
+  const rawMain = readFileSync(MAIN, 'utf-8');
+  const main = stripComments(rawMain);
   const preload = stripComments(readFileSync(PRELOAD, 'utf-8'));
+  const openRoute = stripComments(readFileSync(OPEN_ROUTE, 'utf-8'));
 
   it('1.1 — artifact export never accepts or writes a renderer-supplied outPath', () => {
     assert.doesNotMatch(
@@ -93,5 +102,141 @@ describe('electron main security guardrails (audit 2026-07 Loop 1)', () => {
       gateIdx >= 0 && gateIdx < openIdx,
       'the open-external decision check must precede shell.openExternal',
     );
+  });
+
+  it('local paths expose no generic openPath bridge and directories are reveal-only', () => {
+    assert.doesNotMatch(main, /ipcMain\.handle\(['"]shell:open-path['"]/);
+    assert.doesNotMatch(preload, /openPath\s*:/);
+
+    const revealIndex = main.indexOf("ipcMain.handle('shell:reveal-path'");
+    assert.ok(revealIndex >= 0, 'the scoped reveal handler must exist');
+    const revealBody = balancedBlock(main, revealIndex);
+    assert.match(revealBody, /resolveScopedSystemPath/);
+    assert.match(revealBody, /showItemInFolder/);
+    assert.doesNotMatch(revealBody, /openPath/);
+
+    const htmlIndex = main.indexOf("ipcMain.handle('shell:open-html-file'");
+    assert.ok(htmlIndex >= 0, 'the HTML-only open handler must exist');
+    const htmlBody = balancedBlock(main, htmlIndex);
+    assert.match(htmlBody, /resolveScopedSystemPath/);
+    assert.match(htmlBody, /openPath/);
+    assert.match(preload, /shell:reveal-path/);
+    assert.match(preload, /shell:open-html-file/);
+  });
+
+  it('the non-Electron reveal fallback uses fixed argv with the shell disabled', () => {
+    assert.doesNotMatch(openRoute, /\bexec\s*\(/);
+    assert.match(openRoute, /spawn\(command, args/);
+    assert.match(openRoute, /shell:\s*false/);
+    assert.match(openRoute, /buildFileManagerRevealCommand/);
+    assert.match(openRoute, /getSession\(body\.sessionId\)/);
+  });
+
+  it('Asset HTML capture is origin-bound, scope-bound, and returns bytes without a path write', () => {
+    const idx = rawMain.indexOf("ipcMain.handle('asset:capture-html-thumbnail'");
+    assert.ok(idx >= 0, 'the static HTML thumbnail capture handler must exist');
+    const callbackStart = rawMain.indexOf(') => {', idx);
+    const body = balancedBlock(rawMain, callbackStart);
+    assert.match(body, /senderUrl\.hostname\s*!==\s*['"]127\.0\.0\.1['"]/);
+    assert.match(body, /targetUrl\.origin\s*!==\s*senderUrl\.origin/);
+    assert.match(
+      body,
+      /deriveHtmlThumbnailRequestScope\(targetUrl\)/,
+    );
+    assert.doesNotMatch(
+      body,
+      /pathname\.startsWith\(['"]\/api\/files\/html-preview\/ws\./,
+    );
+    assert.match(body, /searchParams\.has\(['"]interactive['"]\)/);
+    assert.match(body, /capturePage/);
+    assert.match(body, /toPNG\(\)\.toString\(['"]base64['"]\)/);
+    assert.doesNotMatch(body, /writeFile|outPath/);
+    assert.match(body, /isHtmlThumbnailRequestAllowed/);
+    assert.match(body, /setPermissionRequestHandler/);
+    assert.match(body, /HTML_THUMBNAIL_CAPTURE_TIMEOUT_MS/);
+    assert.match(preload, /asset:capture-html-thumbnail/);
+  });
+
+  it('allows only the exact local preview scope and rejects every external request', () => {
+    const scopeToken = `ws.${Buffer.from('/Users/test').toString('base64url')}`;
+    const target = new URL(
+      `http://127.0.0.1:3001/api/files/html-preview/${scopeToken}/`
+        + 'Users/test/.codepilot-assets/asset/bundle/index.html',
+    );
+    const scope = deriveHtmlThumbnailRequestScope(target);
+    assert.equal(isHtmlThumbnailRequestAllowed(target.toString(), scope), true);
+    assert.equal(
+      isHtmlThumbnailRequestAllowed(
+        `http://127.0.0.1:3001/api/files/html-preview/${scopeToken}/`
+          + 'Users/test/.codepilot-assets/asset/bundle/style.css',
+        scope,
+      ),
+      true,
+    );
+    assert.equal(
+      isHtmlThumbnailRequestAllowed('https://attacker.example/pixel.png', scope),
+      false,
+    );
+    assert.equal(
+      isHtmlThumbnailRequestAllowed(
+        'http://127.0.0.1:3001/api/chat/sessions',
+        scope,
+      ),
+      false,
+    );
+    assert.equal(
+      isHtmlThumbnailRequestAllowed(
+        'http://127.0.0.1:3001/api/files/html-preview/ws.other-token/'
+          + 'Users/test/private.png',
+        scope,
+      ),
+      false,
+    );
+    assert.equal(isHtmlThumbnailRequestAllowed('file:///etc/passwd', scope), false);
+  });
+
+  it('rejects non-canonical, containing, and encoded-delimiter workspace tokens', () => {
+    const encoded = Buffer.from('/Users/test').toString('base64url');
+    const preview = (token: string) => new URL(
+      `http://127.0.0.1:3001/api/files/html-preview/${token}/Users/test/index.html`,
+    );
+    assert.throws(
+      () => deriveHtmlThumbnailRequestScope(preview('ws.scope-token')),
+      /canonical base64url/,
+    );
+    assert.throws(
+      () => deriveHtmlThumbnailRequestScope(preview(`ws.${encoded}suffix`)),
+      /canonical base64url/,
+    );
+    assert.throws(
+      () => deriveHtmlThumbnailRequestScope(preview(`ws.${encoded}%2Fsibling`)),
+      /invalid workspace scope segment/,
+    );
+    assert.throws(
+      () => deriveHtmlThumbnailRequestScope(preview('ws.')),
+      /invalid workspace scope segment/,
+    );
+  });
+
+  it('times out a stuck capture and releases the serialized queue', async () => {
+    const queue = new SerializedDeadlineQueue();
+    let timeoutCleanupCalled = false;
+    const stuck = queue.run(
+      () => new Promise<string>(() => {}),
+      {
+        timeoutMs: 20,
+        onTimeout: () => {
+          timeoutCleanupCalled = true;
+        },
+      },
+    );
+    const next = queue.run(
+      async () => 'next-capture-completed',
+      { timeoutMs: 200 },
+    );
+
+    await assert.rejects(stuck, HtmlThumbnailCaptureTimeoutError);
+    assert.equal(timeoutCleanupCalled, true);
+    assert.equal(await next, 'next-capture-completed');
   });
 });

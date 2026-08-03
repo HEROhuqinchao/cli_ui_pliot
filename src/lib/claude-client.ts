@@ -1550,6 +1550,9 @@ export function streamClaudeSdk(options: ClaudeStreamOptions): ReadableStream<st
           let externalExtensions: ReturnType<
             typeof import('@/lib/harness/external-framework-harness').scanExternalFrameworkExtensions
           > = [];
+          let canonicalHarness: import(
+            '@/lib/harness-home/runtime/repository-projection'
+          ).CanonicalRuntimeHarness | undefined;
           try {
             const { scanUserCodePilotExtensions } = await import(
               '@/lib/harness/user-codepilot-extensions'
@@ -1571,6 +1574,29 @@ export function streamClaudeSdk(options: ClaudeStreamOptions): ReadableStream<st
           } catch {
             // best-effort
           }
+          try {
+            const { loadConfiguredHarnessHome } = await import(
+              '@/lib/harness-home/runtime/configured'
+            );
+            const configured = loadConfiguredHarnessHome('claude_code', {
+              userPrompt: prompt || '',
+              projectId: resolvedWorkingDirectory.path,
+            });
+            if (configured.status === 'loaded') {
+              canonicalHarness = configured.harness;
+            } else if (configured.status === 'unavailable') {
+              console.warn('[harness-home] Canonical projection unavailable', {
+                runtimeId: 'claude_code',
+                root: configured.root,
+                reason: configured.reason,
+              });
+            }
+          } catch (error) {
+            console.warn('[harness-home] Canonical projection failed', {
+              runtimeId: 'claude_code',
+              reason: error instanceof Error ? error.message : String(error),
+            });
+          }
           const adapted = adaptForClaudeCode({
             sessionId,
             workingDirectory: resolvedWorkingDirectory.path,
@@ -1580,6 +1606,7 @@ export function streamClaudeSdk(options: ClaudeStreamOptions): ReadableStream<st
             enabledCapabilities,
             userExtensions,
             externalExtensions,
+            canonicalHarness,
           });
           if (adapted.systemPromptAppend.length > 0) {
             if (
@@ -2853,6 +2880,7 @@ export function streamClaudeSdk(options: ClaudeStreamOptions): ReadableStream<st
             docsUrl: presetForMeta.meta.docsUrl,
             pricingUrl: presetForMeta.meta.pricingUrl,
           } : undefined,
+          retryExhausted: true,
         });
 
         // ── Reactive compact: auto-compress and retry on CONTEXT_TOO_LONG ──
@@ -3361,6 +3389,7 @@ export async function testProviderConnection(config: {
       providerName: config.providerName,
       baseUrl: config.baseUrl,
       providerMeta: config.providerMeta,
+      providerTest: true,
     });
 
     return {
@@ -3381,6 +3410,7 @@ export async function testProviderConnection(config: {
       providerName: config.providerName,
       baseUrl: config.baseUrl,
       providerMeta: config.providerMeta,
+      providerTest: true,
     });
 
     return {
@@ -3432,6 +3462,7 @@ async function testXaiConnection(config: {
       providerName: config.providerName || 'xAI',
       baseUrl,
       providerMeta: config.providerMeta,
+      providerTest: true,
     });
     return {
       success: false,
@@ -3449,6 +3480,7 @@ async function testXaiConnection(config: {
       providerName: config.providerName || 'xAI',
       baseUrl,
       providerMeta: config.providerMeta,
+      providerTest: true,
     });
     return {
       success: false,
@@ -3510,6 +3542,7 @@ async function testOpenAICompatibleConnection(config: {
       providerName: config.providerName,
       baseUrl: config.baseUrl,
       providerMeta: config.providerMeta,
+      providerTest: true,
     });
 
     return {
@@ -3528,6 +3561,7 @@ async function testOpenAICompatibleConnection(config: {
       providerName: config.providerName,
       baseUrl: config.baseUrl,
       providerMeta: config.providerMeta,
+      providerTest: true,
     });
 
     return {
@@ -3596,6 +3630,7 @@ async function testMediaProviderConnection(config: {
       providerName: config.providerName,
       baseUrl: config.baseUrl,
       providerMeta: config.providerMeta,
+      providerTest: true,
     });
 
     return {
@@ -3614,6 +3649,7 @@ async function testMediaProviderConnection(config: {
       providerName: config.providerName,
       baseUrl: config.baseUrl,
       providerMeta: config.providerMeta,
+      providerTest: true,
     });
     return {
       success: false,

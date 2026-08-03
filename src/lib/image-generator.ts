@@ -2,6 +2,10 @@ import { generateImage, NoImageGeneratedError } from 'ai';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createOpenAI } from '@ai-sdk/openai';
 import { getDb, getSession, getSetting } from '@/lib/db';
+import {
+  findActiveAssetIdsByStablePaths,
+  registerMediaGenerationAsset,
+} from '@/lib/assets/service';
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
@@ -289,6 +293,7 @@ export async function generateSingleImage(params: GenerateSingleImageParams): Pr
   // Collect reference images (base64 strings). Both referenceImagePaths and
   // referenceImages may be provided together.
   const refImageData: string[] = [];
+  const resolvedReferencePaths: string[] = [];
   if (params.referenceImagePaths && params.referenceImagePaths.length > 0) {
     for (const fp of params.referenceImagePaths) {
       // Resolve relative paths against session working directory
@@ -296,6 +301,7 @@ export async function generateSingleImage(params: GenerateSingleImageParams): Pr
       if (fs.existsSync(resolved)) {
         const buf = fs.readFileSync(resolved);
         refImageData.push(buf.toString('base64'));
+        resolvedReferencePaths.push(resolved);
       }
     }
   }
@@ -430,16 +436,24 @@ export async function generateSingleImage(params: GenerateSingleImageParams): Pr
     metadata.referenceImages = savedRefImages;
   }
 
-  getDb().prepare(
-    `INSERT INTO media_generations (id, type, status, provider, model, prompt, aspect_ratio, image_size, local_path, thumbnail_path, session_id, message_id, tags, metadata, error, created_at, completed_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).run(
-    id, 'image', 'completed', family, requestedModel, params.prompt,
-    aspectRatio, imageSize, localPath, '',
-    params.sessionId || null, null,
-    '[]', JSON.stringify(metadata),
-    null, now, now
-  );
+  const db = getDb();
+  db.transaction(() => {
+    db.prepare(
+      `INSERT INTO media_generations (id, type, status, provider, model, prompt, aspect_ratio, image_size, local_path, thumbnail_path, session_id, message_id, tags, metadata, error, created_at, completed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      id, 'image', 'completed', family, requestedModel, params.prompt,
+      aspectRatio, imageSize, localPath, '',
+      params.sessionId || null, null,
+      '[]', JSON.stringify(metadata),
+      null, now, now
+    );
+    registerMediaGenerationAsset({
+      mediaGenerationId: id,
+      producerId: 'image-generator',
+      parentAssetIds: findActiveAssetIdsByStablePaths(resolvedReferencePaths),
+    });
+  })();
 
   return {
     mediaGenerationId: id,

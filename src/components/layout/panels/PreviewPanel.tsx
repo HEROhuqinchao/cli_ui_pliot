@@ -6,6 +6,7 @@ import { useTheme } from "next-themes";
 import { X, Check, SpinnerGap } from "@/components/ui/icon";
 import { CodePilotIcon } from "@/components/ui/semantic-icon";
 import { exportHtmlAsLongShot, ArtifactExportError } from "@/lib/artifact-export";
+import { archiveHtmlAsset } from "@/lib/archive-html-asset-client";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { Light as SyntaxHighlighter } from "react-syntax-highlighter";
@@ -13,6 +14,8 @@ import { useThemeFamily } from "@/lib/theme/context";
 import { resolveCodeTheme, resolveHljsStyle } from "@/lib/theme/code-themes";
 import { usePanel } from "@/hooks/usePanel";
 import { useTranslation } from "@/hooks/useTranslation";
+import { showToast } from "@/hooks/useToast";
+import { inspectLocalPath, revealPathWithSystem } from "@/lib/local-path-navigation";
 import { ResizeHandle } from "@/components/layout/ResizeHandle";
 import type { FilePreview as FilePreviewType } from "@/types";
 import type { PreviewTrust } from "@/lib/preview-source";
@@ -279,6 +282,9 @@ export function PreviewPanel(_: { variant?: 'sidebar' } = {}) {
   const [error, setError] = useState<string | null>(null);
   const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
+  const [archiveState, setArchiveState] = useState<
+    'idle' | 'archiving' | 'archived'
+  >('idle');
   const [width, setWidth] = useState(PREVIEW_DEFAULT_WIDTH);
   const { registerParticipant } = useFileMutation();
 
@@ -624,6 +630,17 @@ export function PreviewPanel(_: { variant?: 'sidebar' } = {}) {
     }
     return null;
   }, [previewSource, filePath, freshPreview]);
+  const canArchiveHtml = !!(
+    exportableHtml
+    && sessionId
+    && (
+      previewSource?.kind === 'inline-html'
+      || (
+        previewSource?.kind === 'file'
+        && sourceTrust === 'workspace'
+      )
+    )
+  );
 
   const handleSaveEdit = useCallback((): Promise<boolean> => {
     if (mutationGuardRef.current) return Promise.resolve(false);
@@ -918,6 +935,41 @@ export function PreviewPanel(_: { variant?: 'sidebar' } = {}) {
     }
   }, [exportableHtml, filePath, previewSource]);
 
+  const handleArchiveHtmlAsset = useCallback(async () => {
+    if (!canArchiveHtml || !exportableHtml || !sessionId || !previewSource) return;
+    setArchiveState('archiving');
+    try {
+      await archiveHtmlAsset(
+        previewSource.kind === 'inline-html'
+          ? {
+            sessionId,
+            source: 'inline',
+            html: exportableHtml,
+            prompt: previewSource.virtualName || 'preview.html',
+          }
+          : {
+            sessionId,
+            source: 'workspace',
+            filePath,
+            prompt: filePath.split('/').pop() || filePath,
+          },
+      );
+      setArchiveState('archived');
+    } catch (error) {
+      setArchiveState('idle');
+      alert(t('filePreview.archiveAsset.failed', {
+        reason: error instanceof Error ? error.message : String(error),
+      }));
+    }
+  }, [
+    canArchiveHtml,
+    exportableHtml,
+    filePath,
+    previewSource,
+    sessionId,
+    t,
+  ]);
+
   // No `handleClose` here — the Workspace Sidebar Tab strip's X owns
   // close, and there's no panel chrome on this surface for the user
   // to close from.
@@ -927,20 +979,40 @@ export function PreviewPanel(_: { variant?: 'sidebar' } = {}) {
   // the source to user-selected (readonly) so the next render lights
   // up the load effect with the external-path scoping. Cancel just
   // drops the preview (the Tab strip's X already closes from the rail).
-  const handleConfirmExternal = useCallback(() => {
+  const handleConfirmExternal = useCallback(async () => {
     if (previewSource?.kind !== "file") return;
-    // Phase 4 P2.2 — preserve the anchor so an agent-referenced link
-    // like `/abs/foo.md#L12` opens directly at the requested location
-    // after confirm. Dropping it (the original bug) made the user
-    // jump back to the top of the file on every external open.
-    setPreviewSource({
-      kind: "file",
-      filePath: previewSource.filePath,
-      trust: "user-selected",
-      readonly: true,
-      ...(previewSource.anchor ? { anchor: previewSource.anchor } : {}),
-    });
-  }, [previewSource, setPreviewSource]);
+    try {
+      // This probe happens only after the explicit permission click. Files
+      // keep the readonly preview flow; directories never enter the file
+      // renderer and are instead revealed in Finder / Explorer.
+      const inspection = await inspectLocalPath(previewSource.filePath, { scope: "home" });
+      if (inspection.kind === "directory") {
+        await revealPathWithSystem({ path: inspection.realPath, scope: "home" });
+        setPreviewSource(null);
+        return;
+      }
+      if (inspection.kind !== "file") {
+        showToast({ type: "warning", message: t("localReference.unsupported") });
+        return;
+      }
+      // Preserve the anchor so an external `/abs/foo.md#L12` opens at the
+      // requested location after confirmation.
+      setPreviewSource({
+        kind: "file",
+        filePath: inspection.realPath,
+        trust: "user-selected",
+        readonly: true,
+        ...(previewSource.anchor ? { anchor: previewSource.anchor } : {}),
+      });
+    } catch (error) {
+      showToast({
+        type: "error",
+        message: t("localReference.openFailed", {
+          reason: error instanceof Error ? error.message : String(error),
+        }),
+      });
+    }
+  }, [previewSource, setPreviewSource, t]);
 
   const handleCancelExternal = useCallback(() => {
     setPreviewSource(null);
@@ -1260,6 +1332,38 @@ export function PreviewPanel(_: { variant?: 'sidebar' } = {}) {
           </Button>
         )}
 
+        {canArchiveHtml && (
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={handleArchiveHtmlAsset}
+            disabled={archiveState === 'archiving' || archiveState === 'archived'}
+            title={
+              archiveState === 'archiving'
+                ? t('filePreview.archiveAsset.archiving')
+                : archiveState === 'archived'
+                  ? t('filePreview.archiveAsset.archived')
+                  : t('filePreview.archiveAsset')
+            }
+            aria-label={
+              archiveState === 'archiving'
+                ? t('filePreview.archiveAsset.archiving')
+                : archiveState === 'archived'
+                  ? t('filePreview.archiveAsset.archived')
+                  : t('filePreview.archiveAsset')
+            }
+            className="h-7 w-7 text-muted-foreground/80 hover:text-foreground hover:bg-muted/50"
+          >
+            {archiveState === 'archiving' ? (
+              <SpinnerGap size={14} className="animate-spin" />
+            ) : archiveState === 'archived' ? (
+              <Check size={14} className="text-status-success-foreground" />
+            ) : (
+              <CodePilotIcon name="archive" size="sm" aria-hidden />
+            )}
+          </Button>
+        )}
+
         {/* No close button here — the Tab strip's X owns close. */}
       </div>
 
@@ -1521,8 +1625,8 @@ function InlineHtmlView({
  * sees the full path and explicitly confirms before the panel calls
  * /api/files/preview.
  *
- * Confirm → caller sets the source to user-selected (readonly) which
- * triggers the load effect with homeDir scoping.
+ * Confirm → caller probes the path. Files transition to user-selected
+ * (readonly); directories are revealed in the system file manager.
  * Cancel  → caller clears the preview source, closing the rail entry.
  */
 function AgentReferencedConfirm({

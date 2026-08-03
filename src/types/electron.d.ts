@@ -60,6 +60,19 @@ interface ElectronTerminalAPI {
   onExit: (callback: (data: { id: string; code: number }) => void) => () => void;
 }
 
+interface ElectronAssetAPI {
+  captureHtmlThumbnail: (params: {
+    previewUrl: string;
+    width?: number;
+    height?: number;
+  }) => Promise<{
+    base64?: string;
+    width?: number;
+    height?: number;
+    error?: 'invalid_request' | 'invalid_preview_url' | 'capture_failed';
+  }>;
+}
+
 interface ElectronAPI {
   versions: {
     electron: string;
@@ -68,7 +81,12 @@ interface ElectronAPI {
     platform: string;
   };
   shell: {
-    openPath: (path: string) => Promise<string>;
+    revealPath: (request: {
+      path: string;
+      sessionId?: string;
+      scope?: 'home';
+    }) => Promise<string>;
+    openHtmlFile: (request: { path: string; sessionId: string }) => Promise<string>;
   };
   app?: {
     /** Resolve the persistent log directory used by main process logging.
@@ -98,6 +116,7 @@ interface ElectronAPI {
   proxy?: {
     resolve: (url: string) => Promise<string>;
   };
+  asset?: ElectronAssetAPI;
   terminal?: ElectronTerminalAPI;
   notification?: {
     /**
