@@ -51,6 +51,7 @@ import { createModel } from '../ai-provider';
 import { assembleTools, READ_ONLY_TOOLS } from '../agent-tools';
 import { reportNativeError } from '../error-classifier';
 import { providerTelemetryIdentity, type ProviderTelemetryIdentity } from '../telemetry/provider-failure';
+import { NativeStreamTelemetryState } from '../telemetry/native-stream-boundary';
 import { pruneOldToolResults } from '../context-pruner';
 import { shouldSuggestSkill, buildSkillNudgeStatusEvent } from '../skill-nudge';
 import { emit as emitEvent } from '../runtime/event-bus';
@@ -129,6 +130,7 @@ export function runToolLoopAgentPoc(options: AgentLoopOptions): ReadableStream<s
       const totalUsage: TokenUsage = { input_tokens: 0, output_tokens: 0 };
       const distinctTools = new Set<string>();
       let telemetryProvider: ProviderTelemetryIdentity | undefined;
+      const providerStreamTelemetry = new NativeStreamTelemetryState();
 
       try {
         // 0. Sync MCP servers (same as agent-loop step 0)
@@ -404,6 +406,7 @@ export function runToolLoopAgentPoc(options: AgentLoopOptions): ReadableStream<s
               step++;
               lastStepHadToolCalls = false;
               lastStepHadContent = false;
+              providerStreamTelemetry.resetStep();
               break;
 
             // agent-loop wires streamText's onAbort callback for this;
@@ -479,17 +482,29 @@ export function runToolLoopAgentPoc(options: AgentLoopOptions): ReadableStream<s
 
             case 'error': {
               const err = event.error;
+              providerStreamTelemetry.observe(err);
               const msg = err instanceof Error ? err.message : String(err);
               console.error('[toolloop-poc] stream error:', msg);
-              const isAuthError = /unauthorized|forbidden|401|403/i.test(msg);
-              const category = config.useResponsesApi && isAuthError
-                ? 'OPENAI_AUTH_FAILED' as const
-                : 'NATIVE_STREAM_ERROR' as const;
-              reportNativeError(category, err, { modelId, sessionId, ...telemetryProvider });
+              // Keep the structured SDK error until finish-step or catch
+              // proves the retry budget is exhausted. A resolved in-band
+              // error must not be hidden by a later empty-response fallback.
               controller.enqueue(formatSSE({
                 type: 'error',
                 data: typeof event.error === 'string' ? event.error : JSON.stringify({ userMessage: String(event.error) }),
               }));
+              break;
+            }
+
+            case 'finish-step': {
+              const terminalProviderFailure = providerStreamTelemetry.takeTerminalFailure();
+              if (terminalProviderFailure) {
+                reportNativeError('NATIVE_STREAM_ERROR', terminalProviderFailure.error, {
+                  modelId,
+                  sessionId,
+                  retryExhausted: true,
+                  ...telemetryProvider,
+                });
+              }
               break;
             }
 
@@ -514,6 +529,28 @@ export function runToolLoopAgentPoc(options: AgentLoopOptions): ReadableStream<s
           return; // finally emits done + closes
         }
 
+        // Match agent-loop's terminal order: an initial HTTP/DNS failure can
+        // end fullStream normally but reject the result promises with a fresh
+        // NoOutput wrapper. Await response before marking the observed error
+        // reported, so catch can still choose the structured status/code.
+        const responseData = await result.response;
+        const runtimeReportedModel = responseData.modelId?.trim() || undefined;
+
+        // Defensive resolved-stream fallback: ToolLoopAgent normally emits
+        // finish-step (captured above), but a future adapter must not turn a
+        // final partial-content error into a telemetry blind spot merely by
+        // omitting that bookkeeping part. Rejected result promises have
+        // already routed to catch before this point.
+        const terminalProviderFailure = providerStreamTelemetry.takeTerminalFailure();
+        if (terminalProviderFailure) {
+          reportNativeError('NATIVE_STREAM_ERROR', terminalProviderFailure.error, {
+            modelId,
+            sessionId,
+            retryExhausted: true,
+            ...telemetryProvider,
+          });
+        }
+
         // 8. Empty-response detection — agent-loop checks the FINAL step (the
         // one that made no tool calls) for content before breaking, and it
         // does so by awaiting result.finishReason — which REJECTS when the
@@ -524,7 +561,14 @@ export function runToolLoopAgentPoc(options: AgentLoopOptions): ReadableStream<s
         if (!lastStepHadToolCalls && !lastStepHadContent) {
           const finishReason = await result.finishReason;
           console.error(`[toolloop-poc] Empty response: finishReason=${finishReason}, model=${modelId}`);
-          reportNativeError('EMPTY_RESPONSE', new Error(`Empty response: finishReason=${finishReason}`), { modelId, sessionId, ...telemetryProvider });
+          if (!providerStreamTelemetry.hasReportedFailure) {
+            reportNativeError('EMPTY_RESPONSE', new Error(`Empty response: finishReason=${finishReason}`), {
+              modelId,
+              sessionId,
+              retryExhausted: true,
+              ...telemetryProvider,
+            });
+          }
           controller.enqueue(formatSSE({
             type: 'error',
             data: JSON.stringify({
@@ -533,9 +577,6 @@ export function runToolLoopAgentPoc(options: AgentLoopOptions): ReadableStream<s
             }),
           }));
         }
-
-        const responseData = await result.response;
-        const runtimeReportedModel = responseData.modelId?.trim() || undefined;
 
         // 9. Skill nudge (same heuristic + event as agent-loop step 6a)
         if (shouldSuggestSkill({ step, distinctTools })) {
@@ -574,7 +615,14 @@ export function runToolLoopAgentPoc(options: AgentLoopOptions): ReadableStream<s
 
         if (!isAbort) {
           console.error('[toolloop-poc] Error:', err instanceof Error ? err.message : err);
-          reportNativeError('NATIVE_STREAM_ERROR', err, { sessionId, retryExhausted: true, ...telemetryProvider });
+          const telemetryFailure = providerStreamTelemetry.takeCatchFailure(err);
+          if (telemetryFailure) {
+            reportNativeError('NATIVE_STREAM_ERROR', telemetryFailure.error, {
+              sessionId,
+              retryExhausted: true,
+              ...telemetryProvider,
+            });
+          }
           const errorRecords = toolInvocationAccumulator.drain();
           const errorAccounting =
             errorRecords.length > 0

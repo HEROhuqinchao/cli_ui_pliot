@@ -96,6 +96,17 @@ interface ElectronAPI {
     /** Platform-correct default assistant directory resolved by Electron. */
     getDefaultAssistantHome: () => Promise<string>;
   };
+  codex?: {
+    /** Copy one of the fixed official install commands and open a visible PowerShell.
+     *  The main process never executes, pastes, or accepts a command argument. */
+    prepareWindowsRecovery: () => Promise<{
+      ok: boolean;
+      copied: boolean;
+      opened: boolean;
+      installMethod?: 'npm' | 'standalone_script';
+      error?: string;
+    }>;
+  };
   theme?: {
     /** Keep Electron's native window material in sync with next-themes. */
     setSource: (source: 'system' | 'light' | 'dark') => Promise<boolean>;
