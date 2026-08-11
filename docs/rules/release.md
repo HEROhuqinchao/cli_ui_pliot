@@ -17,6 +17,8 @@
 
 macOS 产出 DMG（arm64 + x64），Windows 产出 NSIS 安装包（x64），Linux 在原生 Ubuntu 22.04 x64 / arm64 runner 产出 AppImage、deb、rpm。`scripts/after-pack.js` 重编译 better-sqlite3 为 Electron ABI。任一平台/架构的安装包、原生 ABI、packaged server 或 source-map 卫生门禁失败，都会阻断正式 Release。
 
+涉及 packaged Next utility 生命周期、Codex transport/model discovery 或 server recovery 的版本，除启动期 `/api/health` 外还必须在对应平台产物执行：一次运行期强制退出并验证 offline recovery page → bounded safe-mode restart → 原 stable port/route 恢复；三次自动重启分别消费 1s/2s/4s 预算后，第 4 次退出验证停止自动重试；有不可验证 descendant 时验证 fail-closed。Codex 相关改动另需至少 15 分钟 warmup soak。未完成这些真实产物 smoke 时只能报 `Tests pass`，不得报 `Release ready`。
+
 > Windows 构建机器钉在 `windows-2022`（见 tech-debt #44：`windows-latest` 滚到 VS18 后 node-gyp 编译 native 模块失败）。
 
 ## Release Notes 格式（必须严格遵循）
