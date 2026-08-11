@@ -1,7 +1,7 @@
 # 0.65 Production Observation Remediation
 
 > 创建时间：2026-08-07
-> 最后更新：2026-08-07
+> 最后更新：2026-08-12
 
 ## 状态
 
@@ -11,7 +11,7 @@
 | Phase 1 | IP/Geo 隐私 tombstone + Electron Release Health 启动 session | ✅ 已完成 | 保持 U0，不新增 user/install id 或行为分析 |
 | Phase 2 | Windows 外链打开拒绝的有界失败处理 | ✅ 已完成 | 消费 Promise rejection，并给用户明确系统提示 |
 | Phase 3 | `AI_MissingToolResultsError` 工具历史完整性修复 | ✅ 已完成 | 修未来持久化与既有损坏历史，不屏蔽错误 |
-| Phase 4 | Tier 2 回归、守卫与发布后 cohort 验证 | 🔄 进行中 | `v0.66.0` tag CI 与跨平台 packaged gates 已通过；真实 Sentry 24h/72h cohort 与用户路径 smoke 待执行 |
+| Phase 4 | Tier 2 回归、守卫与发布后 cohort 验证 | 🔄 进行中 | `v0.66.0` tag CI 与跨平台 packaged gates 已通过；72h Issue cohort 为 0，但 Release Health/session 分母与用户路径 smoke 仍待核验 |
 
 ## 用户结果
 
@@ -30,6 +30,8 @@
 - `codepilot@0.65.0` 的 project release metadata 为 `hasHealthData:false`；Electron SDK 默认 `MainProcessSession` 只有退出/异常时才发送，长驻托盘模型不能依赖干净退出形成及时分母。
 - `AI_MissingToolResultsError` 在 0.65 仍活跃；真实 symbolicated stack 在 AI SDK `convertToLanguageModelPrompt` 检测到 assistant tool-call 在下一条 user/system/end 前没有匹配 tool-result。
 - Windows `shell.openExternal()` 拒绝被全局 `unhandledrejection` 捕获；两个主窗口导航入口都丢弃了返回 Promise。
+- 2026-08-12 只读复核：official `codepilot-desktop` 的 v0.66/最近 72 小时没有新 Issue；旧高频 Provider/NoOutput/MissingToolResults 均止于 v0.64/v0.65。该结果与 v0.66 已落地修复一致，但没有 Release Health/session 分母，不能单凭“0 Issue”宣称真实用户链路全部健康。
+- 同次复核发现用户 2026-08-10 日志中的四次 Next utility exit 5 没有对应 Sentry event；Main 过去只写本地主日志，属于独立的 utility crash 观测盲区。
 
 ### Triage
 
@@ -44,6 +46,8 @@
 - Electron integration 配置将唯一 `MainProcessSession` 替换为 `Sentry.mainProcessSessionIntegration({ sendOnCreate:true })`，不得追加第二个 producer。
 - 抽出可行为测试的 external opener，统一两个入口；错误日志不含 URL、query 或原始系统错误正文。
 - terminal persistence 对无匹配结果的 tool use 追加 app-owned、`is_error:true` 的缺失结果；模型历史装配再修复旧数据，并丢弃无法安全表达的 orphan result。
+- 后续补丁为 packaged utility 运行期失败增加 generation one-shot 的 normalized fatal event，只包含稳定 reason、退出码与 utility/host memory 数值；raw Electron diagnostic report 在 Main 边界丢弃。
+- Electron 从 40.2.1 更新到同主版本 40.10.6，以吸收后续 Chromium/Electron 稳定补丁；不全局关闭 GPU，也不把补丁升级写成旧 Graphite crash 已被精确复现并根治。
 
 ### Verify
 
@@ -60,6 +64,7 @@
 - `npm run build` 通过；保留一条既有 Next NFT whole-project trace warning，不冒充本轮新增失败。
 - `npm run lint:docs-drift`、`npm run lint:hooks`、`git diff --check` 均通过。
 - `v0.66.0` 发版候选重新验证：typecheck、Harness boundary、5148 单测（5147 pass / 0 fail / 1 skip）与 production build 全部通过。
+- 2026-08-12 后续补丁：telemetry/provider/tool-history 定向 78/78；全量 5185 pass / 0 fail / 1 skip；Electron production build、40.10.6 arm64 ad-hoc 目录包、deep/strict 签名、0 source map 与 packaged server health 通过。三条 GUI recovery smoke 在本机新 ad-hoc 签名访问既有 Safe Storage 项时阻塞于 macOS `SecItemCopyMatching`，两次 45 秒 attach timeout；只读 process sample 已定位为 Keychain 交互等待，不把它冒充 utility/recovery 回归，也不把 GUI smoke 记为通过。
 
 ### Guardrail
 
@@ -75,6 +80,8 @@
 | 2026-08-07 | local Node + Next production build | local checkout | `codepilot@0.65.0` | 无真实用户凭据 | unit/typecheck/harness、真实 SDK/transport contract、production build、docs/hook/diff gates | ✅ 本地门禁通过 | 单测稳定重跑 5147 pass / 0 fail / 1 skip；`npm run build` 通过 |
 | 2026-08-07 | local Node + Next production build | local checkout | `codepilot@0.66.0` RC | 无真实用户凭据 | 发版版本 typecheck / Harness boundary / 5148 单测 / production build | ✅ 本地门禁通过 | 5147 pass / 0 fail / 1 skip；build 136 pages；既有 NFT warning 保留 |
 | 2026-08-07 | Electron packaged CI | official stable | `codepilot@0.66.0` | official release secrets | macOS/Windows/Linux 双架构 build、source map、package version/native ABI/server startup、macOS packaged Sentry fixtures | ✅ CI packaged gates pass | [Build & Package #31155340623](https://github.com/op7418/CodePilot/actions/runs/31155340623)；[Release v0.66.0](https://github.com/op7418/CodePilot/releases/tag/v0.66.0)；12 assets uploaded |
+| 2026-08-12 | Sentry API + GitHub Actions | official `codepilot-desktop` | `codepilot@0.66.0` | 本地只读 token / 公开 CI metadata | 72h/release Issue cohort、旧错误最后活跃版本、tag build/source-map/package gates | 🟡 只读取证完成 | v0.66 与 72h Issue 查询均为 0；旧高频组最后活跃于 v0.64/v0.65。CI 31155340623 全绿，但 session denominator 未核验，0 Issue 不冒充完整健康证明 |
+| 2026-08-12 | local Electron package | local checkout | 40.10.6 / arm64 | 无 Provider 凭据；本机既有 Keychain | targeted/full/build、ad-hoc package、签名、0-map、packaged health、GUI recovery rerun | 🟡 自动门禁与 server health 通过 / GUI blocked | 78/78；5185/0/1；package health 200。GUI attach 两次阻塞于 `SecItemCopyMatching`，属于 ad-hoc Safe Storage 交互门，不记 Smoke passed |
 | _待观察_ | Electron packaged / Sentry API | official stable | `codepilot@0.66.0` | 用户 opt-in + 只读 Sentry token | no-IP event / startup session / MissingToolResults 24h/72h cohort / Windows external-open + interrupted tool replay | ⏳ | CI synthetic 证明打包链路；仍不替代真实用户状态、Windows 交互和发布后 cohort |
 
 ## 决策日志
@@ -85,3 +92,5 @@
 - 2026-08-07：不在本地代码任务中擅自修改 Sentry project 设置；Prevent Storing IP Addresses 作为发布侧待核验纵深防御保留。
 - 2026-08-07：用户在 Code complete + Tests pass + Review passed 后明确授权 push 与发版；目标版本确定为 `v0.66.0`。该授权接受以 tag CI 产出 packaged artifacts，但不把尚未发生的真实 Sentry cohort / Windows packaged 验证提前写成 Smoke passed。
 - 2026-08-07：`d983917f` 已推送 main 并标记 `v0.66.0`；Build & Package run `31155340623` 的 verify-source、macOS、Windows、Linux x64/arm64 与 release job 全部 success。GitHub Release 为非 draft、非 prerelease，12 个安装包/校验和 assets 均 uploaded。状态可记为 Shipped，但本计划 Phase 4 仍等待真实 Sentry cohort 与用户交互 smoke。
+- 2026-08-12：不重复修复已在 v0.66 前落地的 MissingToolResults / NoOutput / Provider 分类链；把“旧 Issue 数量高”校准为历史版本信号。新增代码只闭合 utility crash 盲区并升级 Electron 同主版本补丁；是否降低真实 Graphite/utility crash 率仍等待下一 stable cohort。
+- 2026-08-12：Electron 40.10.6 的 packaged server 与签名/ABI 门禁通过；本机 ad-hoc GUI smoke 因 Keychain ACL 交互无法自动完成。保留同主版本升级，但发布前仍要求 official-signed packaged GUI smoke；本地 attach timeout 不作“已回归”或“已通过”的双向过度结论。

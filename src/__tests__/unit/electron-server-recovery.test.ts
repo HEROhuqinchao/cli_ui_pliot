@@ -188,6 +188,25 @@ test('Electron Main recovery wiring pauses poll and gates reload on health', () 
   assert.match(main, /!isQuitting\s*&&\s*serverLifecyclePhase === 'running'/);
 });
 
+test('utility failures emit one sanitized Sentry event per generation', () => {
+  const main = readFileSync(path.resolve(__dirname, '../../../electron/main.ts'), 'utf8');
+  const start = main.indexOf('function startServer');
+  const end = main.indexOf('function getIconPath', start);
+  const server = main.slice(start, end);
+
+  assert.ok(start >= 0 && end > start);
+  assert.match(server, /let childFailureReported = false/);
+  assert.match(server, /childFailureReported\s*\|\|\s*!electronTelemetry\.enabled/);
+  assert.match(server, /Sentry\.captureEvent\(buildUtilityProcessFailureEvent\(/);
+  assert.match(server, /reportUtilityFailureOnce\(childFailureReason\)/);
+  assert.match(server, /reportUtilityFailureOnce\([\s\S]*'unexpected_exit'/);
+  assert.match(server, /void report/);
+  assert.doesNotMatch(
+    server.slice(server.indexOf('const reportUtilityFailureOnce'), server.indexOf("child.stdout?.on('data'")),
+    /diagnosticReport|report\s*[,}]/,
+  );
+});
+
 test('recovery IPC is exposed narrowly and rejects ordinary Next renderers', () => {
   const main = readFileSync(path.resolve(__dirname, '../../../electron/main.ts'), 'utf8');
   const preload = readFileSync(path.resolve(__dirname, '../../../electron/preload.ts'), 'utf8');

@@ -1,7 +1,7 @@
 # Codex Model Refresh × Utility Process OOM Recovery / 模型刷新异常与本地服务 OOM 恢复
 
 > 创建时间：2026-08-10
-> 最后更新：2026-08-11
+> 最后更新：2026-08-12
 > 优先级：P1（核心聊天、历史会话和文件树同时不可用）
 > 计划状态：🟡 Code complete / Tests pass / Review passed / Crash smoke passed（本地范围；2026-08-11 review round 3 P1 闭环已过 Claude Code 复审。ad-hoc arm64 packaged 单次恢复、三次重启预算耗尽与 live-Codex blocked/quit-only smoke 均通过；2 条 P3 nit、active-turn UI、15/60 分钟 soak 与受影响机器 A/B 仍待跑，不能称完整 Smoke passed / 根因已修）
 > 审查基线：`main@ff9dc316`
@@ -393,7 +393,7 @@ CodePilot 公开 Issues 中没有第二份带 `Zone Allocation failed` / exit 5 
 | `honest-interruption` | 🟡 既有恢复合同通过 / UI smoke pending | 既有 startup recovery 会把 running session/message/subagent 标为 restarted/interrupted 并清 session lock；本轮全量单测通过，active-turn crash UI 未实操 |
 | `offline-error-surface` | ✅ Crash UI smoke passed | recovering→原 route、failed 页 restart/retry、blocked 页 quit-only 均在真实 ad-hoc `.app` 验证；blocked 直接调用 restart IPC 返回 false |
 | `packaged-soak` | 🟡 Crash smoke passed / soak pending | kill ×1、三次 restart budget（第4次 crash 停止）与 live-Codex blocked 已跑；fresh/history 15 分钟、长任务 60 分钟、active turn、proxy on/off 待跑 |
-| `regression-gates` | 🟡 自动 gates + crash smoke 通过 / soak 未齐 | `npm run test` 5181 pass / 0 fail / 1 skip（5182 tests）；`electron:build`、ad-hoc signed directory package、packaged source-map + health verifier 与三类 GUI crash smoke 通过 |
+| `regression-gates` | 🟡 自动 gates + 既有 crash smoke 通过 / soak 未齐 | 原实现轮 `npm run test` 5181 pass / 0 fail / 1 skip（5182 tests），三类 40.2.1 GUI crash smoke 通过。2026-08-12 后续补丁为 5185/0/1；40.10.6 `electron:build`、ad-hoc directory package、deep/strict、0-map 与 packaged health 通过，但 GUI rerun 被本机 ad-hoc Safe Storage Keychain 交互阻塞，不新增 Smoke passed 声明 |
 | `plan-ledger-sync` | ✅ 已同步 | 本计划、active README、B-030、Electron/Runtime guardrail、release gate 与 Smoke Ledger 同步为 Code complete / Tests pass / Review passed / Crash smoke passed |
 
 ## 预计改动面（供审查，不是强制文件清单）
@@ -504,6 +504,8 @@ CodePilot 公开 Issues 中没有第二份带 `Zone Allocation failed` / exit 5 
 ## 决策日志
 
 - 2026-08-11（packaged crash smoke）：Codex 新增 `scripts/smoke-packaged-server-recovery.mjs`，以临时 user-data/DB/Codex home 启动 ad-hoc arm64 `.app`，通过 Electron Main metrics 精确定位并只 kill 本次测试的 `codepilot-server` utility。三条真实进程路径通过：① 无 live Codex 时 PID 9408→9439，原 stable-port route 恢复且 owner=1；② 三次自动重启分别消费 1s/2s/4s 预算，第 4 次 crash 停在 failed、owner=0；③ live Codex descendant 时停在 blocked，DOM 仅 quit，直接调用 restart IPC 返回 false，plain quit 后 Main 退出不 relaunch。由实测校准 smoke 文案：合同是“最多三次自动重启”，故停止点是第 4 次 crash，不是第 3 次。打包后已恢复 workspace Node ABI。
+- 2026-08-12：只读 Sentry 复核确认 8 月 10 日四次 utility exit 5 没有远端对应事件；根因不是 Sentry 告警漏筛，而是 Main 当时只记本地日志。补充 stable opt-in、每 generation 最多一次的 `server.utility_process_failed` normalized fatal event；只发送退出码和 utility/host memory 数值，Electron diagnostic report 原文仍在 Main 丢弃。该改动改善下一版本取证，不倒推 B-030 allocator 根因已确定。
+- 2026-08-12（Electron 40.10.6 gate）：targeted 78/78、全量 5185/0/1、production build、arm64 ad-hoc 目录包、deep/strict、0-map 与 packaged server health 通过。GUI recovery rerun 两次在 Playwright attach 前卡住；process sample 将主线程定位到 macOS `SecItemCopyMatching`，即新 ad-hoc 签名访问既有 Safe Storage 的交互等待。该结果不推翻 8 月 11 日 40.2.1 三场 crash smoke，也不能替代 40.10.6 official-signed GUI smoke。
 - 2026-08-11：实施归类保持 F（本地未复现），不把 defensive 32 MiB cap、internal model refresh timeout 或 host pressure 中任一项写成已证实根因。受影响机器 profile/heap/network A/B 和诊断构建投放继续受 human gate 约束。
 - 2026-08-11：safe mode 由 Main 通过 utility env snapshot 持有，并持续到完整 app relaunch；当前没有可信 live state channel，因此不做“server 稳定 60 秒后只改 Renderer 状态”的伪解除。60 秒窗口只重置 supervisor attempt budget。
 - 2026-08-11：production registry 首版只做 current-generation admission gate，不执行 process kill。Codex app-server 声明 `descendantsVerifiable=false`；登记仍在、PID 存活/复用疑点或更深 tree 不可验证时自动重启停在 blocked page。该收紧牺牲部分自动恢复率，换取 single-owner fail-closed。

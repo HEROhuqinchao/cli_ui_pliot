@@ -5,6 +5,7 @@ import { join } from 'path';
 import { configureElectronMainIntegrations, resolveTelemetryConfig, TELEMETRY_IGNORE_ERRORS } from '../src/lib/telemetry/contract';
 import { sanitizeTelemetryBreadcrumb, sanitizeTelemetryEvent } from '../src/lib/telemetry/sanitize';
 import { createTelemetrySmokeError, telemetrySmokeEnabled } from '../src/lib/telemetry/smoke';
+import { buildUtilityProcessFailureEvent } from '../src/lib/telemetry/utility-process-failure';
 
 // Check opt-out before init — reads a marker file that the renderer writes
 const sentryOptOutPath = join(
@@ -1208,6 +1209,7 @@ function startServer(port: number, recoverySafeMode = false): Electron.UtilityPr
   if (recoverySafeMode) serverSupervisor.markRecovering();
   else serverSupervisor.markStarting();
   let childFailureReason = 'server_exit';
+  let childFailureReported = false;
 
   const home = os.homedir();
   const constructedPath = getExpandedShellPath();
@@ -1247,6 +1249,33 @@ function startServer(port: number, recoverySafeMode = false): Electron.UtilityPr
     stdio: 'pipe',
     serviceName: 'codepilot-server',
   });
+
+  const reportUtilityFailureOnce = (reason: string, exitCode?: number | null): void => {
+    if (
+      childFailureReported
+      || !electronTelemetry.enabled
+      || isDev
+      || isQuitting
+      || (serverLifecyclePhase !== 'running' && !recoverySafeMode)
+    ) return;
+    childFailureReported = true;
+    const system = process.getSystemMemoryInfo();
+    Sentry.captureEvent(buildUtilityProcessFailureEvent({
+      reason,
+      exitCode,
+      utilityRssBytes: lastServerRuntimeMetrics?.rssBytes,
+      utilityHeapUsedBytes: lastServerRuntimeMetrics?.heapUsedBytes,
+      utilityHeapTotalBytes: lastServerRuntimeMetrics?.heapTotalBytes,
+      utilityHeapLimitBytes: lastServerRuntimeMetrics?.heapLimitBytes,
+      utilityExternalBytes: lastServerRuntimeMetrics?.externalBytes,
+      utilityArrayBuffersBytes: lastServerRuntimeMetrics?.arrayBuffersBytes,
+      hostTotalKb: system.total,
+      hostFreeKb: system.free,
+      hostAvailableKb: system.available,
+      hostSwapTotalKb: system.swapTotal,
+      hostSwapFreeKb: system.swapFree,
+    }));
+  };
 
   child.on('message', (rawMessage) => {
     if (activeServerGeneration !== generation || serverProcess !== child) return;
@@ -1322,6 +1351,7 @@ function startServer(port: number, recoverySafeMode = false): Electron.UtilityPr
       hostSwapTotalKb: system.swapTotal,
       hostSwapFreeKb: system.swapFree,
     });
+    reportUtilityFailureOnce(childFailureReason);
   });
 
   child.stdout?.on('data', (data: Buffer) => {
@@ -1342,6 +1372,10 @@ function startServer(port: number, recoverySafeMode = false): Electron.UtilityPr
     serverExited = true;
     serverExitCode = code;
     if (serverProcess === child) serverProcess = null;
+    reportUtilityFailureOnce(
+      childFailureReason === 'server_exit' ? 'unexpected_exit' : childFailureReason,
+      code,
+    );
     if (!isDev && !isQuitting && serverLifecyclePhase === 'running') {
       beginServerRecovery(generation, reason);
     }

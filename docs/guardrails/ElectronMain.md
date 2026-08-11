@@ -53,6 +53,7 @@
 | 30 | descendant lifecycle 消息只接受当前 utility generation，register/unregister 必须精确匹配 PID + start identity + role + basename。live、PID 复用或更深树不可验证时 fail-closed 停在错误页；不得仅凭 PID/basename自动 kill | lifecycle contract + registry |
 | 31 | Utility fatal report 原文不得写日志或复制诊断；只允许 reason、退出码、heap/RSS/private/host memory 等纯数值。恢复页 IPC 只接受当前 data: recovery renderer | Main + preload + recovery tests |
 | 32 | blocked（ownership 不可证明）状态**不得提供任何可成功调用的 relaunch 入口**：descendant registry 是 per-Main 内存态，relaunch 后为空，会绕过 single-owner 门禁。blocked 页只渲染「退出应用」；Main restart handler 必须显式拒绝 blocked，quit handler 必须反向限定只接受 blocked，source-pin 断言状态门禁位于 `app.relaunch()` 前。给 blocked 加回自动/一键重开前必须先落地跨 relaunch 的持久化 registry 重验证（tech-debt #85） | `server-recovery-page.ts` + Main IPC + recovery tests |
+| 33 | packaged Next utility 的运行期 fatal/error/unexpected exit 在 stable opt-in telemetry 中每个 generation 最多捕获一次；只传稳定枚举、退出码与 utility/host memory 数值。Electron diagnostic report 原文必须在 Main 边界丢弃，不得进入日志、Sentry 或恢复页 | `utility-process-failure.ts` + Main + telemetry/recovery tests |
 
 ## 关键文件 + 责任
 
@@ -162,3 +163,4 @@
 - 2026-08-07 — 独立安全审查确认 preview token 能表达 UNC/device root，跨站页面虽读不到响应仍可诱发 loopback 文件探测与 SMB/NTLM 出站。Preview wire 收紧为 local-only；UNC workspace 的 HTML 预览暂不支持，普通文件能力不受影响。
 - 2026-08-07 — B-018 再次收到真实截图后推翻旧 Chromium 归因：当前 Claude CLI 会在每个 subprocess 启动时用用户名探测 `Claude Code*` Keychain item，且 v0.65+ Electron 还会初始化 `safeStorage`。采用 default-keychain 配置的只读前置探测；确认缺失时跳过 safeStorage，并用 packaged 窄 shim 让 Claude 走既有回退。拒绝 `password-store=basic`（macOS 无效且会误导安全边界）和 `CLAUDE_CODE_SIMPLE`（会关闭正常 hooks/插件/项目指令能力）。
 - 2026-08-11 — Next utility OOM containment 改为 Main-owned safe mode + 本地 recovery page + bounded supervisor。自动重启受 production descendant registry 硬门禁；未知/残留 owner fail-closed，不以无限重启换表面可用。
+- 2026-08-12 — B-030 用户日志证明 utility fatal 只落本地主日志、Sentry 无对应事件。Main 新增 generation one-shot 的 normalized fatal capture，且继续在 API 入口丢弃 diagnostic report 原文；Electron 从 40.2.1 更新到同主版本 40.10.6，吸收后续 Chromium/Electron 补丁，不以全局关闭 GPU 规避旧 Graphite crash。

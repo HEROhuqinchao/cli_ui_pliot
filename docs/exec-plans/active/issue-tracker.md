@@ -1,7 +1,7 @@
 # Issue Tracker — 统一问题跟踪
 
 > 创建时间：2026-04-13
-> 最后更新：2026-08-11（B-030 Code complete / Tests pass，packaged crash 与长时 soak 待验证；校准 B-025 已落地状态）
+> 最后更新：2026-08-12（B-030 新增 utility fatal 脱敏遥测与 Electron 同主版本补丁；长时 soak / 下一 stable cohort 待验证）
 > 合并自：`open-issues-2026-03-12.md` + `v0.48-post-release-issues.md` + GitHub Issues 最新盘点
 
 **AI 须知：**
@@ -202,9 +202,9 @@ GitHub milestone `v0.56.x Stability / Trust`（#1）+ P0/P1 label 体系已建�
 - **确定证据:** 用户脱敏主日志在约 12 分钟内记录四次 `OOM error in V8: Zone Allocation failed - process out of memory`；Next server exit code 5，Electron breadcrumb 为 `child-process-gone type=Utility reason=crashed`，随后本地稳定端口持续 `ECONNREFUSED`，chat URL `ERR_CONNECTION_REFUSED`。GC 前 child heap 约 354–360MB，部分 total 约 428MB。
 - **已排除:** 不是历史消息损坏的必要结果——fresh `test` 明确 `historyMessageCount: 0` 仍 OOM；不是 Provider 401 的必要结果——前三次未发送新消息已崩溃；不是旧 B-025 日志洪水——本次 `serverErrors` ring 只有约 1.2–8.8KB。
 - **高相关前置信号:** 同一运行在首个 OOM 前约四小时至少十二次出现 `codex_models_manager::manager: failed to refresh available models: timeout waiting for child process to exit`；上游 `openai/codex#34397` 有同形周期性 hang 报告。但 exact allocator / orphan / oversized frame 尚未定案。
-- **已落地:** Codex stdout 改为 copy-before-cap 的 32 MiB byte-bounded NDJSON reader；`model/list` deadline abort、server-side single-flight、5 秒 cooldown、连续三次 signal 后 unhealthy idle recycle；Main-owned recovery safe mode 禁止 replacement server 启动 Codex/scheduler，并在 Chat 明示且禁发。Electron Main 新增 1s/2s/4s 有界 supervisor、stable-port health gate、poll pause/resume、self-contained recovery page、脱敏诊断、恢复交接 queue 与 current-generation descendant registry；live/PID-reuse/unverifiable tree 一律不 kill、fail-closed。
-- **验证:** 相关 transport/model/supervisor/registry/offline-page 定向测试 108/108，全量 `npm run test` 5179 pass / 0 fail / 1 skip（5180 tests）；`npm run build`、`npm run electron:build` 通过；禁用 Developer ID 自动发现后完整生成 ad-hoc signed arm64 目录包，deep/strict 签名、Resources/app.asar 0 source map 与 packaged `/api/health` verifier 全部通过。该目录包不是 DMG/ZIP/Release artifact。
-- **下一步:** 用可控 provider/凭据跑 active-turn interruption、历史 route/文件树恢复；跑 fresh/history 15 分钟和长任务 60 分钟内存曲线；条件允许时在受影响机器执行经批准的 profile/heap/network A/B。未获外部分发/机器 A/B 授权时继续只做本地/合成验证。
+- **已落地:** Codex stdout 改为 copy-before-cap 的 32 MiB byte-bounded NDJSON reader；`model/list` deadline abort、server-side single-flight、5 秒 cooldown、连续三次 signal 后 unhealthy idle recycle；Main-owned recovery safe mode 禁止 replacement server 启动 Codex/scheduler，并在 Chat 明示且禁发。Electron Main 新增 1s/2s/4s 有界 supervisor、stable-port health gate、poll pause/resume、self-contained recovery page、脱敏诊断、恢复交接 queue 与 current-generation descendant registry；live/PID-reuse/unverifiable tree 一律不 kill、fail-closed。2026-08-12 再补 stable opt-in、每 generation 一次的 utility fatal normalized Sentry event（只含稳定枚举和数值，raw report 丢弃），并将 Electron 40.2.1 升到同主版本 40.10.6。
+- **验证:** 原实现轮相关 transport/model/supervisor/registry/offline-page 定向测试 108/108，全量 `npm run test` 5179 pass / 0 fail / 1 skip（5180 tests）；`npm run build`、`npm run electron:build` 通过；禁用 Developer ID 自动发现后完整生成 ad-hoc signed arm64 目录包，deep/strict 签名、Resources/app.asar 0 source map 与 packaged `/api/health` verifier 全部通过。2026-08-12 后续补丁定向 78/78、全量 5185/0/1，Electron 40.10.6 build/package/deep/strict/0-map/health 通过；新版本 GUI rerun 因本机 ad-hoc Safe Storage Keychain 交互阻塞，等待 official-signed smoke。目录包不是 DMG/ZIP/Release artifact。
+- **下一步:** 用可控 provider/凭据跑 active-turn interruption、历史 route/文件树恢复；跑 fresh/history 15 分钟和长任务 60 分钟内存曲线；下一 stable 核验 utility fatal event 的脱敏/分组和 Graphite/utility crash cohort。条件允许时在受影响机器执行经批准的 profile/heap/network A/B。未获外部分发/机器 A/B 授权时继续只做本地/合成验证。
 
 ---
 
