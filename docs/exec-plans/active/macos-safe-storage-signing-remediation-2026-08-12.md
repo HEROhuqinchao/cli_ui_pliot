@@ -1,7 +1,7 @@
 # macOS Safe Storage Signing Remediation
 
 > 创建时间：2026-08-12
-> 最后更新：2026-08-12
+> 最后更新：2026-08-13
 
 ## 状态
 
@@ -11,7 +11,7 @@
 | Phase 1 | Developer ID + Team ID fail-closed 发布门禁 | ✅ Code complete | stable/preview 都要求证书，最终 `.app` 再做 deep/strict 校验 |
 | Phase 2 | 本地 recovery smoke 的 Safe Storage 隔离 | ✅ Code complete | 仅 exact env + packaged + canonical temp userData 可跳过，flag 不下传 child |
 | Phase 3 | 自动回归、构建与本地 packaged smoke | ✅ 已完成 | 5192/0/1；build/package/签名/0-map/health；single/budget/blocked 全通过 |
-| Phase 4 | official-signed CI / 旧 ad-hoc 用户升级验收 | ⏳ 待发布渠道 | 仓库 Apple 证书 secret 名称已核对并接线；旧钥匙串 ACL 首次迁移可能仍需一次授权 |
+| Phase 4 | official-signed CI / 旧 ad-hoc 用户升级验收 | ⏳ 修正后重跑 | v0.66.1 CI 证明证书已导入但身份选择被关闭；workflow 已修正，待 v0.66.2 official-signed gate；旧钥匙串 ACL 首次迁移可能仍需一次授权 |
 
 ## 用户结果
 
@@ -27,13 +27,15 @@
 
 ### Triage
 
-1. `.github/workflows/build.yml`、`preview-build.yml`、`preview-release.yml` 都没有向 electron-builder 提供 Developer ID 证书，并关闭 identity auto discovery。
+1. 原始 `.github/workflows/build.yml`、`preview-build.yml`、`preview-release.yml` 都没有向 electron-builder 提供 Developer ID 证书，并关闭 identity auto discovery。
 2. `scripts/after-sign.js` 在无证书时无条件 inside-out ad-hoc 签名且校验失败不阻断。ad-hoc bundle 没有 Team ID，designated requirement 绑定当前 CDHash；重新构建后身份变化，访问旧 Safe Storage item 时 macOS 会重新要求授权。
 3. 因而正式包和测试包都会命中，不是单台测试机配置问题。B-018 的 default-keychain guard 不能解决“钥匙串健康、但 app 签名身份变化”的 ACL 问题。
+4. 2026-08-13 的 v0.66.1 official CI 又暴露第二层配置错误：虽然已接入 `CSC_LINK`，同一证书打包 step 仍设置 `CSC_IDENTITY_AUTO_DISCOVERY=false`。当前 electron-builder 中 `CSC_LINK` 负责导入证书，但该开关会在没有显式 identity/`CSC_NAME` 时直接跳过身份选择，最终触发 afterSign 的 Developer ID fail-closed。该次运行没有创建 Release，证明发布门禁有效，也证明“有 `CSC_LINK` 就不受 auto discovery 影响”的旧假设不成立。
 
 ### Fix
 
 - stable 与两条 preview workflow 把既有 `MAC_CERT_P12_BASE64` / `MAC_CERT_PASSWORD` / `APPLE_TEAM_ID` secrets 映射为 electron-builder 的 `CSC_LINK` / `CSC_KEY_PASSWORD` 与 Team ID，并设置 `CODEPILOT_REQUIRE_DEVELOPER_ID=1`。
+- certificate-backed package step 允许 electron-builder 从导入的临时 keychain 发现 Developer ID 身份；只有无证书、显式 ad-hoc 的本地构建继续设置 `CSC_IDENTITY_AUTO_DISCOVERY=false`。workflow source contract 逐个锁定所有含 `CSC_LINK` 的 step，禁止再次组合这两个互斥配置。
 - afterSign 以实际 `codesign -d --verbose=4` 输出判断，不信任“环境变量存在”这一间接信号；distributable 要求 Developer ID Application + 精确 Team ID，任何签名或 deep/strict 失败都抛错。
 - artifact 生成后再次扫描全部 `CodePilot.app`，校验数量、Developer ID、Team ID 与 deep/strict，关闭“hook 内通过、最终产物被后续修改”的 tech-debt #57。
 - ad-hoc 仅在显式 `CODEPILOT_ALLOW_ADHOC_SIGNING=1` 时允许。recovery smoke 另用窄 flag 跳过 provider Safe Storage，但同时要求 packaged、canonical realpath 位于 `os.tmpdir()/codepilot-packaged-recovery-*`；symlink、真实 userData、dev mode、近似 flag 全部拒绝。
@@ -57,7 +59,8 @@
 |---|---|---|---|---|---|
 | 2026-08-12 | Node | n/a | signing/startup policy + workflow source contract | ✅ targeted | 43/43；symlink hardening 追加 4/4 |
 | 2026-08-12 | local Electron 40.10.6 arm64 | ad-hoc（显式、隔离） | build/package/deep-strict/0-map/health + recovery single/budget/blocked | ✅ 本地 smoke | health 200；single `66660→66668`；budget 第四次停止；blocked 拒绝 relaunch、plain quit 成功；无 Keychain modal。正式 gate 对该 ad-hoc 包按预期退出 1 |
-| _待执行_ | GitHub Actions macOS | Developer ID + configured Team ID | stable/preview final artifact gate | ⏳ | 既有 secret 名称已只读核对并接线；待 official-signed CI |
+| 2026-08-13 | GitHub Actions macOS | 证书已导入、身份发现被关闭 | v0.66.1 stable final artifact gate | ✅ 按预期阻断 | run `31615349470`：electron-builder 跳过签名，afterSign 拒绝 ad-hoc；未创建 Release |
+| _待执行_ | GitHub Actions macOS | Developer ID + configured Team ID | v0.66.2 stable final artifact gate | ⏳ | 已修正 certificate-backed step 的 identity selection，待重跑 |
 | _待执行_ | affected Mac | 旧 ad-hoc → Developer ID | 首次授权与后续升级 | ⏳ | 允许首次迁移授权，不允许每版重复 |
 
 ## 决策日志
@@ -68,3 +71,4 @@
 - 2026-08-12：Developer ID 成功必须以最终 bundle 为准；afterSign 的中间态校验只是一层，不再作为上传依据。
 - 2026-08-12：隔离 recovery smoke 三场通过，只证明 recovery 与 Safe Storage 隔离合同；它不替代 official-signed 包访问真实 userData/旧钥匙串 ACL 的发布验收。
 - 2026-08-12：只读 `gh secret list` 确认仓库已存在 `MAC_CERT_P12_BASE64`、`MAC_CERT_PASSWORD`、`APPLE_TEAM_ID`；workflow 必须映射现有名称，不能假设另有 `CSC_LINK` / `CSC_KEY_PASSWORD` secrets。
+- 2026-08-13：v0.66.1 official CI 证明导入 `CSC_LINK` 后仍需允许身份选择；保留失败 tag、不移动或重建，修正 workflow 后使用 v0.66.2 重发。

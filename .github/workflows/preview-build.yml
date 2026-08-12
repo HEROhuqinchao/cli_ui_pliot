@@ -229,7 +229,6 @@ jobs:
       - name: Build + package (arm64 only, no publish)
         timeout-minutes: 25
         env:
-          CSC_IDENTITY_AUTO_DISCOVERY: "false"
           CSC_LINK: ${{ secrets.MAC_CERT_P12_BASE64 }}
           CSC_KEY_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
           CODEPILOT_APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}

@@ -1,4 +1,4 @@
-## CodePilot v0.66.1
+## CodePilot v0.66.2
 
 > 修复 macOS 安全存储授权与本地服务异常恢复问题，推荐所有 v0.66.0 用户升级。
 
@@ -25,21 +25,21 @@
 ## 下载地址
 
 ### macOS
-- [Apple Silicon (M1/M2/M3/M4)](https://github.com/op7418/CodePilot/releases/download/v0.66.1/CodePilot-0.66.1-arm64.dmg)
-- [Intel](https://github.com/op7418/CodePilot/releases/download/v0.66.1/CodePilot-0.66.1-x64.dmg)
+- [Apple Silicon (M1/M2/M3/M4)](https://github.com/op7418/CodePilot/releases/download/v0.66.2/CodePilot-0.66.2-arm64.dmg)
+- [Intel](https://github.com/op7418/CodePilot/releases/download/v0.66.2/CodePilot-0.66.2-x64.dmg)
 
 ### Windows
-- [Windows 安装包](https://github.com/op7418/CodePilot/releases/download/v0.66.1/CodePilot.Setup.0.66.1.exe)
+- [Windows 安装包](https://github.com/op7418/CodePilot/releases/download/v0.66.2/CodePilot.Setup.0.66.2.exe)
 
 ### Linux x64
-- [AppImage](https://github.com/op7418/CodePilot/releases/download/v0.66.1/CodePilot-0.66.1-x86_64.AppImage)
-- [deb](https://github.com/op7418/CodePilot/releases/download/v0.66.1/CodePilot-0.66.1-amd64.deb)
-- [rpm](https://github.com/op7418/CodePilot/releases/download/v0.66.1/CodePilot-0.66.1-x86_64.rpm)
+- [AppImage](https://github.com/op7418/CodePilot/releases/download/v0.66.2/CodePilot-0.66.2-x86_64.AppImage)
+- [deb](https://github.com/op7418/CodePilot/releases/download/v0.66.2/CodePilot-0.66.2-amd64.deb)
+- [rpm](https://github.com/op7418/CodePilot/releases/download/v0.66.2/CodePilot-0.66.2-x86_64.rpm)
 
 ### Linux arm64
-- [AppImage](https://github.com/op7418/CodePilot/releases/download/v0.66.1/CodePilot-0.66.1-arm64.AppImage)
-- [deb](https://github.com/op7418/CodePilot/releases/download/v0.66.1/CodePilot-0.66.1-arm64.deb)
-- [rpm](https://github.com/op7418/CodePilot/releases/download/v0.66.1/CodePilot-0.66.1-aarch64.rpm)
+- [AppImage](https://github.com/op7418/CodePilot/releases/download/v0.66.2/CodePilot-0.66.2-arm64.AppImage)
+- [deb](https://github.com/op7418/CodePilot/releases/download/v0.66.2/CodePilot-0.66.2-arm64.deb)
+- [rpm](https://github.com/op7418/CodePilot/releases/download/v0.66.2/CodePilot-0.66.2-aarch64.rpm)
 
 ## 安装说明
 

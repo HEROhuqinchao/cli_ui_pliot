@@ -74,6 +74,18 @@ describe('macOS signing policy', () => {
       assert.match(workflow, /CODEPILOT_APPLE_TEAM_ID:\s*\$\{\{ secrets\.APPLE_TEAM_ID \}\}/);
       assert.match(workflow, /CODEPILOT_REQUIRE_DEVELOPER_ID:\s*["']1["']/);
       assert.match(workflow, /verify-macos-developer-id\.mjs release/);
+
+      const certificateBackedSteps = workflow
+        .split(/\n(?=\s+- name:)/)
+        .filter((step) => /CSC_LINK:\s*\$\{\{ secrets\.MAC_CERT_P12_BASE64 \}\}/.test(step));
+      assert.ok(certificateBackedSteps.length > 0, `${relative} must package with CSC_LINK`);
+      for (const step of certificateBackedSteps) {
+        assert.doesNotMatch(
+          step,
+          /CSC_IDENTITY_AUTO_DISCOVERY:\s*["']false["']/,
+          `${relative} must allow electron-builder to select the imported Developer ID identity`,
+        );
+      }
     }
   });
 
