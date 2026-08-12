@@ -27,7 +27,7 @@
 | ST-13 | 真实 Sentry smoke 只能由手动 CI 的显式 boolean 输入编译开启；tag、普通本地构建、Windows 与 Linux 必须编译为关闭。Native crash 还必须同时提供运行时开关，smoke 产物不得上传为可下载 artifact 或发布。 |
 | ST-14 | stable Linux 必须在原生 Ubuntu 22.04 x64/arm64 runner 构建 AppImage、deb、rpm；两种架构都要验证包架构、better-sqlite3 Electron ABI、packaged server 启动与 0 map，任一失败都阻断 Release。 |
 | ST-15 | HTTP 4xx（含 429）、缺凭据、模型不支持 → `user_action_required`；5xx、DNS、timeout 只有 retry exhausted 才能上报 `transient_upstream`；NoOutput 与已 resolve 的 in-band stream error 必须先解包可信 cause/status/code/type，无 upstream 根因才归 `EMPTY_RESPONSE`。 |
-| ST-16 | packaged Next utility 的运行期 fatal/error/unexpected exit 每个 generation 最多上报一个 normalized product-fault event。事件只允许稳定 reason、退出码和 utility/host memory 数值；Electron diagnostic report 原文、argv、env、路径和 server stdout/stderr 禁止进入 Sentry。启动探测失败、dev、正常 quit 与 telemetry opt-out 必须为 0 event。 |
+| ST-16 | packaged Next utility 的运行期 fatal/error/unexpected exit 每个 generation 最多上报一个 normalized product-fault event。事件只允许稳定 reason、退出码和 utility/host memory 数值；Electron diagnostic report 原文、argv、env、路径和 server stdout/stderr 禁止进入 Sentry。SDK `ChildProcess` 必须保留 breadcrumb 但以 `events:[]` 关闭自动 message event，避免 `abnormal-exit` 与自定义边界双报。启动探测失败、dev、正常 quit 与 telemetry opt-out 必须为 0 event。 |
 
 ## 3. 关键文件与责任
 
@@ -50,6 +50,7 @@
 - [ ] Provider/Native capture 是否统一经过 root-cause normalizer；4xx/user-action 是否确实 0 event，transient 是否带 retry-exhausted 事实？
 - [ ] NoOutput wrapper 与 resolved in-band error 是否先解包 cause/status/code/type；空响应与 partial-content 两种 stream 是否都经过 one-shot terminal capture；新增字段是否在 allow-list、深度/节点/字符串预算内，且未读取 body/chunk/request/data？
 - [ ] Utility failure 是否按 generation exactly-once；是否只从 allowlisted 数值快照构造事件，并在 API 形状上拒绝 diagnostic report 原文？
+- [ ] Electron SDK `ChildProcess` 是否仍以 `events:[]` 替换默认实例（保留 breadcrumb、禁止 abnormal-exit/launch-failed/integrity-failure 自动 Issue），避免和 ST-16 自定义事件双源？
 - [ ] “必须 0 event”的 transport/envelope 测试是否在同文件包含至少一个已知应产生 event 的阳性对照，证明 SDK carrier 与捕获链路实际接通？
 - [ ] SDK 升级后用真实 SDK client 重新枚举三层 default integrations，并以 request 行为确认只有 main session。
 - [ ] sanitizer transport 是否真的序列化 `user.ip_address:null`，且 Sentry project 的 Prevent Storing IP Addresses 仍开启？不要把代码 tombstone 冒充 project 设置已核验。
@@ -65,6 +66,7 @@
 - `sendDefaultPii:false` 不是完整脱敏；server event 删除 `user` 后 Relay 仍可能按连接补 IP/Geo，必须保留 null tombstone，并把 project IP scrubbing 作为纵深防御。
 - Electron `MainProcessSession` 默认可只在退出/异常时发送；长驻托盘应用不能把“最终会退出”当及时 Release Health 证据，也不能为修复空数据并存两个 session producer。
 - Sentry SDK 默认集成会随版本变化，不能把“当前默认”当合同。
+- Electron SDK `ChildProcess` 默认会为 `abnormal-exit` 等 reason 调用 `captureMessage`；只给自定义 utility 边界做 generation one-shot 不能阻止这个第二事件源。应替换为 `childProcessIntegration({events:[]})`，不要整体禁用而丢失 breadcrumb。
 - Node `Http` integration 自带 request-mode Release Health session；只过滤 `ProcessSession` 并不能得到 main-only 分母。
 - `captureMessage(..., 'info')` 仍会形成 Issue，不能拿它冒充无成本 metrics/activity。
 - Native `onError` 不是 retry-exhausted boundary；直接在回调 capture 会把 SDK 后续 finish/catch 再报一次，并把未耗尽的 transient 提前变成 Issue。反过来，只依赖 catch 也会漏掉 promise 正常 resolve 的 in-band error。
@@ -78,7 +80,7 @@
 
 ## 6. 测试覆盖
 
-- `telemetry-contract.test.ts`：enable、main-only eager session、outcome、fingerprint。
+- `telemetry-contract.test.ts`：enable、main-only eager session、breadcrumb-only ChildProcess、outcome、fingerprint。
 - `telemetry-sanitizer.test.ts`：PII/content/path/debug_meta 清洗与真实 Node transport null-IP tombstone。
 - `telemetry-provider-failure.test.ts`：全 4xx、5xx/DNS/timeout retry、NoOutput 解包、循环/深度/恶意对象、safe stack 与 anti-double-capture。
 - `telemetry-native-stream-boundary.test.ts`：真实 AI SDK error-part 生命周期、resolved promise、partial content、one-shot terminal/catch 去重。
@@ -105,3 +107,4 @@
 - 2026-08-05：Claude 同 tip 复审补出 ToolLoop POC 的 rejected-promise P2：fullStream 后过早执行 fallback，会先标 reported，再把 fresh NoOutput 当无关故障二报。POC 改为先 await `result.response`，仅在 promise resolve 后执行 defensive terminal fallback；真实初始 403/503 对照锁定两条 loop 为 0/1 event。
 - 2026-08-07：0.65 真实 server event 证明删除 `user` 后仍出现 IP/Geo；三层 sanitizer 改发 `ip_address:null`，真实 Node transport 锁定序列化结果。Electron 唯一 main session 改为 `sendOnCreate:true`，解决 tray-resident 应用等待退出导致的 `hasHealthData:false`；外部 project IP scrub 与新 stable cohort 仍需发布侧验证。
 - 2026-08-12：只读复核发现 v0.66 发布后 72 小时 official project 没有新 Issue；这不能单独证明 telemetry 失效，也不能替代 Release Health/session 分母。用户事故中的四次 Next utility exit 5 没有进入 Sentry，确认是 Main 只写本地日志的观测缺口；补充 ST-16，未来 stable opt-in 构建按 generation 上报一次脱敏 fatal event。
+- 2026-08-12：Claude 复审发现 Electron SDK 默认 `ChildProcess` 对 `abnormal-exit` 仍自动 `captureMessage`，会和 ST-16 自定义 event 双报。Main 改为显式替换 `childProcessIntegration({events:[]})`，保留 process breadcrumb，只让 normalized generation boundary 拥有 utility Issue。

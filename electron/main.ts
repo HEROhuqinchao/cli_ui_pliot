@@ -36,6 +36,7 @@ if (electronTelemetry.enabled) {
     integrations: (defaults) => configureElectronMainIntegrations(
       defaults,
       Sentry.mainProcessSessionIntegration({ sendOnCreate: true }),
+      Sentry.childProcessIntegration({ events: [] }),
     ),
     beforeBreadcrumb(breadcrumb) {
       return sanitizeTelemetryBreadcrumb(breadcrumb);
