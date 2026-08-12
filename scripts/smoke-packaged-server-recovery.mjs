@@ -118,6 +118,7 @@ async function launch() {
       ...process.env,
       CLAUDE_GUI_DATA_DIR: dataDir,
       CODEPILOT_CODEX_HOME: codexHome,
+      CODEPILOT_PROVIDER_SECRET_ISOLATED_SMOKE: '1',
       CODEX_DISABLED: scenario === 'blocked' ? '0' : '1',
       NEXT_PUBLIC_SENTRY_DSN: '',
     },

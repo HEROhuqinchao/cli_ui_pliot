@@ -93,6 +93,10 @@ import {
   selectCodexWindowsInstallCommand,
 } from './codex-windows-recovery';
 import { initializeProviderSecretEnvironment } from './provider-secret-key';
+import {
+  PROVIDER_SECRET_ISOLATED_SMOKE_ENV,
+  shouldSkipProviderSecretForIsolatedSmoke,
+} from './provider-secret-startup-policy';
 import { sanitizeLogLine } from './log-sanitize';
 import {
   buildMacosKeychainEnvironment,
@@ -140,7 +144,11 @@ const SERVER_ERRORS_MAX_BYTES = 256 * 1024;
 function sanitizedProcessEnv(): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
-    if (!key.startsWith('__NEXT_PRIVATE_') && value !== undefined) {
+    if (
+      !key.startsWith('__NEXT_PRIVATE_')
+      && key !== PROVIDER_SECRET_ISOLATED_SMOKE_ENV
+      && value !== undefined
+    ) {
       env[key] = value;
     }
   }
@@ -2020,32 +2028,46 @@ app.whenReady().then(async () => {
   userShellEnv = loadUserShellEnv();
 
   // Electron owns OS credential-store access. The standalone Next child gets
-  // only the in-memory data-encryption key; the database never stores it.
-  const macosKeychainProbe = getMacosDefaultKeychainProbe();
-  const macosSecurityShimDir = app.isPackaged
-    ? path.join(process.resourcesPath, 'macos-keychain-guard')
-    : path.join(app.getAppPath(), 'resources', 'macos-keychain-guard');
-  macosKeychainEnvironment = buildMacosKeychainEnvironment(
-    macosKeychainProbe,
-    macosSecurityShimDir,
-  );
-
-  if (macosKeychainProbe.status === 'unavailable') {
+  // only the in-memory data-encryption key; the database never stores it. A
+  // packaged recovery smoke may bypass this only when its userData is under
+  // the dedicated disposable temp root, so an ad-hoc test build never touches
+  // the developer's real `CodePilot Safe Storage` item.
+  const skipProviderSecretForSmoke = shouldSkipProviderSecretForIsolatedSmoke({
+    flag: process.env[PROVIDER_SECRET_ISOLATED_SMOKE_ENV],
+    isPackaged: app.isPackaged,
+    userDataDir: app.getPath('userData'),
+  });
+  if (skipProviderSecretForSmoke) {
     providerSecretEnvironment = {};
-    console.warn(
-      `[macos-keychain] default keychain unavailable; noninteractive guard enabled; reason=${macosKeychainProbe.reason}`,
-    );
-    console.warn('[provider-secret] safeStorage skipped; legacy provider secrets will not be migrated');
+    macosKeychainEnvironment = {};
+    console.warn('[provider-secret] safeStorage skipped for isolated packaged recovery smoke');
   } else {
-    try {
-      providerSecretEnvironment = initializeProviderSecretEnvironment(app.getPath('userData'));
-      console.log(
-        `[provider-secret] backend=${providerSecretEnvironment.CODEPILOT_PROVIDER_SECRET_BACKEND} `
-        + `level=${providerSecretEnvironment.CODEPILOT_PROVIDER_SECRET_LEVEL}`,
-      );
-    } catch (error) {
+    const macosKeychainProbe = getMacosDefaultKeychainProbe();
+    const macosSecurityShimDir = app.isPackaged
+      ? path.join(process.resourcesPath, 'macos-keychain-guard')
+      : path.join(app.getAppPath(), 'resources', 'macos-keychain-guard');
+    macosKeychainEnvironment = buildMacosKeychainEnvironment(
+      macosKeychainProbe,
+      macosSecurityShimDir,
+    );
+
+    if (macosKeychainProbe.status === 'unavailable') {
       providerSecretEnvironment = {};
-      console.warn('[provider-secret] OS-protected storage unavailable; legacy provider secrets will not be migrated', error);
+      console.warn(
+        `[macos-keychain] default keychain unavailable; noninteractive guard enabled; reason=${macosKeychainProbe.reason}`,
+      );
+      console.warn('[provider-secret] safeStorage skipped; legacy provider secrets will not be migrated');
+    } else {
+      try {
+        providerSecretEnvironment = initializeProviderSecretEnvironment(app.getPath('userData'));
+        console.log(
+          `[provider-secret] backend=${providerSecretEnvironment.CODEPILOT_PROVIDER_SECRET_BACKEND} `
+          + `level=${providerSecretEnvironment.CODEPILOT_PROVIDER_SECRET_LEVEL}`,
+        );
+      } catch (error) {
+        providerSecretEnvironment = {};
+        console.warn('[provider-secret] OS-protected storage unavailable; legacy provider secrets will not be migrated', error);
+      }
     }
   }
 
