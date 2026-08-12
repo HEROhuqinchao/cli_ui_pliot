@@ -90,5 +90,17 @@ describe('macOS signing policy', () => {
     assert.match(finalVerifier, /requireDeveloperId:\s*true/);
     assert.match(finalVerifier, /allowAdhoc:\s*false/);
     assert.match(finalVerifier, /--verify', '--deep', '--strict/);
+    assert.match(finalVerifier, /CODESIGN_INSPECT_TIMEOUT_MS\s*=\s*15_000/);
+    assert.match(finalVerifier, /CODESIGN_VERIFY_TIMEOUT_MS\s*=\s*60_000/);
+    assert.match(finalVerifier, /spawnSync\('\/usr\/bin\/codesign',[\s\S]*?timeout,[\s\S]*?killSignal:\s*'SIGKILL'/);
+    assert.match(finalVerifier, /result\.error\?\.code === 'ETIMEDOUT'/);
+    assert.match(
+      finalVerifier,
+      /\['-d', '--verbose=4', appPath\],[\s\S]*?CODESIGN_INSPECT_TIMEOUT_MS/,
+    );
+    assert.match(
+      finalVerifier,
+      /\['--verify', '--deep', '--strict', '--verbose=4', appPath\],[\s\S]*?CODESIGN_VERIFY_TIMEOUT_MS/,
+    );
   });
 });

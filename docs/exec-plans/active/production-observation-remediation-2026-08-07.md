@@ -48,6 +48,7 @@
 - terminal persistence 对无匹配结果的 tool use 追加 app-owned、`is_error:true` 的缺失结果；模型历史装配再修复旧数据，并丢弃无法安全表达的 orphan result。
 - 后续补丁为 packaged utility 运行期失败增加 generation one-shot 的 normalized fatal event，只包含稳定 reason、退出码与 utility/host memory 数值；raw Electron diagnostic report 在 Main 边界丢弃。
 - review follow-up 将 Electron SDK 默认 `ChildProcess` 替换为 `events:[]` 实例：保留退出 breadcrumb，但关闭 `abnormal-exit` 等自动 message Issue，避免和 normalized generation event 双报。
+- P3 follow-up 为 final artifact `codesign` inspect/deep verify 增加 15s/60s 进程级硬超时；utility exit code 改用独立平台整数合同，保留负 sentinel 并拒绝浮点/越界值。
 - Electron 从 40.2.1 更新到同主版本 40.10.6，以吸收后续 Chromium/Electron 稳定补丁；不全局关闭 GPU，也不把补丁升级写成旧 Graphite crash 已被精确复现并根治。
 
 ### Verify
@@ -67,6 +68,7 @@
 - `v0.66.0` 发版候选重新验证：typecheck、Harness boundary、5148 单测（5147 pass / 0 fail / 1 skip）与 production build 全部通过。
 - 2026-08-12 后续补丁最终结果：全量 5192 pass / 0 fail / 1 skip；Electron production build、40.10.6 arm64 显式 ad-hoc 目录包、deep/strict 签名、0 source map 与 packaged server health 通过。新增 canonical temp userData + packaged 双门禁的 Safe Storage 隔离后，GUI recovery single/budget/blocked 三场全通过且不再出现 Keychain modal；该隔离 smoke 不替代 official-signed 包访问真实 userData/旧 ACL 的发布验收。
 - 2026-08-12 telemetry review follow-up：`ChildProcess events:[]` replacement 与 Main wiring 定向 32/32；全量 5193 pass / 0 fail / 1 skip；targeted ESLint、docs-drift 与 diff check 通过。
+- 2026-08-12 P3 follow-up：签名 timeout 与跨平台 exit-code 定向 9/9；全量 5194 pass / 0 fail / 1 skip（5195 tests），Electron production build、脚本 syntax、targeted ESLint、docs-drift、hooks 与 diff check 通过；保留既有 Next NFT whole-project trace warning。
 
 ### Guardrail
 
@@ -97,3 +99,4 @@
 - 2026-08-12：不重复修复已在 v0.66 前落地的 MissingToolResults / NoOutput / Provider 分类链；把“旧 Issue 数量高”校准为历史版本信号。新增代码只闭合 utility crash 盲区并升级 Electron 同主版本补丁；是否降低真实 Graphite/utility crash 率仍等待下一 stable cohort。
 - 2026-08-12：Electron 40.10.6 的 packaged server 与签名/ABI 门禁通过。针对 recovery 自动化增加 canonical temp userData 的窄 Safe Storage bypass 后三场 GUI smoke 通过；这关闭自动化阻塞，但发布前仍要求 official-signed 包验证真实 userData 与旧 ad-hoc ACL，不能把隔离 bypass 冒充产品凭据路径。
 - 2026-08-12：Claude 对 telemetry/signing 两项复审结论为 `fix_requested`（无 P0/P1，唯一 P2）：SDK `ChildProcess` 默认会为 `abnormal-exit` 自动发 message，与自定义 utility event 双源。采纳最小修复：`events:[]`、breadcrumb 保留，并增加 integration replacement 与 Main wiring guardrail；两条 P3（最终 codesign 无进程级 timeout、负 exit code 丢弃）不扩入本轮。
+- 2026-08-12：用户要求继续闭合两条 P3。final verifier 的 inspect/deep verify 分别采用 15s/60s timeout + `SIGKILL`，超时 fail closed；utility exit code 不再误用 memory 非负过滤器，改为 `[-2^31, 2^32-1]` 整数合同。两项均补正反例测试与 guardrail，不改变 utility event fingerprint。

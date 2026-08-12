@@ -46,6 +46,13 @@ const NUMERIC_EXTRA_KEYS = [
   'hostSwapFreeKb',
 ] as const satisfies ReadonlyArray<keyof UtilityProcessFailureMetrics>;
 
+// Electron documents utility exitCode as waitpid status on POSIX or
+// GetExitCodeProcess on Windows. Preserve the platform value (including signed
+// POSIX/launch-failure sentinels) while rejecting floats and values outside the
+// union of signed int32 and unsigned Windows DWORD representations.
+const MIN_PLATFORM_EXIT_CODE = -0x8000_0000;
+const MAX_PLATFORM_EXIT_CODE = 0xffff_ffff;
+
 function normalizeReason(reason: string): UtilityProcessFailureReason {
   if (reason === 'utility_fatal_error' || reason === 'utility_error') return reason;
   return 'unexpected_exit';
@@ -66,6 +73,18 @@ function addFiniteNonNegative(
   output[key] = Number(value);
 }
 
+function addPlatformExitCode(
+  output: Record<string, string | number>,
+  value: number | null | undefined,
+): void {
+  if (
+    !Number.isInteger(value)
+    || Number(value) < MIN_PLATFORM_EXIT_CODE
+    || Number(value) > MAX_PLATFORM_EXIT_CODE
+  ) return;
+  output.exitCode = Number(value);
+}
+
 /**
  * Build the only Sentry payload allowed for a packaged Next utility failure.
  * The Electron diagnostic report is deliberately not accepted as input: it
@@ -78,7 +97,7 @@ export function buildUtilityProcessFailureEvent(
   const reason = normalizeReason(input.reason);
   const category = categoryForReason(reason);
   const extra: Record<string, string | number> = { lifecycleReason: reason };
-  addFiniteNonNegative(extra, 'exitCode', input.exitCode);
+  addPlatformExitCode(extra, input.exitCode);
   for (const key of NUMERIC_EXTRA_KEYS) {
     addFiniteNonNegative(extra, key, input[key]);
   }

@@ -8,6 +8,9 @@ import { spawnSync } from 'node:child_process';
 const require = createRequire(import.meta.url);
 const { resolveMacosSigningMode } = require('./macos-signing-policy.cjs');
 
+const CODESIGN_INSPECT_TIMEOUT_MS = 15_000;
+const CODESIGN_VERIFY_TIMEOUT_MS = 60_000;
+
 function usage() {
   return 'Usage: node scripts/verify-macos-developer-id.mjs <release-root> <expected-app-count>';
 }
@@ -31,8 +34,17 @@ function findApps(root, maxDepth = 4) {
   return apps.sort();
 }
 
-function runCodesign(args) {
-  const result = spawnSync('/usr/bin/codesign', args, { encoding: 'utf8' });
+function runCodesign(args, timeout) {
+  const result = spawnSync('/usr/bin/codesign', args, {
+    encoding: 'utf8',
+    timeout,
+    // A timed-out final artifact gate must not leave codesign running while the
+    // workflow advances to checksums/upload.
+    killSignal: 'SIGKILL',
+  });
+  if (result.error?.code === 'ETIMEDOUT') {
+    throw new Error(`codesign timed out after ${timeout}ms`);
+  }
   if (result.status !== 0) {
     throw new Error((result.stderr || result.stdout || 'codesign failed').trim());
   }
@@ -55,14 +67,20 @@ if (apps.length !== expectedCount) {
 }
 
 for (const appPath of apps) {
-  const signatureOutput = runCodesign(['-d', '--verbose=4', appPath]);
+  const signatureOutput = runCodesign(
+    ['-d', '--verbose=4', appPath],
+    CODESIGN_INSPECT_TIMEOUT_MS,
+  );
   const decision = resolveMacosSigningMode({
     signatureOutput,
     requireDeveloperId: true,
     allowAdhoc: false,
     expectedTeamId,
   });
-  runCodesign(['--verify', '--deep', '--strict', '--verbose=4', appPath]);
+  runCodesign(
+    ['--verify', '--deep', '--strict', '--verbose=4', appPath],
+    CODESIGN_VERIFY_TIMEOUT_MS,
+  );
   console.log(
     `Developer ID signature OK: ${path.relative(releaseRoot, appPath)} team=${decision.teamId}`,
   );

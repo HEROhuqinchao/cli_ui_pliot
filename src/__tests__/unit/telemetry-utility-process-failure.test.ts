@@ -39,7 +39,7 @@ describe('utility process failure telemetry', () => {
     ]);
   });
 
-  it('normalizes arbitrary exit reasons and drops invalid numeric values', () => {
+  it('normalizes arbitrary exit reasons, preserves signed platform exit codes, and drops invalid metrics', () => {
     const event = buildUtilityProcessFailureEvent({
       reason: 'server_exit_-1 /Users/private --token=secret',
       exitCode: -1,
@@ -51,8 +51,27 @@ describe('utility process failure telemetry', () => {
     assert.equal(event.tags['error.category'], 'UTILITY_PROCESS_UNEXPECTED_EXIT');
     assert.deepEqual(event.extra, {
       lifecycleReason: 'unexpected_exit',
+      exitCode: -1,
       hostFreeKb: 0,
     });
+  });
+
+  it('accepts only bounded integer POSIX/Windows exit-code representations', () => {
+    for (const exitCode of [-0x8000_0000, -1, 0, 0x7fff_ffff, 0xffff_ffff]) {
+      const event = buildUtilityProcessFailureEvent({ reason: 'utility_error', exitCode });
+      assert.equal(event.extra.exitCode, exitCode);
+    }
+
+    for (const exitCode of [
+      -0x8000_0001,
+      0x1_0000_0000,
+      1.5,
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+    ]) {
+      const event = buildUtilityProcessFailureEvent({ reason: 'utility_error', exitCode });
+      assert.equal('exitCode' in event.extra, false);
+    }
   });
 
   it('survives the default-deny sanitizer without admitting arbitrary extras', () => {

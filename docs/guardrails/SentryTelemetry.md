@@ -27,7 +27,7 @@
 | ST-13 | 真实 Sentry smoke 只能由手动 CI 的显式 boolean 输入编译开启；tag、普通本地构建、Windows 与 Linux 必须编译为关闭。Native crash 还必须同时提供运行时开关，smoke 产物不得上传为可下载 artifact 或发布。 |
 | ST-14 | stable Linux 必须在原生 Ubuntu 22.04 x64/arm64 runner 构建 AppImage、deb、rpm；两种架构都要验证包架构、better-sqlite3 Electron ABI、packaged server 启动与 0 map，任一失败都阻断 Release。 |
 | ST-15 | HTTP 4xx（含 429）、缺凭据、模型不支持 → `user_action_required`；5xx、DNS、timeout 只有 retry exhausted 才能上报 `transient_upstream`；NoOutput 与已 resolve 的 in-band stream error 必须先解包可信 cause/status/code/type，无 upstream 根因才归 `EMPTY_RESPONSE`。 |
-| ST-16 | packaged Next utility 的运行期 fatal/error/unexpected exit 每个 generation 最多上报一个 normalized product-fault event。事件只允许稳定 reason、退出码和 utility/host memory 数值；Electron diagnostic report 原文、argv、env、路径和 server stdout/stderr 禁止进入 Sentry。SDK `ChildProcess` 必须保留 breadcrumb 但以 `events:[]` 关闭自动 message event，避免 `abnormal-exit` 与自定义边界双报。启动探测失败、dev、正常 quit 与 telemetry opt-out 必须为 0 event。 |
+| ST-16 | packaged Next utility 的运行期 fatal/error/unexpected exit 每个 generation 最多上报一个 normalized product-fault event。事件只允许稳定 reason、平台定义的有界整数退出码和 utility/host memory 数值；退出码接受 signed int32 至 Windows DWORD 范围，内存指标仍只接受非负有限数。Electron diagnostic report 原文、argv、env、路径和 server stdout/stderr 禁止进入 Sentry。SDK `ChildProcess` 必须保留 breadcrumb 但以 `events:[]` 关闭自动 message event，避免 `abnormal-exit` 与自定义边界双报。启动探测失败、dev、正常 quit 与 telemetry opt-out 必须为 0 event。 |
 
 ## 3. 关键文件与责任
 
@@ -50,6 +50,7 @@
 - [ ] Provider/Native capture 是否统一经过 root-cause normalizer；4xx/user-action 是否确实 0 event，transient 是否带 retry-exhausted 事实？
 - [ ] NoOutput wrapper 与 resolved in-band error 是否先解包 cause/status/code/type；空响应与 partial-content 两种 stream 是否都经过 one-shot terminal capture；新增字段是否在 allow-list、深度/节点/字符串预算内，且未读取 body/chunk/request/data？
 - [ ] Utility failure 是否按 generation exactly-once；是否只从 allowlisted 数值快照构造事件，并在 API 形状上拒绝 diagnostic report 原文？
+- [ ] Utility exit code 是否按平台整数单独校验（`[-2^31, 2^32-1]`），没有误套 memory 的非负规则或接受浮点/越界值？
 - [ ] Electron SDK `ChildProcess` 是否仍以 `events:[]` 替换默认实例（保留 breadcrumb、禁止 abnormal-exit/launch-failed/integrity-failure 自动 Issue），避免和 ST-16 自定义事件双源？
 - [ ] “必须 0 event”的 transport/envelope 测试是否在同文件包含至少一个已知应产生 event 的阳性对照，证明 SDK carrier 与捕获链路实际接通？
 - [ ] SDK 升级后用真实 SDK client 重新枚举三层 default integrations，并以 request 行为确认只有 main session。
@@ -72,6 +73,7 @@
 - Native `onError` 不是 retry-exhausted boundary；直接在回调 capture 会把 SDK 后续 finish/catch 再报一次，并把未耗尽的 transient 提前变成 Issue。反过来，只依赖 catch 也会漏掉 promise 正常 resolve 的 in-band error。
 - fullStream 正常结束不代表 result promise 一定 resolve；初始 HTTP/DNS 失败可能先产生 error part，再以 fresh、无 cause 的 NoOutput 拒绝 `response`/`finishReason`。resolved-stream fallback 必须排在 result promise 之后，避免先报 root cause、catch 又报虚假 `EMPTY_RESPONSE`。
 - `utilityProcess` 的 `error` 回调报告可能包含命令行、环境和绝对路径；不能因为它能解释 native crash 就直接 capture/log。应只保留 Electron 类型映射后的稳定枚举与已有数值观测。
+- `exitCode` 不是内存计数：Electron 在 POSIX 暴露 waitpid status、在 Windows 暴露 `GetExitCodeProcess` 结果。复用“非负数”过滤器会静默丢掉负 sentinel；应使用独立的有界整数合同，且不要把退出码加入 fingerprint。
 - Electron SDK v7 默认 `SentryMinidump` 不在崩溃时直传（Crashpad `uploadToServer:false`）；隔离崩溃 smoke 必须再无 crash flag 启动一次，让 SDK 读取并上传 completed dump。
 - `productionBrowserSourceMaps` + debug ID 不保证 Turbopack 产生真实 map；必须检查非占位产物。
 - standalone tracer 会漏掉 server map；必须按最终 JS 图复制并验证。
@@ -108,3 +110,4 @@
 - 2026-08-07：0.65 真实 server event 证明删除 `user` 后仍出现 IP/Geo；三层 sanitizer 改发 `ip_address:null`，真实 Node transport 锁定序列化结果。Electron 唯一 main session 改为 `sendOnCreate:true`，解决 tray-resident 应用等待退出导致的 `hasHealthData:false`；外部 project IP scrub 与新 stable cohort 仍需发布侧验证。
 - 2026-08-12：只读复核发现 v0.66 发布后 72 小时 official project 没有新 Issue；这不能单独证明 telemetry 失效，也不能替代 Release Health/session 分母。用户事故中的四次 Next utility exit 5 没有进入 Sentry，确认是 Main 只写本地日志的观测缺口；补充 ST-16，未来 stable opt-in 构建按 generation 上报一次脱敏 fatal event。
 - 2026-08-12：Claude 复审发现 Electron SDK 默认 `ChildProcess` 对 `abnormal-exit` 仍自动 `captureMessage`，会和 ST-16 自定义 event 双报。Main 改为显式替换 `childProcessIntegration({events:[]})`，保留 process breadcrumb，只让 normalized generation boundary 拥有 utility Issue。
+- 2026-08-12：复审 P3 follow-up 将 utility `exitCode` 从 memory-style 非负过滤中分离；保留 Electron 平台整数（signed int32 至 Windows DWORD），拒绝浮点、非有限与越界值，且 fingerprint 不变。
