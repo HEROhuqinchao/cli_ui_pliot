@@ -104,6 +104,10 @@ if (DB has rows) {
 
 不变量：DB 行**优先**于 catalog；hidden DB 行**必须**抑制 catalog tail 中的同 id（否则用户隐藏一个 catalog 模型，下次刷新它又冒出来）。
 
+catalog-only plan 有一个更窄的持久升级例外：Settings > Models 的 per-provider GET 会调用 `mergeCatalogManagedModels()`，把未编辑的 `source='catalog'` 行更新到当前 display/upstream/capabilities/order，并补缺失 catalog id。它不得覆盖 `user_edited=1` / `manual_*`，也不得 disable 或 prune 非当前目录行；会删/隐藏行的完整 align 仍必须 preview-first。补缺失行时 stable id 与 upstream wire id 任一命中都视为同一 SKU，且条件 INSERT 必须容忍另一个进程抢先写入。
+
+Add Model 对话框的候选存在三态：未添加、已启用、已隐藏。已隐藏必须返回真实 `existingModelId` 并提供 PATCH 重新启用，不能用“已添加” badge 把用户困住。catalog-only plan 的精确目录候选若重新添加，由 POST 服务端使用 catalog 真源恢复 capabilities/source/order；renderer 只传身份，不能把目录模型降级为 manual 空能力行。
+
 ### 4.2 user_edited 守护
 
 `provider_models.user_edited` 标记用户改过的行。`applyDiscoveryDiff()` (`db.ts:1986`) 必须保留这些行的 `display_name` / `capabilities_json` / `enabled` / `sort_order`，仅刷新 `upstream_model_id` / `last_refreshed_at` / `source`。
@@ -121,6 +125,8 @@ if (DB has rows) {
 | `sdk_default` | SDK 内置 default（不再用） |
 
 UI 展示在 Models 页 row 上的 source badge。删除按钮**仅**对 `source='manual'` 行可用（防误删 catalog seed）。
+
+对 catalog-only plan，“删除”和“隐藏”语义不同：当前 catalog SKU 被物理删除后会在下一次 Models GET 重新物化；不想在 picker 使用必须隐藏。已经存在的 user-owned stable/wire 双行不允许 read merge 自动删除、改 ID 或禁用，因为这会破坏 session pin 与用户所有权；需要单独 preview-first 整理。
 
 ## 5. 删除 / 编辑安全
 
@@ -157,7 +163,7 @@ UI 展示在 Models 页 row 上的 source badge。删除按钮**仅**对 `source
 | Verified wire resolver | `src/lib/provider-catalog.ts:getVerifiedProviderWireCapabilities()` | preset identity + exact model；第一方能力不外溢到聚合渠道 |
 | Runtime transport config | `src/lib/provider-resolver.ts:toAiSdkConfig()` | 只消费 verified wire；runtime/model 不匹配时保留默认协议 |
 | Provider DB ops | `src/lib/db.ts` `createProvider/updateProvider/deleteProvider` | 删除联动 active_image_provider；不允许改 provider_type |
-| Provider models DB ops | `src/lib/db.ts` `upsertProviderModel/applyDiscoveryDiff/updateProviderModelUserFields` | 保留 user_edited 行的用户字段；catalog seed 走 `seedCatalogModels` |
+| Provider models DB ops | `src/lib/db.ts` `upsertProviderModel/applyDiscoveryDiff/updateProviderModelUserFields/mergeCatalogManagedModels` | 保留 user_edited 行的用户字段；catalog seed 与 plan 目录非破坏升级分开 |
 | API: providers CRUD | `src/app/api/providers/route.ts` + `[id]/route.ts` | DELETE 不动 chat_sessions；PUT 拒绝 provider_type 变更 |
 | Add Service Modal | `ProviderManager.tsx` | 5 类入口对齐已连接分组；OAuth 已登录置灰不隐藏；xAI 两渠道分离 |
 | Provider Doctor | `src/components/settings/ProviderDoctorDialog.tsx` + `src/lib/provider-doctor.ts` | 测试连接走 `provider-resolver.resolveProvider()` 同一链路（B-013 教训） |
@@ -197,6 +203,8 @@ UI 展示在 Models 页 row 上的 source badge。删除按钮**仅**对 `source
 12. **compiler 从静态 descriptor 宣称未挂载工具** — descriptor 只定义潜在能力，不能单独成为当前请求的提示真源。编译给模型的 tool hints 必须取“catalog descriptor ∩ 当前 bridge 实际 `toolNames`”；logged-out、权限 gate 或 Runtime 不支持导致未挂载时，不得提示模型调用该工具。golden/fixture 必须显式写清 OAuth/可用性状态，禁止继承开发机登录态。
 13. **把模型能力当成网关 wire 能力** — 同名模型经聚合渠道可能拒绝或忽略 effort/Responses；必须用 preset `wireCapabilities` 独立声明
 14. **preset 新 env 只对新连接生效** — resolver 必须层叠 catalog 默认；新增 key 也必须进入 managed 清理集合，避免旧用户缺能力、切 provider 后又串值
+15. **把 hidden 候选显示成普通“已添加”** — Models 列表看不到、Add dialog 又没有恢复动作，会原样复活“已添加但没有选项”的语义 bug。必须返回 hidden 三态与真实 local id
+16. **目录候选复用 manual POST 默认值** — `source='manual' / user_edited=1 / capabilities='{}'` 会永久退出 catalog 升级并丢 effort/context。精确 plan 候选必须由服务端 catalog 重建
 
 ## 9. 测试覆盖
 
@@ -206,6 +214,8 @@ UI 展示在 Models 页 row 上的 source badge。删除按钮**仅**对 `source
 | `src/__tests__/unit/provider-preset-identity-migration.test.ts` | `preset_key` 迁移、歧义、保守 backfill |
 | `src/__tests__/unit/provider-preset-switch-route.test.ts` | 显式切套餐、catalog reconcile、非法 endpoint 拒绝 |
 | `src/__tests__/unit/provider-resolver.test.ts` | catalog merge / DB 优先 / hidden 抑制 / role models 拉取 |
+| `src/__tests__/unit/foundation-refresh-user-path-contract.test.ts` | Models GET 的存量套餐目录升级、Add Model stable/upstream identity、hidden 恢复、catalog 重加能力保真、零写幂等与非 plan 反例 |
+| `src/__tests__/unit/catalog-capabilities-roundtrip.test.ts` | catalog metadata round-trip、read merge 用户保护、upstream 去重、冲突安全与排序避让 |
 | `src/__tests__/unit/deepseek-v4-flash-adaptation.test.ts` | Flash 0731 + Pro 0813 exact preset/model wire 门、legacy env 默认层叠、DeepSeek Anthropic effort + Codex Responses 请求形状、Claude suffix/聚合渠道反例 |
 | `src/__tests__/unit/qwen-token-plan-catalog.test.ts` | Qwen 三套餐白名单、默认角色、usage policy |
 | `src/__tests__/unit/xai-provider.test.ts` | xAI API Key preset、Responses、官方 endpoint 边界 |
@@ -228,3 +238,5 @@ UI 展示在 Models 页 row 上的 source badge。删除按钮**仅**对 `source
 - **2026-07-21** `preset_key` 升为 DB 稳定身份，所有 matcher 收口到共享 resolver；同 URL 多套餐返回 ambiguous，不再顺序 first-match。
 - **2026-07-21** xAI API Key 与 xAI OAuth 作为独立渠道并列；OAuth virtual provider 不伪造 DB 行、额度或套餐名称。
 - **2026-08-02** 模型/UI capability 与 provider wire capability 正式分轴。DeepSeek V4 Flash 只有在第一方 preset + exact model + Codex Runtime 时切原生 Responses；Anthropic effort 也只对 preset 声明的模型放行。ClinePass/OpenCode Go 的同名模型保持 tool-use-only，直到各自网关 smoke。preset env 同时改为可升级分层配置，老 provider 行不必删除重加。
+- **2026-08-15** catalog-only plan 的旧 catalog 快照改为 Models GET 非破坏升级：只同步 pristine catalog 行并补当前 id，不覆盖用户选择、不做 disable/prune。套餐搜索候选把稳定 DB id 与 upstream wire id 分列，避免 GLM-5.3 因旧 `sonnet` alias 显示“已添加”但管理页仍停在 5.2，或手动添加后产生重复行。
+- **2026-08-16** v0.67.1 条件审查收口：catalog merge 增加 stable/upstream 双查重、跨进程冲突安全与用户排序避让；Add dialog 显式区分 hidden 并可恢复；plan catalog 重加由服务端恢复完整能力和 catalog ownership。存量 user-owned 双行不做静默迁移，后续整理必须 preview-first。

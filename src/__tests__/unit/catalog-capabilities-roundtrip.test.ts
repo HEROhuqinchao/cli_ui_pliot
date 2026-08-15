@@ -25,11 +25,13 @@ import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   alignEnabledWithCatalog,
+  mergeCatalogManagedModels,
   seedCatalogModelsIfEmpty,
   upsertProviderModel,
   getAllModelsForProvider,
   createProvider,
   deleteProvider,
+  getDb,
   getAllProviders,
 } from '../../lib/db';
 import { resolveProvider } from '../../lib/provider-resolver';
@@ -149,6 +151,213 @@ describe('catalog capabilities survive the DB round-trip — GLM', () => {
     assert.equal(flagship.upstream_model_id, 'glm-5.3[1m]');
     assert.ok(alignedRows.some(row => row.model_id === 'glm-5-turbo'));
     assert.ok(alignedRows.some(row => row.model_id === 'haiku' && row.upstream_model_id === 'glm-4.7'));
+  });
+
+  it('Models-page catalog merge preserves a user-hidden catalog identity', () => {
+    const providerId = createScratchProvider(GLM_BASE_URL);
+    upsertProviderModel({
+      provider_id: providerId,
+      model_id: 'sonnet',
+      upstream_model_id: 'my-private-glm-route',
+      display_name: 'My hidden GLM',
+      capabilities_json: JSON.stringify({ private: true }),
+      variants_json: '{}',
+      sort_order: 42,
+      enabled: 0,
+      source: 'catalog',
+      user_edited: 1,
+      enable_source: 'manual_hidden',
+    });
+
+    const catalog = getCatalogDefaultModelsForRecord({
+      provider_type: 'anthropic',
+      base_url: GLM_BASE_URL,
+    });
+    const result = mergeCatalogManagedModels(providerId, catalog);
+    assert.equal(result.inserted, 2, 'missing Turbo/Haiku catalog rows should still be added');
+    assert.equal(result.updated, 0, 'the existing user-managed flagship must not be rewritten');
+
+    const flagship = getAllModelsForProvider(providerId).find(row => row.model_id === 'sonnet')!;
+    assert.equal(flagship.display_name, 'My hidden GLM');
+    assert.equal(flagship.upstream_model_id, 'my-private-glm-route');
+    assert.equal(flagship.enabled, 0);
+    assert.equal(flagship.sort_order, 42);
+    assert.equal(flagship.user_edited, 1);
+    assert.equal(flagship.enable_source, 'manual_hidden');
+    assert.deepEqual(JSON.parse(flagship.capabilities_json), { private: true });
+  });
+
+  it('does not create a stable alias when a user row already owns the catalog upstream id', () => {
+    const providerId = createScratchProvider(GLM_BASE_URL);
+    upsertProviderModel({
+      provider_id: providerId,
+      model_id: 'glm-5.3[1m]',
+      upstream_model_id: 'glm-5.3[1m]',
+      display_name: 'My direct GLM wire row',
+      capabilities_json: JSON.stringify({ private: true }),
+      sort_order: 8,
+      enabled: 1,
+      source: 'manual',
+      user_edited: 1,
+      enable_source: 'manual_enabled',
+    });
+
+    const catalog = getCatalogDefaultModelsForRecord({
+      provider_type: 'anthropic',
+      base_url: GLM_BASE_URL,
+    });
+    const result = mergeCatalogManagedModels(providerId, catalog);
+    assert.equal(result.inserted, 2, 'Turbo and 4.7 are new, but the duplicate 5.3 wire is not');
+    const rows = getAllModelsForProvider(providerId);
+    assert.equal(rows.filter(row => row.upstream_model_id === 'glm-5.3[1m]').length, 1);
+    assert.equal(rows.some(row => row.model_id === 'sonnet'), false);
+    const manual = rows.find(row => row.model_id === 'glm-5.3[1m]')!;
+    assert.equal(manual.display_name, 'My direct GLM wire row');
+    assert.deepEqual(JSON.parse(manual.capabilities_json), { private: true });
+  });
+
+  it('treats user_edited and manual_hidden as independent merge guards', () => {
+    const providerId = createScratchProvider(GLM_BASE_URL);
+    upsertProviderModel({
+      provider_id: providerId,
+      model_id: 'sonnet',
+      upstream_model_id: 'user-edited-wire',
+      display_name: 'Edited only',
+      capabilities_json: JSON.stringify({ edited: true }),
+      sort_order: 20,
+      enabled: 1,
+      source: 'catalog',
+      user_edited: 1,
+      enable_source: 'catalog',
+    });
+    upsertProviderModel({
+      provider_id: providerId,
+      model_id: 'haiku',
+      upstream_model_id: 'hidden-only-wire',
+      display_name: 'Hidden only',
+      capabilities_json: JSON.stringify({ hidden: true }),
+      sort_order: 21,
+      enabled: 0,
+      source: 'catalog',
+      user_edited: 0,
+      enable_source: 'manual_hidden',
+    });
+
+    const catalog = getCatalogDefaultModelsForRecord({
+      provider_type: 'anthropic',
+      base_url: GLM_BASE_URL,
+    });
+    const result = mergeCatalogManagedModels(providerId, catalog);
+    assert.equal(result.updated, 0);
+    const rows = getAllModelsForProvider(providerId);
+    const edited = rows.find(row => row.model_id === 'sonnet')!;
+    const hidden = rows.find(row => row.model_id === 'haiku')!;
+    assert.equal(edited.upstream_model_id, 'user-edited-wire');
+    assert.equal(edited.sort_order, 20);
+    assert.deepEqual(JSON.parse(edited.capabilities_json), { edited: true });
+    assert.equal(hidden.upstream_model_id, 'hidden-only-wire');
+    assert.equal(hidden.sort_order, 21);
+    assert.equal(hidden.enabled, 0);
+    assert.deepEqual(JSON.parse(hidden.capabilities_json), { hidden: true });
+  });
+
+  it('keeps discovered capabilities when the merge catalog is silent', () => {
+    const providerId = createScratchProvider(GLM_BASE_URL);
+    upsertProviderModel({
+      provider_id: providerId,
+      model_id: 'haiku',
+      upstream_model_id: 'legacy-haiku',
+      display_name: 'Legacy 4.7',
+      capabilities_json: JSON.stringify({ contextWindow: 128000 }),
+      sort_order: 5,
+      enabled: 1,
+      source: 'catalog',
+      user_edited: 0,
+      enable_source: 'catalog',
+    });
+
+    const result = mergeCatalogManagedModels(providerId, [{
+      modelId: 'haiku',
+      upstreamModelId: 'glm-4.7',
+      displayName: 'GLM-4.7',
+    }]);
+    assert.deepEqual(result, { inserted: 0, updated: 1 });
+    const row = getAllModelsForProvider(providerId)[0];
+    assert.equal(row.upstream_model_id, 'glm-4.7');
+    assert.equal(row.display_name, 'GLM-4.7');
+    assert.deepEqual(JSON.parse(row.capabilities_json), { contextWindow: 128000 });
+  });
+
+  it('allocates collision-free catalog ordering around user-owned rows', () => {
+    const providerId = createScratchProvider(GLM_BASE_URL);
+    upsertProviderModel({
+      provider_id: providerId,
+      model_id: 'user/pinned-order',
+      upstream_model_id: 'user/pinned-order',
+      display_name: 'Pinned between catalog rows',
+      sort_order: 1,
+      enabled: 1,
+      source: 'manual',
+      user_edited: 1,
+      enable_source: 'manual_enabled',
+    });
+    upsertProviderModel({
+      provider_id: providerId,
+      model_id: 'sonnet',
+      upstream_model_id: 'sonnet',
+      display_name: 'GLM-5.2',
+      sort_order: 0,
+      enabled: 1,
+      source: 'catalog',
+      user_edited: 0,
+      enable_source: 'catalog',
+    });
+
+    const catalog = getCatalogDefaultModelsForRecord({
+      provider_type: 'anthropic',
+      base_url: GLM_BASE_URL,
+    });
+    mergeCatalogManagedModels(providerId, catalog);
+    const rows = getAllModelsForProvider(providerId);
+    assert.equal(new Set(rows.map(row => row.sort_order)).size, rows.length);
+    assert.equal(rows.find(row => row.model_id === 'user/pinned-order')?.sort_order, 1);
+    const catalogRows = catalog.map(model => rows.find(row => row.model_id === model.modelId)!);
+    assert.deepEqual(catalogRows.map(row => row.sort_order), [0, 2, 3]);
+  });
+
+  it('absorbs a unique-key winner committed after the merge snapshot', () => {
+    const providerId = createScratchProvider(GLM_BASE_URL);
+    const db = getDb();
+    db.exec(`
+      CREATE TEMP TRIGGER test_catalog_merge_conflict
+      BEFORE INSERT ON provider_models
+      WHEN NEW.provider_id = '${providerId}' AND NEW.model_id = 'sonnet'
+      BEGIN
+        INSERT INTO provider_models (
+          id, provider_id, model_id, upstream_model_id, display_name,
+          capabilities_json, variants_json, sort_order, enabled, created_at,
+          source, last_refreshed_at, user_edited, enable_source
+        ) VALUES (
+          'concurrent-winner', NEW.provider_id, NEW.model_id, NEW.upstream_model_id,
+          'Concurrent winner', '{}', '{}', 77, 1, CURRENT_TIMESTAMP,
+          'manual', NULL, 1, 'manual_enabled'
+        );
+      END;
+    `);
+    try {
+      const catalog = getCatalogDefaultModelsForRecord({
+        provider_type: 'anthropic',
+        base_url: GLM_BASE_URL,
+      });
+      const result = mergeCatalogManagedModels(providerId, catalog);
+      assert.equal(result.inserted, 2, 'the ignored catalog insert must not inflate the write count');
+      const winner = getAllModelsForProvider(providerId).find(row => row.model_id === 'sonnet')!;
+      assert.equal(winner.display_name, 'Concurrent winner');
+      assert.equal(winner.source, 'manual');
+      assert.equal(winner.user_edited, 1);
+    } finally {
+      db.exec('DROP TRIGGER IF EXISTS test_catalog_merge_conflict');
+    }
   });
 });
 
