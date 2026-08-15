@@ -248,8 +248,8 @@ describe('U3 — CodePlan add-model is not held hostage by an optional upstream 
         candidates: Array<{ modelId: string; displayName: string; alreadyAdded: boolean }>;
       };
       assert.ok(
-        body.candidates.some(candidate => candidate.displayName === 'GLM-5.2'),
-        'the fallback must expose the current curated GLM-5.2 entry',
+        body.candidates.some(candidate => candidate.displayName === 'GLM-5.3'),
+        'the fallback must expose the current curated GLM-5.3 entry',
       );
     } finally {
       globalThis.fetch = originalFetch;

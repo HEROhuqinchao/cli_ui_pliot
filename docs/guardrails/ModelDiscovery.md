@@ -120,10 +120,10 @@ const applicable = diff.filter(e =>
 | 来源 | 原因 | Fallback |
 |---|---|---|
 | OpenAI OAuth | 浏览器 web session，不暴露 OAuth 端点 | SDK 内置 default |
-| xAI OAuth | virtual provider，没有可安全映射为订阅可用目录的 model-list 合同 | 内置 `grok-4.5` catalog |
+| xAI OAuth | 上游已有 authenticated Build proxy `/v1/models`，但 CodePilot 当前尚未接入所需 session headers、parser/cache 与 entitlement 失败语义 | 当前仍以 `grok-4.6` + `grok-4.5` legacy 静态 catalog fail-closed；它不是账号完整目录。接入后走 virtual-provider 专用刷新，不复用 DB provider 通用 probe |
 | Claude Code env | 环境变量驱动，模型由 SDK 内置定义 | SDK / catalog 内置 default |
 | `bailian` / `qwen-token-plan-personal-cn` / `bailian-token-plan-cn` | 套餐白名单来自官方产品页；共享 endpoint 不能用于识别个人/团队套餐 | 各自精确 catalog，`modelDiscoveryMode='catalog_only'` |
-| `xai` API Key | 首版只承诺经 Responses request-shape 验证的 `grok-4.5`，不把 `/models` 返回的全部 SKU 自动暴露 | 内置 `grok-4.5` catalog |
+| `xai` API Key | 只暴露经过真实 Responses SDK wire 验证的内置模型/effort，不把 `/models` 返回的全部 SKU 自动暴露 | 内置 `grok-4.6` + `grok-4.5` legacy catalog；`@ai-sdk/xai@4.0.18` 尚不接受 `xhigh`，修复前不得对用户承诺该档 |
 | `gemini-image` / `openai-image` | 上游 /v1/models 返回全部模型（含 text/audio/embedding），无法 filter 出图片 | catalog 内置图片列表 |
 | 没匹配上预设、用户自填 base_url 的 custom 行 | 没有协议线索 | catalog + 手动 `provider_models` 表 |
 
@@ -214,6 +214,7 @@ availableModels = [
 10. **OAuth provider 误展示 refresh 按钮** — OAuth 没 DB row，refresh 无意义且会 404。`ProviderCard` 仅当 `onRefreshModels` 传入才渲染按钮，OAuth 路径不传。
 11. **批量驱动忘了 try/catch/finally** — `刷新全部` 必须 try/finally 保护 `setRefreshingAll(false)`，否则单个 throw 让按钮永久卡 loading。`auto-discover-models.ts` 的 `probeAndApplyProvider` 是纯结果版本，专门给批量驱动用以便外层独占 toast。
 12. **用共享 URL 猜 Token Plan 套餐** — 个人/团队命中同 endpoint；URL first-match 会静默换目录。必须使用持久化 `preset_key`，legacy ambiguous 要用户确认。
+13. **把 xAI OAuth 静态目录冒充账号目录** — 上游 Build proxy 已有 authenticated `/v1/models`，但它需要 session header 合同和独立 virtual-provider 接线。未实现前只能把静态值标为 fallback；实现后也不能复用要求 DB row 的通用 `/discover-models` route。
 
 ## 9. 测试覆盖
 
@@ -237,3 +238,5 @@ availableModels = [
 - **图片 provider 不支持 refresh** — 上游 /v1/models 混合返回 text/audio/embedding，无法机器筛出图片模型；catalog 内置列表是事实来源
 - **2026-07-21 Qwen/xAI catalog-only** — Qwen Coding/Token Plan 用官方套餐白名单，xAI 首版只暴露已验证的 `grok-4.5` Responses；通用 model-list 不能证明套餐/产品可用性。
 - **2026-07-21 preset identity** — 同 URL 多套餐由 `api_providers.preset_key` 决定目录；legacy 歧义不再 first-match。
+- **2026-08-14 Grok 4.6 review blocker** — `grok-4.6`/`grok-4.5` 继续使用内置 catalog，不改为通用 discovery；能力暴露必须同时通过生产 builder 与锁定 SDK 的真实 wire 测试。当前 `@ai-sdk/xai@4.0.18` 会在发网前拒绝 `xhigh`，因此 XHigh 不得仅凭模型文档或 helper 测试进入可选目录。
+- **2026-08-14 xAI OAuth 专用 model-list** — Grok Build 上游源码确认 session auth 会请求 proxy authenticated `/v1/models`。CodePilot 当前行为仍归 Class C，因为 virtual provider 无 DB row 且尚未实现专用 parser/cache/UI；后续应增加 virtual-provider refresh，而不是把 bearer 塞进通用 discovery。

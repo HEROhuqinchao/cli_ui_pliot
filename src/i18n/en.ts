@@ -846,7 +846,7 @@ const en = {
 
   // ── Provider: Gemini Image ──────────────────────────────────
   'provider.chatProviders': 'Chat Providers',
-  'provider.mediaProviders': 'Media Providers',
+  'provider.mediaProviders': 'Image & video providers',
   'provider.geminiImageDesc': 'Nano Banana Pro — AI image generation by Google Gemini',
   'provider.diagnose': 'Diagnose',
   'provider.doctor.title': 'Provider Doctor',
@@ -1483,7 +1483,7 @@ const en = {
   'messageInput.effort.high': 'High',
   'messageInput.effort.xhigh': 'XHigh',
   'messageInput.effort.max': 'Max',
-  'messageInput.effort.note.glmTwoTier': 'GLM maps Claude Code effort onto two real levels: low/medium/high run as High, xhigh/max/ultracode as Max.',
+  'messageInput.effort.note.glmCodePlan': 'GLM-5.3 CodePlan supports Low, High, and Max. Auto uses the provider default: Max.',
   'messageInput.effort.note.kimiAuto': 'Kimi supports Low, High, and Max. Auto sends no level and lets Kimi pick.',
   'messageInput.effort.resetOnModelSwitch': 'This model doesn\'t support the effort level you had selected — reset to Auto.',
 
@@ -2249,8 +2249,8 @@ const en = {
   'mcp.builtin.notify.description': 'Send notifications, task reminders, and Buddy-related updates.',
   'mcp.builtin.memory.description': 'Search, read, and inspect workspace memory.',
   'mcp.builtin.memory.triggerHint': 'Available when the current conversation has a workspace.',
-  'mcp.builtin.imageGen.description': 'Generate images or handle image-generation requests.',
-  'mcp.builtin.imageGen.triggerHint': 'Enabled when the message asks for drawing, image generation, or image work.',
+  'mcp.builtin.imageGen.description': 'Generate or edit images, and generate video through Grok Build.',
+  'mcp.builtin.imageGen.triggerHint': 'Enabled for drawing, image work, video generation, or image-to-video requests.',
   'mcp.builtin.media.description': 'Import media into the gallery or conversation context.',
   'mcp.builtin.media.triggerHint': 'Enabled when the message mentions images, video, audio, or media import.',
   'mcp.builtin.widget.description': 'Load generative UI and dashboard component capabilities.',

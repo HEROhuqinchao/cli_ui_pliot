@@ -74,7 +74,7 @@ Qwen Token Plan 个人版与团队版共享 endpoint，稳定身份分别是 `qw
 
 - runtime transport 必须由 `getVerifiedProviderWireCapabilities(record, modelId)` 解析，经过 preset identity + exact model 双门；禁止只看 hostname、display name 或模型字符串。
 - 未声明 wire capability 时 fail closed，保留原协议或省略 effort；不能因为模型 catalog 显示 `supportsEffort` 就假定任意网关接受该字段。
-- `wireCapabilities.codexResponses` 只给真实走过请求形状 + API smoke 的模型。DeepSeek 当前仅 `deepseek-v4-flash`；V4 Pro 不得顺带放开。
+- `wireCapabilities.codexResponses` 只给有供应商合同与请求形状回归的精确模型。DeepSeek 当前为 `deepseek-v4-flash` 与稳定 API ID `deepseek-v4-pro`；Claude Code 专用的 `deepseek-v4-pro[1m]` suffix 不得顺带放开。
 - AI SDK 对第三方 Responses 模型的内置 capability 判断不可信时，只有 preset-verified transport 才能设置 `forceReasoning`；供应商没声明的附加字段（如 DeepSeek 的 `reasoning.summary`）必须在 fetch 边界移除。
 
 ### 3.4 preset 默认 env 是可升级的分层配置
@@ -192,8 +192,11 @@ UI 展示在 Models 页 row 上的 source badge。删除按钮**仅**对 `source
 7. **media provider 进 chat picker** — `MEDIA_PROTOCOLS` set 必须在 `/api/providers/models` route 生效，否则图片 provider 出现在聊天模型选择器
 8. **改 sort_order 不持久** — `getAllModelsForProvider` ORDER BY sort_order ASC，PATCH 必须更新该字段；前端用 swap 邻居 sort_order 实现 reorder
 9. **active image provider stale 不显示警告** — 删除当前 active 后必须 set 回 ''；前端有 `activeImageProviderStale` flag 兜底但显示不显眼
-10. **把模型能力当成网关 wire 能力** — 同名模型经聚合渠道可能拒绝或忽略 effort/Responses；必须用 preset `wireCapabilities` 独立声明
-11. **preset 新 env 只对新连接生效** — resolver 必须层叠 catalog 默认；新增 key 也必须进入 managed 清理集合，避免旧用户缺能力、切 provider 后又串值
+10. **用文本会话 provider 覆盖图片服务商** — chat 选择 xAI/GLM 只决定文本模型，不能改变图片确认文案、计费渠道或 reference 限制。图片路由只按“工具显式 provider → 图片模型 family → Settings active image provider”决策；Grok reference 校验仅在最终 family 为 xAI 时执行。
+11. **OAuth 媒体工具目录与实际授权状态脱节** — 图片工具可由现有图片 provider 提供；Grok 视频只在 `isXaiOAuthUsable()` 为真时挂载。提示词、Native、Claude MCP、Codex bridge 必须使用同一可用性语义，不能展示或宣称不存在的工具。
+12. **compiler 从静态 descriptor 宣称未挂载工具** — descriptor 只定义潜在能力，不能单独成为当前请求的提示真源。编译给模型的 tool hints 必须取“catalog descriptor ∩ 当前 bridge 实际 `toolNames`”；logged-out、权限 gate 或 Runtime 不支持导致未挂载时，不得提示模型调用该工具。golden/fixture 必须显式写清 OAuth/可用性状态，禁止继承开发机登录态。
+13. **把模型能力当成网关 wire 能力** — 同名模型经聚合渠道可能拒绝或忽略 effort/Responses；必须用 preset `wireCapabilities` 独立声明
+14. **preset 新 env 只对新连接生效** — resolver 必须层叠 catalog 默认；新增 key 也必须进入 managed 清理集合，避免旧用户缺能力、切 provider 后又串值
 
 ## 9. 测试覆盖
 
@@ -203,7 +206,7 @@ UI 展示在 Models 页 row 上的 source badge。删除按钮**仅**对 `source
 | `src/__tests__/unit/provider-preset-identity-migration.test.ts` | `preset_key` 迁移、歧义、保守 backfill |
 | `src/__tests__/unit/provider-preset-switch-route.test.ts` | 显式切套餐、catalog reconcile、非法 endpoint 拒绝 |
 | `src/__tests__/unit/provider-resolver.test.ts` | catalog merge / DB 优先 / hidden 抑制 / role models 拉取 |
-| `src/__tests__/unit/deepseek-v4-flash-adaptation.test.ts` | exact preset/model wire 门、legacy env 默认层叠、DeepSeek Anthropic effort + Codex Responses 请求形状、聚合渠道反例 |
+| `src/__tests__/unit/deepseek-v4-flash-adaptation.test.ts` | Flash 0731 + Pro 0813 exact preset/model wire 门、legacy env 默认层叠、DeepSeek Anthropic effort + Codex Responses 请求形状、Claude suffix/聚合渠道反例 |
 | `src/__tests__/unit/qwen-token-plan-catalog.test.ts` | Qwen 三套餐白名单、默认角色、usage policy |
 | `src/__tests__/unit/xai-provider.test.ts` | xAI API Key preset、Responses、官方 endpoint 边界 |
 | `src/__tests__/unit/xai-oauth-manager.test.ts` | xAI virtual provider、token 生命周期、header/host 防泄漏 |

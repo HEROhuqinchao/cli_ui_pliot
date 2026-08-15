@@ -20,6 +20,7 @@
  *   - catalog silent about capabilities → DB value preserved, never erased
  */
 
+import '../db-isolation.setup';
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -74,7 +75,7 @@ describe('catalog capabilities survive the DB round-trip — GLM', () => {
   beforeEach(cleanup);
   afterEach(cleanup);
 
-  it('fresh seed: resolver still sees the two real GLM tiers + the mapping note', () => {
+  it('fresh seed: resolver sees current GLM-5.3 metadata and effort contract', () => {
     const providerId = createScratchProvider(GLM_BASE_URL);
     const catalog = getCatalogDefaultModelsForRecord({
       provider_type: 'anthropic',
@@ -89,8 +90,10 @@ describe('catalog capabilities survive the DB round-trip — GLM', () => {
     assert.ok(entry, 'materialized GLM row vanished from the resolver');
     assert.equal(entry.capabilities?.supportsEffort, true,
       'DB row shadowed the catalog and dropped supportsEffort — effort menu would not render');
-    assert.deepEqual(entry.capabilities?.supportedEffortLevels, ['high', 'max']);
-    assert.equal(entry.capabilities?.effortNoteKey, 'messageInput.effort.note.glmTwoTier');
+    assert.equal(entry.displayName, 'GLM-5.3');
+    assert.equal(entry.upstreamModelId, 'glm-5.3[1m]');
+    assert.deepEqual(entry.capabilities?.supportedEffortLevels, ['low', 'high', 'max']);
+    assert.equal(entry.capabilities?.effortNoteKey, 'messageInput.effort.note.glmCodePlan');
   });
 
   it('seeded rows carry capabilities in the DB column, not a placeholder {}', () => {
@@ -103,8 +106,49 @@ describe('catalog capabilities survive the DB round-trip — GLM', () => {
 
     const row = getAllModelsForProvider(providerId).find(r => r.model_id === 'sonnet')!;
     const caps = JSON.parse(row.capabilities_json || '{}');
-    assert.deepEqual(caps.supportedEffortLevels, ['high', 'max'],
+    assert.deepEqual(caps.supportedEffortLevels, ['low', 'high', 'max'],
       'capabilities_json is the source breadcrumb the picker reads');
+  });
+
+  it('reads a stale catalog-managed 5.2 row as 5.3 before persistence alignment', () => {
+    const providerId = createScratchProvider(GLM_BASE_URL);
+    upsertProviderModel({
+      provider_id: providerId,
+      model_id: 'sonnet',
+      upstream_model_id: 'sonnet',
+      display_name: 'GLM-5.2',
+      capabilities_json: JSON.stringify({
+        supportsEffort: true,
+        supportedEffortLevels: ['high', 'max'],
+      }),
+      variants_json: '{}',
+      sort_order: 0,
+      enabled: 1,
+      source: 'catalog',
+      last_refreshed_at: '2026-07-17 00:00:00',
+      user_edited: 0,
+      enable_source: 'catalog',
+    });
+
+    const { resolution, entry } = resolvedModel(providerId, 'sonnet');
+    assert.equal(resolution.upstreamModel, 'glm-5.3[1m]', 'wire must not keep the stale sonnet alias');
+    assert.equal(entry?.displayName, 'GLM-5.3');
+    assert.deepEqual(entry?.capabilities?.supportedEffortLevels, ['low', 'high', 'max']);
+
+    const unchangedRow = getAllModelsForProvider(providerId).find(row => row.model_id === 'sonnet')!;
+    assert.equal(unchangedRow.display_name, 'GLM-5.2', 'resolver enrichment must stay read-only');
+
+    const catalog = getCatalogDefaultModelsForRecord({
+      provider_type: 'anthropic',
+      base_url: GLM_BASE_URL,
+    });
+    alignEnabledWithCatalog(providerId, catalog);
+    const alignedRows = getAllModelsForProvider(providerId);
+    const flagship = alignedRows.find(row => row.model_id === 'sonnet')!;
+    assert.equal(flagship.display_name, 'GLM-5.3');
+    assert.equal(flagship.upstream_model_id, 'glm-5.3[1m]');
+    assert.ok(alignedRows.some(row => row.model_id === 'glm-5-turbo'));
+    assert.ok(alignedRows.some(row => row.model_id === 'haiku' && row.upstream_model_id === 'glm-4.7'));
   });
 });
 
@@ -236,8 +280,8 @@ describe('capability realignment respects user ownership', () => {
   });
 
   it('a catalog entry with no capabilities does not erase discovered ones', () => {
-    // GLM's haiku row declares no effort capability. If the sync wrote `{}`
-    // unconditionally it would clobber whatever model discovery found.
+    // A catalog entry may intentionally omit capabilities. If the sync wrote
+    // `{}` unconditionally it would clobber whatever discovery found.
     const providerId = createScratchProvider(GLM_BASE_URL);
     upsertProviderModel({
       provider_id: providerId,
@@ -254,14 +298,15 @@ describe('capability realignment respects user ownership', () => {
       enable_source: 'recommended',
     });
 
-    const catalog = getCatalogDefaultModelsForRecord({
-      provider_type: 'anthropic',
-      base_url: GLM_BASE_URL,
-    });
+    const catalog = [{
+      modelId: 'haiku',
+      upstreamModelId: 'glm-4.7',
+      displayName: 'GLM-4.7',
+    }];
     alignEnabledWithCatalog(providerId, catalog);
 
     const row = getAllModelsForProvider(providerId).find(r => r.model_id === 'haiku')!;
-    assert.equal(row.display_name, 'GLM-4.5-Air', 'system-managed display name should realign');
+    assert.equal(row.display_name, 'GLM-4.7', 'system-managed display name should realign');
     assert.deepEqual(JSON.parse(row.capabilities_json || '{}'), { contextWindow: 128000 },
       'a catalog that is merely silent about capabilities must not erase the column');
   });
