@@ -1,7 +1,7 @@
 # Issue Tracker — 统一问题跟踪
 
 > 创建时间：2026-04-13
-> 最后更新：2026-08-16（v0.67.1 GLM-5.3 模型管理热修 Release ready，用户已授权发布；tag/CI 待完成）
+> 最后更新：2026-08-16（v0.67.1 GLM-5.3 模型管理热修已发布；CI 全绿，stable Release 12 assets uploaded）
 > 合并自：`open-issues-2026-03-12.md` + `v0.48-post-release-issues.md` + GitHub Issues 最新盘点
 
 **AI 须知：**
@@ -207,13 +207,13 @@ GitHub milestone `v0.56.x Stability / Trust`（#1）+ P0/P1 label 体系已建�
 - **下一步:** 用可控 provider/凭据跑 active-turn interruption、历史 route/文件树恢复；跑 fresh/history 15 分钟和长任务 60 分钟内存曲线；下一 stable 核验 utility fatal event 的脱敏/分组和 Graphite/utility crash cohort。条件允许时在受影响机器执行经批准的 profile/heap/network A/B。未获外部分发/机器 A/B 授权时继续只做本地/合成验证。
 
 #### B-031 GLM-5.3 显示已添加但模型管理仍停在 5.2
-- **状态:** 🟡 v0.67.1 hotfix Release ready + Code complete + Tests pass + Build pass + isolated UI smoke passed；修复后 Claude 复审未重跑，用户已授权发布，tag/CI 待完成
+- **状态:** 🟢 v0.67.1 hotfix Shipped + Code complete + Tests pass + Build pass + isolated UI smoke passed；修复后 Claude 复审未重跑
 - **现象:** v0.67.0 用户在 GLM (CN) 的 Add Model 看到 GLM-5.3“已添加”，但 Models 列表仍只有旧 GLM-5.2，composer 也没有可选的 5.3 行。
 - **根因:** Runtime/final picker 有当前 catalog 的只读 enrichment，但 per-provider Models GET 只在空表 seed，已有 SQLite 快照不升级；Add Model 又把 stable alias 与 wire id 混作一个“已添加”布尔值。初版热修复审还发现并发 INSERT、同 upstream 双行、hidden 候选无恢复动作，以及 catalog 重加被降级成 manual 空能力行。
 - **修复:** catalog-only plan 的 Models GET 执行非破坏 merge；stable/wire identity 分离并双查重；候选区分 enabled/hidden/missing，hidden 可直接重新启用；精确 catalog POST 从服务端目录恢复 display/upstream/capabilities/source/order；冲突插入与用户排序有反例测试。
 - **边界:** 不自动清理历史 user-owned 双行（可能被 session pin），需要未来 preview-first 整理；当前 catalog 项若只想停用应“隐藏”，物理删除后会被目录重新物化。
 - **验证:** 定向 210/210；标准全量 5257 pass / 0 fail / 1 skipped（5258 tests）；production build 136 pages；隔离 UI 已验证 `glm-5.3[1m]` 搜索、hidden 恢复、3/3 列表刷新与正确 stable/wire 映射，控制台无 warning/error，真实用户 DB 未写入。
-- **目标版本:** v0.67.1（release commit/tag/CI 待完成）
+- **发布:** v0.67.1（commit `634a0dc7`；CI `31898968564` 全绿；stable Release 12 assets uploaded）
 
 ---
 
