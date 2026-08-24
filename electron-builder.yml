@@ -92,6 +92,9 @@ dmg:
   # writes update metadata, which changes their bytes. Keeping them out of the
   # updater graph prevents a post-staple sha512 mismatch; macOS auto-update
   # uses the signed/notarized ZIP and its external blockmap instead.
+  # Apple requires the distributed DMG container itself to carry the same
+  # Developer ID Application identity before it is notarized and stapled.
+  sign: true
   writeUpdateInfo: false
 win:
   icon: build/icon.ico

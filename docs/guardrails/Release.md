@@ -31,6 +31,7 @@
 | 13 | Windows 手工 artifact job 仍是 fail-closed 签名构建，必须配置 `WINDOWS_CERT_PFX_BASE64`、`WINDOWS_CERT_PASSWORD` 与 `WINDOWS_PUBLISHER_SUBJECT`；缺失时失败是预期信任门禁，不得宣称“保留 job 即可无签名构建” | workflow + docs |
 | 14 | workflow 顶层只有 `contents: read`；`contents`/OIDC/attestation 写权限只授予 stable/preview 发布 job。发布 job 先把完整资产图上传到可恢复 draft，全部成功后才一次切为公开 stable/prerelease；上传中断不得留下用户可见的半 feed | workflow + source-contract test |
 | 15 | universal 合并时，按目录选型的 SDK/Sharp Darwin 预编译文件与 already-universal Trash helper 只能由精确 `x64ArchFiles` glob 保留；`better-sqlite3` / `zlib-sync` 必须先逐架构替换再由 universal 合并，合并后的 `afterPack`（Arch=4）必须 no-op，不得把 fat binary 覆盖回单架构 | builder config + hooks + source-contract test + universal package probe |
+| 16 | 分发 DMG 容器必须在 package step 的临时 keychain 仍可用时由同一 Developer ID Application identity 签名；提交公证前先校验配置 Team，公证/staple 后再用 `codesign`、`stapler` 与 DMG 专用 Gatekeeper `open/context:primary-signature` 三重验收 | builder config + notarizer + final verifier |
 
 ## 关键文件 + 责任
 
@@ -55,6 +56,7 @@
 - [ ] 不要手动建 GitHub Release——CI 会自动建并上传产物
 - [ ] tag 后持续监控 CI；核实 Release URL、macOS 双架构 DMG/ZIP、universal ZIP、`latest-mac.yml`、ZIP blockmap、SHA256SUMS 与 attestations 均存在；不得出现 Windows/Linux 资产，mac DMG 不得有 update blockmap/metadata entry
 - [ ] macOS app/DMG/ZIP 的 Developer ID、公证、staple、Gatekeeper 与 Team ID 全通过
+- [ ] `dmg.sign=true` 是否保持；DMG 是否在提交 Apple 前已验证为配置 Team 的 Developer ID，而不是只有 notarization ticket 的未签名容器
 - [ ] Windows 重新纳入发布前，installer 与顶层 CodePilot.exe 的 Authenticode subject、SHA-256 与 RFC3161 timestamp 全通过；签名密码只注入 package step，不写 `GITHUB_ENV`
 - [ ] preview 使用 `preview-mac.yml` + prerelease，stable 不包含 `stagingPercentage`，central macOS-only asset audit 全通过
 - [ ] metadata 是否恰好一条 universal ZIP；stable/preview 是否先完整上传 draft，再一次切换可见性；失败 draft 是否可由同 tag workflow rerun 恢复
@@ -71,6 +73,7 @@
 - 把“tag 已推送”报告成“已发布”：Release job 可能因任一平台构建失败被跳过；必须查看最终 Release 与资产。
 - 只验 ABI、不启动 server：v0.58.3 的安装包通过版本与 better-sqlite3 ABI 检查，但缺少 Next.js 哈希 external alias，用户界面永久停在 `Starting CodePilot...`。
 - 只签 app、不公证/staple DMG：下载后的分发路径仍会被 Gatekeeper 拦截；三层都必须验。
+- 只给未签名 DMG 提交公证并 staple：`stapler validate` 可以看到票据，但 Gatekeeper 会以 `source=no usable signature` 拒绝容器。必须先用 Developer ID Application 签 DMG，再公证/staple。
 - 只上传 installer：electron-updater 还需要 builder metadata 与 blockmap；缺任一项就是不可用 feed。
 - 让 mac DMG 进入 update metadata：builder 先写 sha512，后置 staple 再改写 DMG，central audit 必然失败。DMG 只做手工 bootstrap，mac updater 只引用 ZIP。
 - 更新已发布 YAML 或复用版本：破坏不可变证据和客户端缓存。恢复必须递增 patch。
@@ -103,3 +106,4 @@
 - 2026-08-24 — 用户决定本轮只交付 macOS 自动更新。tag/prerelease 发布依赖收窄到 Mac，central verifier 使用 `macos` target 并拒绝非 Mac 资产；Windows/Linux job 保留为 updater provenance 关闭的手工 artifact 入口。
 - 2026-08-24 — 发布写权限从 workflow 顶层收窄到 stable/preview 发布 job；两条发布链先上传/恢复 draft，完整后再公开。mac metadata 收紧为恰好一条 universal ZIP，Mac-only preview 与 stable 对称拒绝 Windows/Linux 资产。
 - 2026-08-24 — `v0.67.2` 首次正式 CI 在 universal 合并处发现同 app tree 预编译文件。真实本地探针完整枚举并分型：SDK/Sharp 按目录选型、Trash 已是 universal，逐路径 allow-list；zlib 与 SQLite 则逐架构重编、真实 lipo。探针还发现 universal 后置 `afterPack` 会用 Arch=4 覆盖 fat binary，因此明确 no-op。旧 tag 保留且未创建 Release，修复后递增 `v0.67.3`。
+- 2026-08-24 — `v0.67.3` 正式 CI 的 app/原生/universal 签名与公证均通过，但最终 DMG Gatekeeper 验证发现容器只有 notarization ticket、没有可用 Developer ID signature。保留失败 tag；启用 `dmg.sign=true`，并把 DMG Team/signature 检查前移到 notary submission 之前，修复后递增 `v0.67.4`。

@@ -52,6 +52,7 @@ for (const appPath of apps) {
 }
 for (const name of dmgs) {
   const dmg = path.join(releaseRoot, name);
+  run('/usr/bin/codesign', ['--verify', '--strict', '--verbose=4', dmg]);
   run('/usr/bin/xcrun', ['stapler', 'validate', '-v', dmg]);
   run('/usr/sbin/spctl', ['--assess', '--type', 'open', '--context', 'context:primary-signature', '--verbose=4', dmg]);
 }

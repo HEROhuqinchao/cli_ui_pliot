@@ -63,6 +63,9 @@ describe('macOS signing policy', () => {
   });
 
   it('wires stable and preview macOS workflows to certificate secrets and a post-package gate', () => {
+    const builder = fs.readFileSync(path.join(repoRoot, 'electron-builder.yml'), 'utf8');
+    assert.match(builder, /dmg:[\s\S]*?sign:\s*true[\s\S]*?writeUpdateInfo:\s*false/);
+
     for (const relative of [
       '.github/workflows/build.yml',
       '.github/workflows/preview-build.yml',
@@ -119,6 +122,21 @@ describe('macOS signing policy', () => {
       finalVerifier,
       /\['--verify', '--deep', '--strict', '--verbose=4', appPath\],[\s\S]*?CODESIGN_VERIFY_TIMEOUT_MS/,
     );
+
+    const dmgNotarizer = fs.readFileSync(
+      path.join(repoRoot, 'scripts/notarize-macos-dmgs.mjs'),
+      'utf8',
+    );
+    const notarizationVerifier = fs.readFileSync(
+      path.join(repoRoot, 'scripts/verify-macos-notarization.mjs'),
+      'utf8',
+    );
+    assert.match(dmgNotarizer, /resolveMacosSigningMode\(\{[\s\S]*?requireDeveloperId:\s*true/);
+    assert.match(dmgNotarizer, /CODEPILOT_APPLE_TEAM_ID/);
+    assert.match(dmgNotarizer, /codesign', \['--verify', '--strict', '--verbose=4', dmg\]/);
+    assert.match(notarizationVerifier, /codesign', \['--verify', '--strict', '--verbose=4', dmg\]/);
+    assert.match(notarizationVerifier, /'--type', 'open', '--context', 'context:primary-signature'/);
+    assert.doesNotMatch(notarizationVerifier, /'--type', 'install'/);
   });
 
   it('gives native, universal and notarization work independent bounded timeouts', () => {

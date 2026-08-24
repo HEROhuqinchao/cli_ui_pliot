@@ -121,7 +121,7 @@ describe('release signing and update asset contracts', () => {
     const afterPack = read('scripts/after-pack.js');
     assert.match(afterPack, /better-sqlite3[\s\S]*zlib-sync/);
     assert.match(afterPack, /if \(arch === 4\)[\s\S]*preserving native slices[\s\S]*return;/);
-    assert.match(builder, /dmg:[\s\S]*?writeUpdateInfo:\s*false/);
+    assert.match(builder, /dmg:[\s\S]*?sign:\s*true[\s\S]*?writeUpdateInfo:\s*false/);
     assert.match(builder, /win:[\s\S]*?forceCodeSigning:\s*true/);
     assert.match(builder, /verifyUpdateCodeSignature:\s*true/);
     assert.match(builder, /rfc3161TimeStampServer:/);

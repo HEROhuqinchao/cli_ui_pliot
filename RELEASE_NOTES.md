@@ -1,4 +1,4 @@
-## CodePilot v0.67.3
+## CodePilot v0.67.4
 
 > 修复 GLM 旧版本升级与数据库启动恢复问题，并为 macOS 加入签名、公证和应用内自动更新能力。
 
@@ -27,12 +27,12 @@
 
 ### macOS
 
-- [Apple Silicon (M1/M2/M3/M4)](https://github.com/op7418/CodePilot/releases/download/v0.67.3/CodePilot-0.67.3-arm64.dmg)
-- [Intel](https://github.com/op7418/CodePilot/releases/download/v0.67.3/CodePilot-0.67.3-x64.dmg)
+- [Apple Silicon (M1/M2/M3/M4)](https://github.com/op7418/CodePilot/releases/download/v0.67.4/CodePilot-0.67.4-arm64.dmg)
+- [Intel](https://github.com/op7418/CodePilot/releases/download/v0.67.4/CodePilot-0.67.4-x64.dmg)
 
 ### 完整性验证
 
-- [SHA-256 Checksums](https://github.com/op7418/CodePilot/releases/download/v0.67.3/SHA256SUMS.txt)
+- [SHA-256 Checksums](https://github.com/op7418/CodePilot/releases/download/v0.67.4/SHA256SUMS.txt)
 - GitHub Release 页面可验证每个安装包的 build-provenance attestation；`latest-mac.yml` 与 blockmap 是自动更新器资产，不需要手工下载。
 
 ## 安装说明
