@@ -240,6 +240,8 @@ jobs:
 
       - name: Notarize and staple final macOS DMGs
         timeout-minutes: 45
+        env:
+          CODEPILOT_APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: node scripts/notarize-macos-dmgs.mjs release 3
 
       - name: Verify packaged version, native ABI, and server startup

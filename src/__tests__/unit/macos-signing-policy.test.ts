@@ -83,6 +83,16 @@ describe('macOS signing policy', () => {
       assert.match(workflow, /notarize-macos-dmgs\.mjs release/);
       assert.match(workflow, /verify-macos-notarization\.mjs release/);
 
+      const notarizationStep = workflow
+        .split(/\n(?=\s+- name:)/)
+        .find((step) => /notarize-macos-dmgs\.mjs release/.test(step));
+      assert.ok(notarizationStep, `${relative} must include the final DMG notarization step`);
+      assert.match(
+        notarizationStep,
+        /CODEPILOT_APPLE_TEAM_ID:\s*\$\{\{ secrets\.APPLE_TEAM_ID \}\}/,
+        `${relative} must pass the expected Team ID to the DMG notarization precheck`,
+      );
+
       const certificateBackedSteps = workflow
         .split(/\n(?=\s+- name:)/)
         .filter((step) => /CSC_LINK:\s*\$\{\{ secrets\.MAC_CERT_P12_BASE64 \}\}/.test(step));
