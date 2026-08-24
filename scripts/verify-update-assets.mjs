@@ -10,10 +10,13 @@ const expectedVersion = process.argv[3] || '';
 const channel = process.argv[4] || 'stable';
 const target = process.argv[5] || 'all';
 if (!root || !expectedVersion) {
-  throw new Error('Usage: node scripts/verify-update-assets.mjs <artifact-root> <version> [stable|preview] [all|macos]');
+  throw new Error('Usage: node scripts/verify-update-assets.mjs <artifact-root> <version> [stable|preview] [all|macos|distribution]');
 }
 if (!['stable', 'preview'].includes(channel)) throw new Error(`Unsupported update channel: ${channel}`);
-if (!['all', 'macos'].includes(target)) throw new Error(`Unsupported release target: ${target}`);
+if (!['all', 'macos', 'distribution'].includes(target)) throw new Error(`Unsupported release target: ${target}`);
+if (target === 'distribution' && channel !== 'stable') {
+  throw new Error('The distribution target is stable-only; preview remains a macOS-only updater graph');
+}
 
 function walk(directory) {
   const files = [];
@@ -73,7 +76,7 @@ const macZipNames = requireCount(
 );
 for (const zipName of macZipNames) one(`${zipName}.blockmap`);
 
-if (target === 'all' && channel === 'stable') {
+if ((target === 'all' || target === 'distribution') && channel === 'stable') {
   requireCount('Windows NSIS installer', new RegExp(`^CodePilot\\.Setup\\.${escapedVersion}\\.exe$`), 1);
   for (const extension of ['AppImage', 'deb', 'rpm']) {
     const linuxAssets = requireCount(
@@ -97,7 +100,15 @@ if (target === 'macos') {
   }
 }
 
-const metadataNames = target === 'macos'
+if (target === 'distribution') {
+  const forbidden = /^(?:latest\.yml|latest-linux(?:-arm64)?\.yml|CodePilot\.Setup\..*\.exe\.blockmap)$/i;
+  const unexpected = matching(forbidden);
+  if (unexpected.length > 0) {
+    throw new Error(`manual Windows/Linux distribution contains non-macOS updater assets: ${unexpected.join(', ')}`);
+  }
+}
+
+const metadataNames = target === 'macos' || target === 'distribution'
   ? [channel === 'stable' ? 'latest-mac.yml' : 'preview-mac.yml']
   : channel === 'stable'
     ? ['latest.yml', 'latest-mac.yml', 'latest-linux.yml', 'latest-linux-arm64.yml']

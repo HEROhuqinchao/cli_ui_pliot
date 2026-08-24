@@ -85,6 +85,22 @@ function makeMacOnlyFixture(version: string, channel: 'stable' | 'preview'): str
   return root;
 }
 
+function makeDistributionFixture(version: string): string {
+  const root = makeStableFixture(version);
+  for (const name of [
+    `CodePilot.Setup.${version}.exe.blockmap`,
+    'latest.yml',
+    'latest-linux.yml',
+    'latest-linux-arm64.yml',
+    'checksums-fixture.sha256',
+  ]) fs.unlinkSync(path.join(root, name));
+  fs.writeFileSync(
+    path.join(root, 'checksums-distribution.sha256'),
+    fs.readdirSync(root).sort().map((name) => `fixture  ${name}`).join('\n'),
+  );
+  return root;
+}
+
 describe('release signing and update asset contracts', () => {
   it('pins signing, notarization, channel separation and immutable release assets in CI', () => {
     const builder = read('electron-builder.yml');
@@ -142,12 +158,14 @@ describe('release signing and update asset contracts', () => {
 
     for (const expected of [
       'release/latest-mac.yml',
-      'release/latest.yml',
-      'release/latest-linux*.yml',
       'release/CodePilot-*.blockmap',
-      'release/CodePilot.Setup.*.exe.blockmap',
+      'release/CodePilot.Setup.*.exe',
+      'release/CodePilot-*.AppImage',
+      'release/CodePilot-*.deb',
+      'release/CodePilot-*.rpm',
     ]) assert.ok(stable.includes(expected), `stable artifact allow-list must contain ${expected}`);
-    assert.match(stable, /verify-update-assets\.mjs artifacts "\$VERSION" stable macos/);
+    assert.doesNotMatch(stable, /release\/latest\.yml|release\/latest-linux\*\.yml|release\/CodePilot\.Setup\.\*\.exe\.blockmap/);
+    assert.match(stable, /verify-update-assets\.mjs artifacts "\$VERSION" stable distribution/);
     assert.match(stable, /-name "\*\.blockmap"/);
     assert.match(stable, /-name "latest-mac\.yml"/);
     assert.match(stable, /uses:\s*actions\/attest@v4/);
@@ -157,12 +175,17 @@ describe('release signing and update asset contracts', () => {
 
     const stableRelease = stable.slice(stable.indexOf('\n  release:\n'));
     assert.match(stableRelease, /permissions:[\s\S]*?contents:\s*write[\s\S]*?id-token:\s*write[\s\S]*?attestations:\s*write[\s\S]*?artifact-metadata:\s*write/);
-    assert.match(stableRelease, /needs:\s*\[build-macos, verify-macos-intel-abi\]/);
-    assert.doesNotMatch(stableRelease, /build-windows|build-linux|CodePilot\.Setup|latest-linux|\.AppImage|\.deb|\.rpm/);
-    assert.match(stable, /build-windows:[\s\S]*?if:\s*\$\{\{ github\.event_name == 'workflow_dispatch'/);
-    assert.match(stable, /build-linux:[\s\S]*?if:\s*\$\{\{ github\.event_name == 'workflow_dispatch'/);
+    assert.match(stableRelease, /needs:\s*\[build-macos, verify-macos-intel-abi, build-windows, build-linux\]/);
+    assert.match(stableRelease, /CodePilot\.Setup\.\*\.exe/);
+    for (const extension of ['AppImage', 'deb', 'rpm']) assert.match(stableRelease, new RegExp(`-name "\\*\\.${extension}"`));
+    assert.doesNotMatch(stableRelease, /latest-linux|latest\.yml|CodePilot\.Setup\.\*\.exe\.blockmap/);
+    assert.match(stable, /build-windows:[\s\S]*?if:\s*\$\{\{ github\.event_name == 'push'/);
+    assert.match(stable, /build-linux:[\s\S]*?if:\s*\$\{\{ github\.event_name == 'push'/);
     assert.match(stable, /build-windows:[\s\S]*?CODEPILOT_OFFICIAL_UPDATE_BUILD:\s*"0"/);
     assert.match(stable, /build-linux:[\s\S]*?CODEPILOT_OFFICIAL_UPDATE_BUILD:\s*"0"/);
+    assert.match(stable, /mode=unsigned[\s\S]*?--config\.win\.forceCodeSigning=false/);
+    assert.match(stable, /partially configured/);
+    assert.match(stable, /Get-AuthenticodeSignature[\s\S]*?NotSigned/);
     assert.match(previewBuild, /build-windows-x64:[\s\S]*?CODEPILOT_OFFICIAL_UPDATE_BUILD:\s*"0"/);
 
     for (const preview of [previewBuild, previewRelease]) {
@@ -218,6 +241,33 @@ describe('release signing and update asset contracts', () => {
       );
       assert.notEqual(mixed.status, 0);
       assert.match(mixed.stderr, /macOS-only release contains non-macOS update assets/);
+    } finally {
+      fs.rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
+  it('accepts Mac updater assets with manual Windows/Linux installers and rejects non-Mac updater metadata', () => {
+    const version = '1.2.6';
+    const fixture = makeDistributionFixture(version);
+    try {
+      const valid = spawnSync(
+        process.execPath,
+        [assetVerifier, fixture, version, 'stable', 'distribution'],
+        { encoding: 'utf8' },
+      );
+      assert.equal(valid.status, 0, valid.stderr);
+      assert.match(valid.stdout, /channel=stable target=distribution/);
+
+      const windows = path.join(fixture, `CodePilot.Setup.${version}.exe`);
+      writeFile(fixture, `${path.basename(windows)}.blockmap`);
+      writeMetadata(fixture, 'latest.yml', version, path.basename(windows));
+      const leakedWindowsFeed = spawnSync(
+        process.execPath,
+        [assetVerifier, fixture, version, 'stable', 'distribution'],
+        { encoding: 'utf8' },
+      );
+      assert.notEqual(leakedWindowsFeed.status, 0);
+      assert.match(leakedWindowsFeed.stderr, /non-macOS updater assets/);
     } finally {
       fs.rmSync(fixture, { recursive: true, force: true });
     }

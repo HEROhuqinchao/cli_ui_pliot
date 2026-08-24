@@ -244,7 +244,7 @@ describe('Electron packaging hygiene', () => {
     assert.doesNotMatch(mainHealthSmoke, /ELECTRON_RUN_AS_NODE/);
   });
 
-  it('retains Linux x64/arm64 manual artifact jobs without publishing them', () => {
+  it('publishes Linux x64/arm64 manual installers without Linux updater metadata', () => {
     const releaseWorkflow = fs.readFileSync(
       path.join(repoRoot, '.github/workflows/build.yml'),
       'utf8',
@@ -268,23 +268,24 @@ describe('Electron packaging hygiene', () => {
       /electron-builder --linux --\$\{\{ matrix\.arch \}\}/,
     );
     assert.match(linuxJob, /Upload Linux source maps to Sentry/);
-    assert.match(linuxJob, /github\.event_name == 'workflow_dispatch'/);
+    assert.match(linuxJob, /github\.event_name == 'push'/);
     assert.match(linuxJob, /CODEPILOT_OFFICIAL_UPDATE_BUILD:\s*"0"/);
     assert.match(linuxJob, /better-sqlite3 OK/);
     assert.match(linuxJob, /node scripts\/verify-packaged-server\.mjs/);
     assert.match(linuxJob, /xvfb-run -a node scripts\/verify-electron-main-health\.mjs/);
     for (const extension of ['AppImage', 'deb', 'rpm']) {
       assert.match(linuxJob, new RegExp(`release/CodePilot-\\*\\.${extension}`));
-      assert.doesNotMatch(
+      assert.match(
         releaseJob,
         new RegExp(`-name "\\\*\\.${extension}"`),
       );
     }
     assert.match(
       releaseJob,
-      /needs:\s*\[build-macos, verify-macos-intel-abi\]/,
+      /needs:\s*\[build-macos, verify-macos-intel-abi, build-windows, build-linux\]/,
     );
-    assert.doesNotMatch(releaseJob, /build-linux|latest-linux|\.AppImage|\.deb|\.rpm/);
+    assert.doesNotMatch(releaseJob, /latest-linux/);
+    assert.doesNotMatch(linuxJob, /release\/latest-linux\*\.yml/);
     assert.match(builderConfig, /linux:[\s\S]*?target:[\s\S]*?- AppImage[\s\S]*?- deb[\s\S]*?- rpm/);
   });
 
