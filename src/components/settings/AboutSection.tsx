@@ -122,6 +122,9 @@ export function AboutSection() {
     updateInfo?.isNativeUpdate &&
     !updateInfo.readyToInstall &&
     updateInfo.downloadProgress != null;
+  const updateErrorMessage = updateInfo?.lastErrorCode
+    ? t(`update.error.${updateInfo.lastErrorCode}` as TranslationKey)
+    : updateInfo?.lastError;
 
   /**
    * Phase 2C.6: download a sanitized diagnostic bundle. The /api/doctor/export
@@ -265,10 +268,12 @@ export function AboutSection() {
                     />
                   </div>
                 )}
-                {updateInfo.lastError && (
-                  <p className="text-xs text-status-error-foreground">{updateInfo.lastError}</p>
+                {updateErrorMessage && (
+                  <p className="text-xs text-status-error-foreground">{updateErrorMessage}</p>
                 )}
               </div>
+            ) : updateErrorMessage ? (
+              <p className="text-xs text-status-error-foreground">{updateErrorMessage}</p>
             ) : (
               <p className="text-sm text-muted-foreground">{t("settings.latestVersion")}</p>
             )}

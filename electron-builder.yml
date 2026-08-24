@@ -74,12 +74,28 @@ mac:
   gatekeeperAssess: false
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.inherit.plist
-  notarize: false
+  # With no Apple credentials electron-builder skips notarization for explicit
+  # local ad-hoc smoke builds. Official stable/preview CI checks the API-key
+  # secrets before packaging, so distributable builds fail closed.
+  notarize: true
   target:
     - dmg
     - zip
+dmg:
+  # DMGs are manual bootstrap assets. They are stapled after electron-builder
+  # writes update metadata, which changes their bytes. Keeping them out of the
+  # updater graph prevents a post-staple sha512 mismatch; macOS auto-update
+  # uses the signed/notarized ZIP and its external blockmap instead.
+  writeUpdateInfo: false
 win:
   icon: build/icon.ico
+  forceCodeSigning: true
+  verifyUpdateCodeSignature: true
+  signAndEditExecutable: true
+  signtoolOptions:
+    signingHashAlgorithms:
+      - sha256
+    rfc3161TimeStampServer: http://timestamp.digicert.com
   target:
     - nsis
 nsis:

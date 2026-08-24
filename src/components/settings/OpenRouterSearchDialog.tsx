@@ -16,6 +16,7 @@ import { useTranslation } from "@/hooks/useTranslation";
 import type { TranslationKey } from "@/i18n";
 import { showToast } from "@/hooks/useToast";
 import { cn } from "@/lib/utils";
+import type { CatalogModelPresenceState } from "@/lib/catalog-model-identity";
 
 /**
  * "搜索并添加模型" dialog (originally OpenRouter-only, generalized to any
@@ -49,6 +50,8 @@ export interface SearchCandidate {
   alreadyAdded: boolean;
   existingHidden: boolean;
   existingModelId?: string;
+  presenceState?: CatalogModelPresenceState;
+  conflictModelIds?: string[];
 }
 
 interface SearchModelsResponse {
@@ -57,13 +60,30 @@ interface SearchModelsResponse {
   cachedAt: string;
 }
 
+interface ModelIdentityConflictResponse {
+  code: "MODEL_IDENTITY_CONFLICT";
+  conflictModelIds?: string[];
+}
+
+export function isModelIdentityConflictResponse(
+  status: number,
+  body: unknown,
+): body is ModelIdentityConflictResponse {
+  if (status !== 409 || !body || typeof body !== "object") return false;
+  const record = body as Record<string, unknown>;
+  return record.code === "MODEL_IDENTITY_CONFLICT"
+    && (record.conflictModelIds === undefined
+      || (Array.isArray(record.conflictModelIds)
+        && record.conflictModelIds.every(id => typeof id === "string")));
+}
+
 interface OpenRouterSearchDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   providerId: string;
   providerName: string;
-  /** Called after the user successfully adds a candidate, so the parent
-   *  can refetch the provider's model bundle and update its row list. */
+  /** Called after a mutation response that may have changed catalog rows
+   *  (including a typed conflict after merge), so the parent can refetch. */
   onModelAdded?: () => void;
   /** Called when /search-models fails and the user clicks "type model
    *  ID manually". The parent should close this dialog and open the
@@ -132,7 +152,6 @@ export function OpenRouterSearchDialog({
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [addingId, setAddingId] = useState<string | null>(null);
-  const [addedIds, setAddedIds] = useState<Set<string>>(new Set());
 
   // Phase 1 Step 2 收敛 round 3 (2026-05-06): the OpenRouter section in
   // the Models page no longer has its own refresh / validate button.
@@ -142,7 +161,7 @@ export function OpenRouterSearchDialog({
   // handler cancel a stale in-flight request without resurrecting an
   // earlier error.
   const abortRef = useRef<{ aborted: boolean } | null>(null);
-  const fetchCandidates = useCallback(() => {
+  const fetchCandidates = useCallback(async () => {
     // Cancel any in-flight request before kicking off a new one.
     // Previous form `abortRef.current?.aborted && (... = true)` was a
     // no-op for in-flight (aborted=false short-circuited the &&), so a
@@ -154,25 +173,19 @@ export function OpenRouterSearchDialog({
     abortRef.current = guard;
     setLoading(true);
     setFetchError(null);
-    fetch(`/api/providers/${providerId}/search-models`, { method: "POST" })
-      .then(async res => {
-        if (!res.ok) {
-          const body = await res.json().catch(() => ({}));
-          throw new Error(body?.error || `${res.status} ${res.statusText}`);
-        }
-        return res.json() as Promise<SearchModelsResponse>;
-      })
-      .then(data => {
-        if (guard.aborted) return;
-        setCandidates(data.candidates);
-      })
-      .catch(err => {
-        if (guard.aborted) return;
-        setFetchError(err instanceof Error ? err.message : String(err));
-      })
-      .finally(() => {
-        if (!guard.aborted) setLoading(false);
-      });
+    try {
+      const res = await fetch(`/api/providers/${providerId}/search-models`, { method: "POST" });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body?.error || `${res.status} ${res.statusText}`);
+      }
+      const data = await res.json() as SearchModelsResponse;
+      if (!guard.aborted) setCandidates(data.candidates);
+    } catch (err) {
+      if (!guard.aborted) setFetchError(err instanceof Error ? err.message : String(err));
+    } finally {
+      if (!guard.aborted) setLoading(false);
+    }
   }, [providerId]);
 
   // Fetch candidates when dialog opens; reset state when it closes so the
@@ -182,11 +195,10 @@ export function OpenRouterSearchDialog({
       setQuery("");
       setFetchError(null);
       setAddingId(null);
-      setAddedIds(new Set());
       if (abortRef.current) abortRef.current.aborted = true;
       return;
     }
-    fetchCandidates();
+    void fetchCandidates();
     return () => {
       if (abortRef.current) abortRef.current.aborted = true;
     };
@@ -207,22 +219,32 @@ export function OpenRouterSearchDialog({
         body: JSON.stringify(mutation.body),
       });
       if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body?.error || `${res.status} ${res.statusText}`);
+        const body: unknown = await res.json().catch(() => ({}));
+        if (isModelIdentityConflictResponse(res.status, body)) {
+          // The server may have materialized other catalog rows before the
+          // target CAS failed. Re-read both dialog and parent model state so a
+          // 409 never leaves stale candidates or hides those real writes.
+          await fetchCandidates();
+          if (typeof window !== "undefined") {
+            window.dispatchEvent(new Event("provider-changed"));
+          }
+          onModelAdded?.();
+          throw new Error(t(
+            "provider.search.openrouter.mutationIdentityConflict" as TranslationKey,
+            {
+              ids: body.conflictModelIds?.join(", ") || candidate.modelId,
+            },
+          ));
+        }
+        const error = body && typeof body === "object" && "error" in body
+          ? String((body as { error?: unknown }).error || "")
+          : "";
+        throw new Error(error || `${res.status} ${res.statusText}`);
       }
-      if (candidate.existingHidden) {
-        setCandidates(previous => previous.map(item =>
-          item.modelId === candidate.modelId
-            ? { ...item, existingHidden: false, alreadyAdded: true }
-            : item,
-        ));
-      } else {
-        setAddedIds(prev => {
-          const next = new Set(prev);
-          next.add(candidate.modelId);
-          return next;
-        });
-      }
+      // Re-read the server-owned five-state classifier. A 2xx mutation alone
+      // is not proof that a catalog CAS won, and optimistic local state used
+      // to report a false success when another row claimed the identity.
+      await fetchCandidates();
       if (typeof window !== "undefined") {
         window.dispatchEvent(new Event("provider-changed"));
       }
@@ -367,9 +389,10 @@ export function OpenRouterSearchDialog({
             <div className="rounded-md bg-muted/40 overflow-y-auto flex-1 min-h-0">
               <div>
                 {filtered.map(candidate => {
-                  const isAdded = (candidate.alreadyAdded && !candidate.existingHidden)
-                    || addedIds.has(candidate.modelId);
+                  const isAdded = candidate.alreadyAdded && !candidate.existingHidden;
                   const isAdding = addingId === candidate.modelId;
+                  const isLegacyUpgrade = candidate.presenceState === 'legacy_upgrade_available';
+                  const isIdentityConflict = candidate.presenceState === 'identity_conflict';
                   const ctx = formatContextWindow(candidate.contextWindow);
                   const promptPrice = formatPrice(candidate.pricing?.promptPerMillion);
                   const completionPrice = formatPrice(candidate.pricing?.completionPerMillion);
@@ -383,6 +406,13 @@ export function OpenRouterSearchDialog({
                         <div className="text-[11px] text-muted-foreground truncate">
                           {candidate.upstreamModelId || candidate.modelId}
                         </div>
+                        {isIdentityConflict && (
+                          <div className="mt-1 text-[10px] leading-4 text-status-warning-foreground">
+                            {t("provider.search.openrouter.identityConflictDetail" as TranslationKey, {
+                              ids: candidate.conflictModelIds?.join(", ") || candidate.modelId,
+                            })}
+                          </div>
+                        )}
                         {(ctx || (promptPrice && completionPrice)) && (
                           <div className="mt-1 flex flex-wrap items-center gap-2 text-[10px] text-muted-foreground">
                             {ctx && (
@@ -401,7 +431,21 @@ export function OpenRouterSearchDialog({
                           </div>
                         )}
                       </div>
-                      {candidate.existingHidden ? (
+                      {isIdentityConflict ? (
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className="inline-flex items-center rounded-full bg-status-warning-muted px-2 py-0.5 text-[10px] font-medium text-status-warning-foreground">
+                            {t("provider.search.openrouter.identityConflict" as TranslationKey)}
+                          </span>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-7 px-2.5 text-xs"
+                            onClick={() => onOpenChange(false)}
+                          >
+                            {t("provider.search.openrouter.reviewModels" as TranslationKey)}
+                          </Button>
+                        </div>
+                      ) : candidate.existingHidden ? (
                         <div className="flex items-center gap-2 shrink-0">
                           <span className="inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
                             {t("provider.search.openrouter.alreadyAddedHidden" as TranslationKey)}
@@ -443,8 +487,12 @@ export function OpenRouterSearchDialog({
                             <CodePilotIcon name="plus" size={11} strokeWidth={2} aria-hidden />
                           )}
                           {isAdding
-                            ? t("provider.search.openrouter.adding" as TranslationKey)
-                            : t("provider.search.openrouter.addButton" as TranslationKey)}
+                            ? t((isLegacyUpgrade
+                                ? "provider.search.openrouter.upgrading"
+                                : "provider.search.openrouter.adding") as TranslationKey)
+                            : t((isLegacyUpgrade
+                                ? "provider.search.openrouter.upgradeButton"
+                                : "provider.search.openrouter.addButton") as TranslationKey)}
                         </Button>
                       )}
                     </div>

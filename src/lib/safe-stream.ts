@@ -10,10 +10,10 @@
  * `TypeError: Invalid state: Controller is already closed`, which Sentry
  * recorded 53 times (fatal) over 14 days.
  *
- * Each individual call site could try/catch, but with 40+ call sites the
- * coverage is hard to keep in sync. This module exports `wrapController()`
- * which returns a controller-shaped object that silently swallows close-
- * related errors. Callers don't need to know they're using the wrapper.
+ * This wrapper remains useful for large, callback-heavy streams that already
+ * have many controller-shaped call sites. New subprocess/SSE routes should
+ * normally use `SingleOwnerStreamWriter` instead: it owns cancellation and
+ * terminal close explicitly rather than making every stream use this wrapper.
  *
  * Closed-state errors from genuine bugs (not from racy late writes) are
  * still observable via the optional `onClosedWrite` callback, which logs
@@ -33,7 +33,8 @@ export interface SafeStreamController<T> {
  * Wrap a ReadableStream controller with one that silently ignores
  * "already closed" errors on enqueue/close, and tracks a `closed` flag.
  *
- * Use this at the top of every `new ReadableStream({ start(controller) { ... } })`:
+ * For an existing callback-heavy stream that cannot yet move to a single-owner
+ * writer, wrap the controller at the stream boundary:
  *
  *   start(controllerRaw) {
  *     const controller = wrapController(controllerRaw);

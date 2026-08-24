@@ -1,3 +1,5 @@
+import type { UpdaterInstallResult, UpdaterSnapshot } from '../src/lib/updater-contract';
+
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
@@ -13,6 +15,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     retry: () => ipcRenderer.invoke('server-recovery:retry') as Promise<boolean>,
     restartApp: () => ipcRenderer.invoke('server-recovery:restart-app') as Promise<boolean>,
     quitApp: () => ipcRenderer.invoke('server-recovery:quit-app') as Promise<boolean>,
+    openDatabaseBackups: () => ipcRenderer.invoke('server-recovery:open-database-backups') as Promise<boolean>,
+    startFreshDatabase: () => ipcRenderer.invoke('server-recovery:start-fresh-database') as Promise<boolean>,
+    keepRestoredDatabase: () => ipcRenderer.invoke('server-recovery:keep-restored-database') as Promise<boolean>,
+    continueFreshDatabase: () => ipcRenderer.invoke('server-recovery:continue-fresh-database') as Promise<boolean>,
   },
   // Resolve a dropped/selected File's real filesystem path. Electron 32+ removed
   // the renderer-side `File.path`, so consumers must ask via webUtils.
@@ -60,6 +66,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
       const listener = (_event: unknown, data: unknown) => callback(data);
       ipcRenderer.on('install:progress', listener);
       return () => { ipcRenderer.removeListener('install:progress', listener); };
+    },
+  },
+  updater: {
+    getStatus: () => ipcRenderer.invoke('updater:get-status') as Promise<UpdaterSnapshot | null>,
+    checkForUpdates: () => ipcRenderer.invoke('updater:check') as Promise<UpdaterSnapshot>,
+    downloadUpdate: () => ipcRenderer.invoke('updater:download') as Promise<UpdaterSnapshot>,
+    quitAndInstall: () => ipcRenderer.invoke('updater:install') as Promise<UpdaterInstallResult>,
+    onStatus: (callback: (data: UpdaterSnapshot) => void) => {
+      const listener = (_event: unknown, data: UpdaterSnapshot) => callback(data);
+      ipcRenderer.on('updater:status', listener);
+      return () => { ipcRenderer.removeListener('updater:status', listener); };
     },
   },
   bridge: {

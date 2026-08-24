@@ -55,6 +55,8 @@ export interface CatalogModel {
   upstreamModelId?: string;
   /** Human-readable display name */
   displayName: string;
+  /** Exact identities shipped by older catalogs that may be safely upgraded. */
+  legacyFingerprints?: import('./catalog-model-identity').CatalogModelLegacyFingerprint[];
   /** Role mapping for Claude Code env vars */
   role?: ModelRole;
   /** Capabilities */
@@ -626,6 +628,20 @@ const GLM_CODING_PLAN_MODELS: CatalogModel[] = [
     modelId: 'sonnet',
     upstreamModelId: 'glm-5.3[1m]',
     displayName: 'GLM-5.3',
+    legacyFingerprints: [
+      { upstreamModelId: 'sonnet', displayName: 'GLM-4.7', capabilities: {} },
+      { upstreamModelId: 'sonnet', displayName: 'GLM-5-Turbo', capabilities: {} },
+      { upstreamModelId: 'sonnet', displayName: 'GLM-5.2', capabilities: {} },
+      {
+        upstreamModelId: 'sonnet',
+        displayName: 'GLM-5.2',
+        capabilities: {
+          supportsEffort: true,
+          supportedEffortLevels: ['high', 'max'],
+          effortNoteKey: 'messageInput.effort.note.glmTwoTier',
+        },
+      },
+    ],
     role: 'sonnet',
     capabilities: {
       reasoning: true,
@@ -652,6 +668,9 @@ const GLM_CODING_PLAN_MODELS: CatalogModel[] = [
     modelId: 'haiku',
     upstreamModelId: 'glm-4.7',
     displayName: 'GLM-4.7',
+    legacyFingerprints: [
+      { upstreamModelId: 'haiku', displayName: 'GLM-4.5-Air', capabilities: {} },
+    ],
     role: 'haiku',
     capabilities: {
       reasoning: true,

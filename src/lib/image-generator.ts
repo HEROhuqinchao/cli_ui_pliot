@@ -9,7 +9,7 @@ import {
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
-import os from 'os';
+import { resolveCodePilotDataDir } from '@/lib/codepilot-data-dir';
 import { isXaiOAuthUsable } from '@/lib/xai-oauth-manager';
 import {
   readGrokReferenceImages,
@@ -17,7 +17,7 @@ import {
   XAI_IMAGINE_IMAGE_MODEL,
 } from '@/lib/xai-imagine';
 
-const dataDir = process.env.CLAUDE_GUI_DATA_DIR || path.join(os.homedir(), '.codepilot');
+const dataDir = resolveCodePilotDataDir();
 const MEDIA_DIR = path.join(dataDir, '.codepilot-media');
 
 export interface GenerateSingleImageParams {

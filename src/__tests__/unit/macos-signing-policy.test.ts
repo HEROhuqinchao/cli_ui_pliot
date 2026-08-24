@@ -74,6 +74,11 @@ describe('macOS signing policy', () => {
       assert.match(workflow, /CODEPILOT_APPLE_TEAM_ID:\s*\$\{\{ secrets\.APPLE_TEAM_ID \}\}/);
       assert.match(workflow, /CODEPILOT_REQUIRE_DEVELOPER_ID:\s*["']1["']/);
       assert.match(workflow, /verify-macos-developer-id\.mjs release/);
+      assert.match(workflow, /APPLE_NOTARIZATION_KEY_BASE64/);
+      assert.match(workflow, /APPLE_API_KEY_ID/);
+      assert.match(workflow, /APPLE_API_ISSUER/);
+      assert.match(workflow, /notarize-macos-dmgs\.mjs release/);
+      assert.match(workflow, /verify-macos-notarization\.mjs release/);
 
       const certificateBackedSteps = workflow
         .split(/\n(?=\s+- name:)/)
@@ -114,5 +119,18 @@ describe('macOS signing policy', () => {
       finalVerifier,
       /\['--verify', '--deep', '--strict', '--verbose=4', appPath\],[\s\S]*?CODESIGN_VERIFY_TIMEOUT_MS/,
     );
+  });
+
+  it('gives native, universal and notarization work independent bounded timeouts', () => {
+    for (const relative of [
+      '.github/workflows/build.yml',
+      '.github/workflows/preview-build.yml',
+      '.github/workflows/preview-release.yml',
+    ]) {
+      const workflow = fs.readFileSync(path.join(repoRoot, relative), 'utf8');
+      assert.match(workflow, /name: Package native macOS[\s\S]{0,180}timeout-minutes: 45/);
+      assert.match(workflow, /name: Package universal macOS[\s\S]{0,180}timeout-minutes: 45/);
+      assert.match(workflow, /name: Notarize and staple[\s\S]{0,100}timeout-minutes: 45/);
+    }
   });
 });

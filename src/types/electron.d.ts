@@ -2,6 +2,7 @@
  * Global type declarations for the Electron preload API.
  * Exposed via contextBridge.exposeInMainWorld('electronAPI', ...) in electron/preload.ts.
  */
+import type { UpdaterInstallResult, UpdaterSnapshot } from '@/lib/updater-contract';
 
 interface ClaudeInstallDetection {
   path: string;
@@ -27,28 +28,12 @@ interface ElectronInstallAPI {
   onProgress: (callback: (data: any) => void) => () => void;
 }
 
-interface UpdateStatusEvent {
-  status: 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error';
-  info?: {
-    version: string;
-    releaseNotes?: string | { version: string; note: string }[] | null;
-    releaseName?: string | null;
-    releaseDate?: string;
-  };
-  progress?: {
-    percent: number;
-    bytesPerSecond: number;
-    transferred: number;
-    total: number;
-  };
-  error?: string;
-}
-
 interface ElectronUpdaterAPI {
-  checkForUpdates: () => Promise<unknown>;
-  downloadUpdate: () => Promise<unknown>;
-  quitAndInstall: () => Promise<void>;
-  onStatus: (callback: (data: UpdateStatusEvent) => void) => () => void;
+  getStatus: () => Promise<UpdaterSnapshot | null>;
+  checkForUpdates: () => Promise<UpdaterSnapshot>;
+  downloadUpdate: () => Promise<UpdaterSnapshot>;
+  quitAndInstall: () => Promise<UpdaterInstallResult>;
+  onStatus: (callback: (data: UpdaterSnapshot) => void) => () => void;
 }
 
 interface ElectronTerminalAPI {
@@ -87,6 +72,14 @@ interface ElectronAPI {
     restartApp: () => Promise<boolean>;
     /** Blocked state only: plain quit, never relaunch (registry is per-Main). */
     quitApp: () => Promise<boolean>;
+    /** Database recovery state only; target path is fixed by Main. */
+    openDatabaseBackups: () => Promise<boolean>;
+    /** Database recovery state only; Main requires a native confirmation. */
+    startFreshDatabase: () => Promise<boolean>;
+    /** Fresh-start conflict only: preserve the restored DB and cancel the old intent. */
+    keepRestoredDatabase: () => Promise<boolean>;
+    /** Fresh-start conflict only: reverify the old backup before deleting current files. */
+    continueFreshDatabase: () => Promise<boolean>;
   };
   shell: {
     revealPath: (request: {

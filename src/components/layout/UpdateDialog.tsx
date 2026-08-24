@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/dialog";
 import { useUpdate } from "@/hooks/useUpdate";
 import { useTranslation } from "@/hooks/useTranslation";
+import type { TranslationKey } from '@/i18n';
 
 export function UpdateDialog() {
   const { updateInfo, showDialog, dismissUpdate, downloadUpdate, quitAndInstall } = useUpdate();
@@ -22,6 +23,9 @@ export function UpdateDialog() {
 
   const { isNativeUpdate, readyToInstall, downloadProgress } = updateInfo;
   const isDownloading = isNativeUpdate && !readyToInstall && downloadProgress != null;
+  const errorMessage = updateInfo.lastErrorCode
+    ? t(`update.error.${updateInfo.lastErrorCode}` as TranslationKey)
+    : updateInfo.lastError;
 
   return (
     <Dialog open={showDialog} onOpenChange={(open) => {
@@ -110,9 +114,9 @@ export function UpdateDialog() {
           </div>
         )}
 
-        {updateInfo.lastError && (
+        {errorMessage && (
           <p className="rounded-md border border-status-error-border bg-status-error-muted px-2 py-1 text-xs text-status-error-foreground">
-            {updateInfo.lastError}
+            {errorMessage}
           </p>
         )}
 

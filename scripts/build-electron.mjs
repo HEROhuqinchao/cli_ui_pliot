@@ -72,6 +72,13 @@ async function buildElectron() {
   }
   fs.mkdirSync('dist-electron', { recursive: true });
 
+  // Native updates are an official-release capability, not a consequence of
+  // someone setting CODEPILOT_APP_CHANNEL locally. Fork CI has a different
+  // GITHUB_REPOSITORY and local builds have none, so both compile to no-op
+  // unless they deliberately change this trust contract in their own source.
+  const officialUpdateBuild = process.env.CODEPILOT_OFFICIAL_UPDATE_BUILD === '1'
+    && process.env.GITHUB_REPOSITORY === 'op7418/CodePilot';
+
   const shared = {
     bundle: true,
     platform: 'node',
@@ -83,6 +90,7 @@ async function buildElectron() {
       'process.env.NODE_ENV': JSON.stringify('production'),
       'process.env.CODEPILOT_APP_VERSION': JSON.stringify(pkg.version),
       'process.env.CODEPILOT_APP_CHANNEL': JSON.stringify(process.env.CODEPILOT_APP_CHANNEL || 'local'),
+      'process.env.CODEPILOT_OFFICIAL_UPDATE_BUILD': JSON.stringify(officialUpdateBuild ? '1' : '0'),
       'process.env.CODEPILOT_SENTRY_DSN': JSON.stringify(process.env.SENTRY_DSN || ''),
       'process.env.CODEPILOT_TELEMETRY_SMOKE': JSON.stringify(process.env.CODEPILOT_TELEMETRY_SMOKE === '1' ? '1' : '0'),
     },

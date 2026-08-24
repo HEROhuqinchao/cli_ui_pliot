@@ -29,11 +29,11 @@ export async function register() {
       // Initialize Sentry for server-side error capture (respects opt-out marker file)
       const fs = await import('fs');
       const path = await import('path');
-      const os = await import('os');
+      const { resolveCodePilotDataDir } = await import('@/lib/codepilot-data-dir');
       const { configureNextServerIntegrations, resolveTelemetryConfig, TELEMETRY_IGNORE_ERRORS } = await import('@/lib/telemetry/contract');
       const { isProviderFailureHandled } = await import('@/lib/telemetry/provider-marker');
       const { sanitizeTelemetryBreadcrumb, sanitizeTelemetryEvent } = await import('@/lib/telemetry/sanitize');
-      const markerPath = path.join(os.homedir(), '.codepilot', 'sentry-disabled');
+      const markerPath = path.join(resolveCodePilotDataDir(), 'sentry-disabled');
       const optedOut = fs.existsSync(markerPath) && fs.readFileSync(markerPath, 'utf-8').trim() === 'true';
       const config = resolveTelemetryConfig({
         dsn: process.env.NEXT_PUBLIC_SENTRY_DSN,

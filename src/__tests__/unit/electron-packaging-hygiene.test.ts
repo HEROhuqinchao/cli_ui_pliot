@@ -226,12 +226,22 @@ describe('Electron packaging hygiene', () => {
       path.join(repoRoot, 'scripts/verify-packaged-server.mjs'),
       'utf8',
     );
+    const mainHealthSmoke = fs.readFileSync(
+      path.join(repoRoot, 'scripts/verify-electron-main-health.mjs'),
+      'utf8',
+    );
 
     assert.match(releaseWorkflow, /node scripts\/verify-packaged-server\.mjs/);
     assert.match(packagedSmoke, /\/api\/health/);
     assert.match(packagedSmoke, /ELECTRON_RUN_AS_NODE/);
     assert.match(packagedSmoke, /listPackage/);
     assert.match(packagedSmoke, /Packaged source maps are forbidden/);
+    assert.match(releaseWorkflow, /node scripts\/verify-electron-main-health\.mjs/);
+    assert.match(mainHealthSmoke, /electron\.launch/);
+    assert.match(mainHealthSmoke, /\/api\/health/);
+    assert.match(mainHealthSmoke, /codepilot-server/);
+    assert.match(mainHealthSmoke, /database, 'healthy'/);
+    assert.doesNotMatch(mainHealthSmoke, /ELECTRON_RUN_AS_NODE/);
   });
 
   it('publishes Linux x64 and arm64 from native runners behind strict release gates', () => {
@@ -259,6 +269,7 @@ describe('Electron packaging hygiene', () => {
     assert.match(linuxJob, /Upload Linux source maps to Sentry/);
     assert.match(linuxJob, /better-sqlite3 OK/);
     assert.match(linuxJob, /node scripts\/verify-packaged-server\.mjs/);
+    assert.match(linuxJob, /xvfb-run -a node scripts\/verify-electron-main-health\.mjs/);
     for (const extension of ['AppImage', 'deb', 'rpm']) {
       assert.match(linuxJob, new RegExp(`release/CodePilot-\\*\\.${extension}`));
       assert.match(
@@ -268,7 +279,7 @@ describe('Electron packaging hygiene', () => {
     }
     assert.match(
       releaseWorkflow,
-      /needs:\s*\[build-macos, build-windows, build-linux\]/,
+      /needs:\s*\[build-macos, verify-macos-intel-abi, build-windows, build-linux\]/,
     );
     assert.match(builderConfig, /linux:[\s\S]*?target:[\s\S]*?- AppImage[\s\S]*?- deb[\s\S]*?- rpm/);
   });
