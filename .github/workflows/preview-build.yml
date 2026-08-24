@@ -3,8 +3,8 @@ name: Preview Build (manual · artifacts only · no release)
 # Manual-only branch-preview packaging.
 #
 # WHY a separate workflow (not build.yml): build.yml is the STABLE release flow
-# — it triggers on pushed tags and has `contents: write` to create GitHub
-# Releases. Preview builds must NEVER create a Release, push a tag, or feed the
+# — it triggers on pushed tags and grants `contents: write` only to its Release
+# job. Preview builds must NEVER create a Release, push a tag, or feed the
 # stable auto-update channel. They only UPLOAD workflow artifacts (installer +
 # SHA + commit + version check + native ABI check + logs) so every preview
 # package is traceable to a CI run instead of one developer's local machine.

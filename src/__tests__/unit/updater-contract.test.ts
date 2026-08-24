@@ -106,6 +106,28 @@ describe('Main-owned updater contract', () => {
     assert.doesNotMatch(notAvailable, /applyUpdateInfo/);
   });
 
+  it('keeps manual update availability honest and explains check suppression during download', () => {
+    const root = path.resolve(__dirname, '../../..');
+    const route = fs.readFileSync(path.join(root, 'src/app/api/app/updates/route.ts'), 'utf8');
+    const dialog = fs.readFileSync(path.join(root, 'src/components/layout/UpdateDialog.tsx'), 'utf8');
+    const about = fs.readFileSync(path.join(root, 'src/components/settings/AboutSection.tsx'), 'utf8');
+    const overview = fs.readFileSync(path.join(root, 'src/components/settings/OverviewSection.tsx'), 'utf8');
+
+    assert.match(route, /resolveReleaseAssetAvailability/);
+    assert.match(route, /platformAssetMissing/);
+    assert.match(route, /downloadUrl:\s*recommendedAsset\?\.browser_download_url\s*\|\|\s*""/);
+    assert.doesNotMatch(route, /downloadUrl:\s*recommendedAsset\?\.browser_download_url\s*\|\|\s*release\.html_url/);
+
+    for (const surface of [dialog, about, overview]) {
+      assert.match(surface, /update\.platformAssetMissing/);
+    }
+    assert.match(dialog, /update\.viewReleaseDetails/);
+    for (const settingsSurface of [about, overview]) {
+      assert.match(settingsSurface, /nativeUpdateBusy/);
+      assert.match(settingsSurface, /update\.checkUnavailableDuringUpdate/);
+    }
+  });
+
   it('does not mistake stale runtime_status residue for live chat work', () => {
     const session = createSession(`updater-activity-${Date.now()}`);
     const lockId = `lock-${Date.now()}`;

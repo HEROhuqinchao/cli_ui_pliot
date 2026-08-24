@@ -90,9 +90,7 @@ if (target === 'all' && channel === 'stable') {
 }
 
 if (target === 'macos') {
-  const forbidden = channel === 'stable'
-    ? /^(?:latest\.yml|latest-linux(?:-arm64)?\.yml|CodePilot\.Setup\..*\.exe(?:\.blockmap)?|CodePilot-.*\.(?:AppImage|deb|rpm))$/i
-    : /^(?:preview\.yml|CodePilot\.Setup\..*\.exe(?:\.blockmap)?)$/i;
+  const forbidden = /^(?:(?:latest|preview)\.yml|(?:latest|preview)-linux(?:-arm64)?\.yml|CodePilot\.Setup\..*\.exe(?:\.blockmap)?|CodePilot-.*\.(?:AppImage|deb|rpm))$/i;
   const unexpected = matching(forbidden);
   if (unexpected.length > 0) {
     throw new Error(`macOS-only release contains non-macOS update assets: ${unexpected.join(', ')}`);
@@ -147,8 +145,8 @@ const macMetadata = yaml.load(fs.readFileSync(one(macMetadataName), 'utf8'));
 if (!macMetadata.files.every((item) => /\.zip$/i.test(String(item.url)))) {
   throw new Error(`${macMetadataName} must contain ZIP entries only; stapled DMGs are manual assets`);
 }
-if (!macMetadata.files.some((item) => /-universal\.zip$/i.test(String(item.url)))) {
-  throw new Error(`${macMetadataName} must target the universal ZIP so arm64 and x64 share one trusted feed`);
+if (macMetadata.files.length !== 1 || !/-universal\.zip$/i.test(String(macMetadata.files[0]?.url))) {
+  throw new Error(`${macMetadataName} must contain exactly one universal ZIP entry so arm64 and x64 share one trusted feed`);
 }
 if (target === 'all') {
   const windowsMetadataName = channel === 'stable' ? 'latest.yml' : 'preview.yml';

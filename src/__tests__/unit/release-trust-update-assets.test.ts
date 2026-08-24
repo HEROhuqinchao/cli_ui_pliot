@@ -124,11 +124,12 @@ describe('release signing and update asset contracts', () => {
     assert.match(stable, /-name "\*\.blockmap"/);
     assert.match(stable, /-name "latest-mac\.yml"/);
     assert.match(stable, /uses:\s*actions\/attest@v4/);
-    assert.match(stable, /artifact-metadata:\s*write/);
+    assert.match(stable, /permissions:\s*\n\s*contents:\s*read/);
     assert.match(stable, /runs-on:\s*macos-15-intel/);
     assert.match(stable, /CodePilot-\*-universal\.zip/);
 
     const stableRelease = stable.slice(stable.indexOf('\n  release:\n'));
+    assert.match(stableRelease, /permissions:[\s\S]*?contents:\s*write[\s\S]*?id-token:\s*write[\s\S]*?attestations:\s*write[\s\S]*?artifact-metadata:\s*write/);
     assert.match(stableRelease, /needs:\s*\[build-macos, verify-macos-intel-abi\]/);
     assert.doesNotMatch(stableRelease, /build-windows|build-linux|CodePilot\.Setup|latest-linux|\.AppImage|\.deb|\.rpm/);
     assert.match(stable, /build-windows:[\s\S]*?if:\s*\$\{\{ github\.event_name == 'workflow_dispatch'/);
@@ -153,7 +154,15 @@ describe('release signing and update asset contracts', () => {
     assert.match(previewRelease, /tags:\s*\n\s*- "\*-preview\.\*"/);
     assert.match(previewRelease, /VERSION="\$GITHUB_REF_NAME"/);
     assert.doesNotMatch(previewRelease, /GITHUB_REF_NAME#preview-/);
-    assert.match(previewRelease, /artifact-metadata:\s*write/);
+    assert.match(previewRelease, /permissions:\s*\n\s*contents:\s*read/);
+    const previewPublish = previewRelease.slice(previewRelease.indexOf('\n  create-prerelease:\n'));
+    assert.match(previewPublish, /permissions:[\s\S]*?contents:\s*write[\s\S]*?id-token:\s*write[\s\S]*?attestations:\s*write[\s\S]*?artifact-metadata:\s*write/);
+    for (const publishJob of [stableRelease, previewPublish]) {
+      assert.match(publishJob, /gh release create[\s\S]*?--draft/);
+      assert.match(publishJob, /gh release upload[\s\S]*?--clobber/);
+      assert.match(publishJob, /gh release edit[\s\S]*?--draft=false/);
+    }
+    assert.doesNotMatch(previewPublish, /softprops\/action-gh-release/);
 
     const windowsVerifier = read('scripts/verify-windows-signing.ps1');
     assert.match(windowsVerifier, /CodePilot\.Setup\.\*\.exe/);
@@ -247,6 +256,35 @@ describe('release signing and update asset contracts', () => {
       );
       assert.notEqual(missingIntel.status, 0);
       assert.match(missingIntel.stderr, /preview macOS DMG assets/);
+
+      writeFile(fixture, `CodePilot-${version}-x64.dmg`);
+      writeFile(fixture, `CodePilot-${version}-x86_64.AppImage`);
+      const mixedLinux = spawnSync(
+        process.execPath,
+        [assetVerifier, fixture, version, 'preview', 'macos'],
+        { encoding: 'utf8' },
+      );
+      assert.notEqual(mixedLinux.status, 0);
+      assert.match(mixedLinux.stderr, /macOS-only release contains non-macOS update assets/);
+
+      fs.unlinkSync(path.join(fixture, `CodePilot-${version}-x86_64.AppImage`));
+      const metadataPath = path.join(fixture, 'preview-mac.yml');
+      const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
+      const armZip = `CodePilot-${version}-arm64.zip`;
+      metadata.files.push({
+        url: armZip,
+        sha512: sha512(path.join(fixture, armZip)),
+        size: fs.statSync(path.join(fixture, armZip)).size,
+        blockMapSize: fs.statSync(path.join(fixture, `${armZip}.blockmap`)).size,
+      });
+      fs.writeFileSync(metadataPath, JSON.stringify(metadata));
+      const duplicateFeedEntry = spawnSync(
+        process.execPath,
+        [assetVerifier, fixture, version, 'preview', 'macos'],
+        { encoding: 'utf8' },
+      );
+      assert.notEqual(duplicateFeedEntry.status, 0);
+      assert.match(duplicateFeedEntry.stderr, /exactly one universal ZIP entry/);
     } finally {
       fs.rmSync(fixture, { recursive: true, force: true });
     }

@@ -24,10 +24,12 @@
 | 6 | tag CI 任一平台失败时不得删除/重建该 tag；修复后递增 patch 版本重新发布 | 人 + CI |
 | 7 | 当前只有 macOS arm64/x64（含 Intel universal ABI）的版本/真实 Main health/ABI/source-map 门禁均通过且 Release job 成功，才能报告 Shipped | `.github/workflows/build.yml` + 执行 Agent |
 | 8 | 当前 stable/preview 的 macOS app+DMG 必须签名、公证、staple 并通过 Gatekeeper。Windows 重新发布时，只对 CodePilot 自有 NSIS installer 与顶层 `win-unpacked/CodePilot.exe` 校验同一 Authenticode subject/timestamp；Electron/Chromium helper 与第三方 EXE 保留各自 publisher | CI verifier |
-| 9 | 当前 macOS installer、`latest-mac.yml`/`preview-mac.yml`、blockmap、checksum 来自同一输出；metadata 只允许 ZIP entry，DMG 不生成 update blockmap；缺失/错 hash/重复 basename/stagingPercentage 均阻断 | `verify-update-assets.mjs` |
+| 9 | 当前 macOS installer、`latest-mac.yml`/`preview-mac.yml`、blockmap、checksum 来自同一输出；metadata 必须恰好一条 universal ZIP entry，DMG 不生成 update blockmap；缺失/错 hash/重复 basename/stagingPercentage 均阻断 | `verify-update-assets.mjs` |
 | 10 | stable 资产发布后不可变；坏版本只发更高 patch。preview metadata 独立且 prerelease 不得覆盖 stable feed | 人 + CI |
 | 11 | 私钥只存在于 secret/signing service；轮换/丢失按 `docs/rules/release.md` runbook，publisher/Team ID 变化不得直接自动更新 | 人 + CI |
 | 12 | tag/prerelease 只能发布 macOS 资产；Windows/Linux job 只允许手工 artifact 构建，official updater provenance 必须为 `0`。重新纳入 Release 需要用户明确决策与对应 trust gate | workflow + verifier |
+| 13 | Windows 手工 artifact job 仍是 fail-closed 签名构建，必须配置 `WINDOWS_CERT_PFX_BASE64`、`WINDOWS_CERT_PASSWORD` 与 `WINDOWS_PUBLISHER_SUBJECT`；缺失时失败是预期信任门禁，不得宣称“保留 job 即可无签名构建” | workflow + docs |
+| 14 | workflow 顶层只有 `contents: read`；`contents`/OIDC/attestation 写权限只授予 stable/preview 发布 job。发布 job 先把完整资产图上传到可恢复 draft，全部成功后才一次切为公开 stable/prerelease；上传中断不得留下用户可见的半 feed | workflow + source-contract test |
 
 ## 关键文件 + 责任
 
@@ -54,6 +56,7 @@
 - [ ] macOS app/DMG/ZIP 的 Developer ID、公证、staple、Gatekeeper 与 Team ID 全通过
 - [ ] Windows 重新纳入发布前，installer 与顶层 CodePilot.exe 的 Authenticode subject、SHA-256 与 RFC3161 timestamp 全通过；签名密码只注入 package step，不写 `GITHUB_ENV`
 - [ ] preview 使用 `preview-mac.yml` + prerelease，stable 不包含 `stagingPercentage`，central macOS-only asset audit 全通过
+- [ ] metadata 是否恰好一条 universal ZIP；stable/preview 是否先完整上传 draft，再一次切换可见性；失败 draft 是否可由同 tag workflow rerun 恢复
 - [ ] signer 到期/轮换窗口已检查；identity 变化或 key loss 已按 release runbook 处理
 - [ ] packaged server 必须在 Electron runtime 下启动并通过 `/api/health`，不能只凭打包成功、Next.js `Ready` 或 native ABI 判定可发布
 - [ ] CI 失败时保留失败 tag，修复后发新 patch 版本
@@ -72,6 +75,7 @@
 - 递归要求 `win-unpacked/**/*.exe` 都由 CodePilot 证书签名：会把 Electron/Chromium helper 与第三方工具的合法 publisher 当失败。只验两个 CodePilot 自有入口。
 - 把 Windows PFX 密码写入 `GITHUB_ENV`：secret 会跨后续 step 常驻。只在 electron-builder package step 的 `env` 注入。
 - 把 native 双架构与 universal 包塞进同一个 45 分钟 step：第二段没有独立预算。三段 package/package/notarize 各自有界。
+- 先创建公开 Release 再逐个上传：上传中断会让客户端或用户看到半套资产。必须先写入 draft；重跑只允许恢复同 tag 的 draft，发现同 tag 已公开则 fail closed。
 
 ## 测试覆盖
 
@@ -93,3 +97,4 @@
 - 2026-08-23 — macOS `dmg.writeUpdateInfo=false`：公证/staple 后的 DMG 仍发布供手工安装，但不进入 updater graph；`latest-mac.yml` 只引用 ZIP，verifier 拒绝 DMG entry，避免后置 staple 令 metadata hash 失真。
 - 2026-08-24 — stable/preview macOS 都产出 arm64+x64 手工 DMG 与 universal updater ZIP，native/universal/notarize 分别计时。Windows verifier 收窄到两个 CodePilot 自有 EXE，签名密码只在 package step 注入，不跨 step 持久化。
 - 2026-08-24 — 用户决定本轮只交付 macOS 自动更新。tag/prerelease 发布依赖收窄到 Mac，central verifier 使用 `macos` target 并拒绝非 Mac 资产；Windows/Linux job 保留为 updater provenance 关闭的手工 artifact 入口。
+- 2026-08-24 — 发布写权限从 workflow 顶层收窄到 stable/preview 发布 job；两条发布链先上传/恢复 draft，完整后再公开。mac metadata 收紧为恰好一条 universal ZIP，Mac-only preview 与 stable 对称拒绝 Windows/Linux 资产。

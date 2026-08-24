@@ -12,6 +12,8 @@ export interface UpdateInfo {
   releaseUrl: string;
   downloadUrl?: string;
   downloadAssetName?: string;
+  /** A newer release exists, but it has no installer for detectedPlatform. */
+  platformAssetMissing?: boolean;
   publishedAt: string;
   downloadProgress: number | null;
   readyToInstall: boolean;

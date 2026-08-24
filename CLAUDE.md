@@ -143,7 +143,7 @@ CodePilot — 多模型 AI Agent 桌面客户端，基于 Electron + Next.js。
 
 **发版纪律（硬规则）：** 禁止自动发版——`git push` + `git tag` 必须等用户明确指示后才执行；commit 可正常进行。不要手动创建 GitHub Release（CI 自动创建）。不要删除 / 重建已发布的 release tag（会把 Release 打回 Draft）。
 
-**构建：** 当前 tag/prerelease 发布范围是 macOS：产出 arm64 + x64 DMG/ZIP 与 universal updater ZIP，Intel runner 另验 universal ABI；任一 Mac 门禁失败都会阻断正式 Release。Windows NSIS 与 Linux AppImage/deb/rpm 暂时只保留手工 artifact job，不随 tag 发布，也不嵌入 official updater provenance；重新纳入 Release 必须由用户明确启用对应 trust model。Windows 手工构建机器钉在 `windows-2022`（tech-debt #44）。`scripts/after-pack.js` 重编译 better-sqlite3 为 Electron ABI。构建前使用受保护的清理脚本清理 `release/ .next/ dist-electron/`。
+**构建：** 当前 tag/prerelease 发布范围是 macOS：产出 arm64 + x64 DMG/ZIP 与 universal updater ZIP，Intel runner 另验 universal ABI；任一 Mac 门禁失败都会阻断正式 Release。Windows NSIS 与 Linux AppImage/deb/rpm 暂时只保留手工 artifact job，不随 tag 发布，也不嵌入 official updater provenance；重新纳入 Release 必须由用户明确启用对应 trust model。Windows 手工 job 仍是签名构建，缺 `WINDOWS_CERT_PFX_BASE64` / `WINDOWS_CERT_PASSWORD` / `WINDOWS_PUBLISHER_SUBJECT` 时会诚实 fail closed；“保留入口”不代表当前无需 signer 即可运行。Windows 构建机器钉在 `windows-2022`（tech-debt #44）。`scripts/after-pack.js` 重编译 better-sqlite3 为 Electron ABI。构建前使用受保护的清理脚本清理 `release/ .next/ dist-electron/`。
 
 ## 执行计划
 

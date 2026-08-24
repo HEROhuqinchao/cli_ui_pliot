@@ -22,7 +22,7 @@ on:
   workflow_dispatch:
     inputs:
       platform:
-        description: "Target platform"
+        description: "Target platform (Windows requires configured signer secrets/variable)"
         required: true
         default: "macos"
         type: choice
@@ -41,10 +41,7 @@ on:
       - "v*"
 
 permissions:
-  contents: write
-  id-token: write
-  attestations: write
-  artifact-metadata: write
+  contents: read
 
 jobs:
   verify-source:
@@ -611,6 +608,11 @@ jobs:
     if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
     needs: [build-macos, verify-macos-intel-abi]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -663,7 +665,7 @@ jobs:
             artifacts/latest-mac.yml
             artifacts/SHA256SUMS.txt
 
-      - name: Create stable GitHub Release + upload immutable asset graph
+      - name: Upload immutable graph to a draft, then publish stable Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -679,8 +681,25 @@ jobs:
           echo "=== Release assets ==="
           printf '%s\n' "${FILES[@]}"
 
-          gh release create "${GITHUB_REF_NAME}" \
-            --title "CodePilot v${VERSION}" \
-            --notes-file RELEASE_NOTES.md \
-            --latest \
-            "${FILES[@]}"
+          # Keep the release invisible until every asset has uploaded. A failed
+          # run leaves a resumable draft instead of a user-visible half feed.
+          if EXISTING_DRAFT="$(gh release view "${GITHUB_REF_NAME}" --json isDraft --jq '.isDraft' 2>/dev/null)"; then
+            [ "$EXISTING_DRAFT" = "true" ] || {
+              echo "::error::release already exists and is not a draft"
+              exit 1
+            }
+            gh release edit "${GITHUB_REF_NAME}" \
+              --title "CodePilot v${VERSION}" \
+              --notes-file RELEASE_NOTES.md
+            gh release upload "${GITHUB_REF_NAME}" "${FILES[@]}" --clobber
+          else
+            gh release create "${GITHUB_REF_NAME}" \
+              --draft \
+              --title "CodePilot v${VERSION}" \
+              --notes-file RELEASE_NOTES.md \
+              "${FILES[@]}"
+          fi
+
+          # This is the only visibility transition. If it fails, the complete
+          # graph remains a draft and a workflow rerun can safely resume it.
+          gh release edit "${GITHUB_REF_NAME}" --draft=false --latest
