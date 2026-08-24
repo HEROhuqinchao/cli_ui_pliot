@@ -1,8 +1,8 @@
 # 模型目录与推理强度统一适配
 
 > 创建时间：2026-07-17
-> 最后更新：2026-08-16
-> 状态：✅ v0.67.1 已发布（release commit `634a0dc7`，CI [`31898968564`](https://github.com/op7418/CodePilot/actions/runs/31898968564) 全绿，[stable Release](https://github.com/op7418/CodePilot/releases/tag/v0.67.1) 非 draft / 非 prerelease，12 assets uploaded）。GLM-5.3 Models 热修已完成首轮 Claude“附条件通过”的四个 P2 条件（并发 INSERT、upstream 双行、hidden 候选恢复、catalog 重加能力保真），状态为 Shipped + Code complete + Tests pass + Build pass + isolated UI smoke passed；修复后 Claude 复审未重跑。本轮定向 210/210、最终标准全量 5257 pass / 0 fail / 1 skipped（5258 tests）、production build 136 pages；隔离页面实测 hidden 恢复、upstream 搜索与父列表刷新均通过。发版首轮全量命中已登记的 `telemetry-native-stream-loop` #86 flake，隔离 5 次 1 fail / 4 pass，随后全量绿色；该技术债不能被本次绿色覆盖。真实 xAI/GLM 凭据 smoke 仍待跑。
+> 最后更新：2026-08-24
+> 状态：🟡 v0.67.1 已发布后被真实用户打回；候选版已按发布历史补齐 gen-0 `GLM-4.7`、后续 sonnet/haiku `legacyFingerprints`、五态/conflict recovery、保守迁移与四面合同。2026-08-24 收口定向 49/49；全量/build 证据见关联生产反馈计划。B-031 仍不关闭：至少一名受影响 0.67.1 用户的候选版升级 smoke、真实 xAI/GLM 凭据 smoke 仍待跑；本轮未发布。
 > 事实基线：[基础体验更新事实基线](../../research/foundation-experience-refresh-2026-07-17.md)
 
 ## 用户问题与取舍
@@ -19,7 +19,15 @@
 | Phase 1 | GLM-5.2 / Kimi for Coding 目录与强度 | ✅ 恢复修复：manual exact-ID + hidden legacy alias 仍可只读 enrichment；CodePlan search 以内置目录降级 | 两个 Coding Plan 显示正确模型和真实档位 |
 | Phase 2 | Claude Sonnet 5 / Opus 5 与现有模型复核 | ✅ 恢复修复：Opus 5 显式目录、1M context、三 Runtime 共用 adaptive/effort、effort provenance/精确档位门与本地化提示已落地；真实 CLI route/entitlement 通过，packaged UI smoke 待跑 | Sonnet 5 / Opus 5 可选；Claude 模型右侧稳定显示匹配且视觉一致的强度菜单 |
 | Phase 3 | capability 统一与后续跟进机制 | ✅ Grok SDK 边界、GLM provider-scoped Codex effort 与 Turbo transport 已收口 | 上游模型变化不会再靠多处硬编码静默漂移 |
-| Phase 4 | Tier 2 回归与真实凭据 smoke | 🟡 第三轮 Review passed（附条件）；Tests、production build 与通用 Smoke pass，全量已知 #86 telemetry flake 另行跟踪；真实 xAI/GLM smoke 待跑 | 自动合同与 production route 已一致；真实账号结果仍单独记账 |
+| Phase 4 | Tier 2 回归与真实凭据 smoke | 🟡 legacy identity Code/Tests/Build 已完成；受影响用户与真实 GLM smoke 待补 | 候选版可区分 current/hidden/legacy/conflict/missing；production 关闭权仍由真实升级 smoke 决定 |
+
+## 2026-08-23 用户升级后再次打回
+
+- **Signal**：用户明确已升级 `0.67.1`；GLM (CN) 的 Add Model 仍把 GLM-5.3 标成“已添加”，但 Models/模型选择里仍找不到，旧 GLM-5-Turbo 继续存在。
+- **Triage**：旧 isolated smoke 覆盖的是 pristine catalog/hidden/direct-wire 等构造行，没有覆盖这名升级用户的真实 ownership/identity 组合。当前 `getPresence()` 仍可能因 stable `sonnet` 命中旧 wire 而误报 current-added；read merge 又会保护 manual/user-edited/manual-* 行。该解释目前是高可信假设，不在拿到脱敏行形和四个消费面对账前写成根因。
+- **Decision**：B-031 重开，历史 Shipped/Tests/Build/CI 证据不删除，但不再具有关闭权。后续以 [新生产反馈计划](v0.67.1-production-feedback-signing-auto-update-2026-08-23.md) Phase 0/1 为唯一执行入口；必须先复现受影响 row shape，再建立 SKU-aware presence 与保守 legacy upgrade/conflict 合同。
+- **重新关闭门禁**：failing-then-passing legacy fixture；Models/Search/Runtime/Composer 四面一致；至少一名受影响 0.67.1 用户完成候选版升级 smoke。仅再跑当前 210 条或 pristine isolated UI 不足以关闭。
+- **2026-08-24 Fix/Verify**：catalog 按已发布 git 历史明示 sonnet→`sonnet` 的 gen-0 `GLM-4.7`、后续 `GLM-5-Turbo`/`GLM-5.2`，以及 haiku→`haiku` 的 `GLM-4.5-Air` 完整 upstream/display/capabilities 指纹，删除未发布过的 sonnet→`glm-5-turbo` 猜测。修复轮 review 先证明首版遗漏 gen-0，因此计划状态曾回退为“部分”；补齐后用 gen-0/后续两组完整三行 fixture 验证 sonnet/haiku 原位迁移、各世代 opus 保留，并对真正 `identity_conflict` 的 fail-closed 与精确 model ids 作行为断言。migration compare-and-swap 且 ownership/upstream occupancy fail-closed；current canonical 不因额外旧行降级，真正 conflict 返回 model ids 与 UI 恢复动作。收口定向 49/49；最后一条真实用户 smoke 未跑，所以状态保持 🟡。
 
 ## 2026-07-19 用户 smoke 打回：新增修复清单
 
@@ -165,6 +173,8 @@
 | 2026-08-15 | production build / Playwright | GLM shared Codex runtime surface | glm-5.3 / Codex auto-review capability | 本机 ChatGPT.app bundle；无 GLM provider 请求 | v0.67.0 strict binary gate + production route | ✅ Build + Smoke passed；真实 GLM turn pending | 首轮 21/22 捕获 `Codex Desktop/0.147.0-alpha.6.5 (...)` 被误拒；修复后定向 78/78、全量 5246/0/1、production build 通过、`@smoke` 22/22。只证明本机 binary/route 合同，不替代 CN/Global 真实凭据 |
 | 2026-08-15 | Settings Models contract | 智谱 CodePlan / GLM (CN) legacy DB | sonnet → GLM-5.2 | isolated stale catalog fixture | Models GET 后持久升级 5.3/Turbo/4.7；Add Model stable id / wire id 分离；manual-hidden 保留 | ✅ Tests + Build passed；UI smoke pending | 用户真实 DB 证实旧行仍为 `sonnet→sonnet / GLM-5.2`；定向 201/201、完整注册量 5248/0/1（5249 tests）、production build 通过。未修改真实用户 DB，待新版进 Models 页自动执行非破坏 merge |
 | 2026-08-16 | Settings Models review follow-up / v0.67.1 release gate | 智谱 CodePlan / GLM (CN) | stable alias + direct wire / hidden / deleted catalog row | isolated route + SQLite + temporary UI DB | 并发冲突、upstream 去重、hidden 重新启用、catalog 重加能力保真、重复 GET 零写、非 plan 反例 | ✅ Shipped；Tests + Build + isolated UI smoke passed；post-fix re-review not rerun | Claude 首审附条件通过；定向 210/210、最终全量 5257/0/1、production build 136 pages。首轮全量的唯一失败为已知 #86；隔离 5 次 1 fail / 4 pass 后全量绿色。UI 以 `glm-5.3[1m]` 搜索命中 hidden GLM-5.3，重新启用后父列表 3/3 且 `sonnet→glm-5.3[1m]`，控制台无 warning/error。CI `31898968564` 的 macOS/Windows/Linux 双架构与 release job 全绿；stable Release 12 assets uploaded。历史 user-owned 双行不自动迁移 |
+| 2026-08-23 | user production screenshot | GLM (CN) | CodePilot 0.67.1 / GLM-5.3 | 用户现有套餐；未读取 key/DB | Add Model 显示“已添加”，Models/模型选择仍找不到，旧 Turbo 仍存在 | ❌ B-031 reopened | 对话附件；证明旧 isolated smoke 未覆盖真实 legacy upgrade row，待脱敏四面对账与候选版 smoke |
+| 2026-08-24 | local contract tests | GLM (CN) published-history migration | gen-0 GLM-4.7 + 后续 Turbo/5.2 → GLM-5.3 | isolated SQLite fixtures；无真实凭据/用户 DB | 两代完整三行目录原位迁移 + opus 保留 + identity conflict fail-closed | ✅ 49/49 收口定向通过；production smoke pending | 与 DB retry/diagnostic 合并的四文件定向；不替代受影响用户候选版升级 smoke |
 | _待跑_ | claude_code | Kimi Code | kimi-for-coding | API key | 固定展示名；Auto 省略与 Low/High/Max 三档逐一发送 | 📋 本轮继续验证 | 目录已落 `upstreamModelId='kimi-for-coding'` + Auto/Low/High/Max；静态与 route 回归通过，真实网关接受/降级仍以此 smoke 为准 |
 | _待跑_ | claude_code | Kimi Code | kimi-for-coding | API key | `queryOptions.effort` vs `CLAUDE_CODE_EFFORT_LEVEL` 优先级；Kimi 渠道是否接受 effort | 📋 移交用户统一验证 | p1-effort-chain：本轮未改 env 注入代码，见决策日志 |
 | _待跑_ | claude_code + native | Anthropic | claude-sonnet-5 | API key/login | adaptive + effort | 📋 | |

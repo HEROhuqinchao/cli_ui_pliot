@@ -3,6 +3,7 @@ import { streamTextFromProvider } from '@/lib/text-generator';
 import { resolveProvider } from '@/lib/provider-resolver';
 import fs from 'fs';
 import type { PlanMediaJobRequest } from '@/types';
+import { SingleOwnerStreamWriter } from '@/lib/single-owner-stream-writer';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -95,11 +96,19 @@ ${docContent ? `Document content:\n${docContent}` : 'No document provided — ge
 
     // Create SSE stream
     const encoder = new TextEncoder();
+    const writer = new SingleOwnerStreamWriter<Uint8Array>();
+    const cancellation = new AbortController();
+    const abortSignal = AbortSignal.any([
+      request.signal,
+      cancellation.signal,
+      AbortSignal.timeout(120_000),
+    ]);
     const stream = new ReadableStream({
       async start(controller) {
-        const send = (event: string, data: unknown) => {
-          controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
-        };
+        writer.attach(controller);
+        const send = (event: string, data: unknown) => writer.enqueue(
+          encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),
+        );
 
         send('planning_start', { message: 'Starting plan generation...' });
 
@@ -113,9 +122,10 @@ ${docContent ? `Document content:\n${docContent}` : 'No document provided — ge
             system: PLANNER_SYSTEM_PROMPT,
             prompt: userPrompt,
             maxTokens: 4096,
+            abortSignal,
           })) {
             fullText += chunk;
-            send('text', { chunk });
+            if (!send('text', { chunk })) return;
           }
 
           // Extract JSON from the response
@@ -123,7 +133,7 @@ ${docContent ? `Document content:\n${docContent}` : 'No document provided — ge
           if (!jsonMatch) {
             send('error', { message: 'Failed to extract plan JSON from LLM response' });
             send('done', {});
-            controller.close();
+            writer.close();
             return;
           }
 
@@ -135,7 +145,11 @@ ${docContent ? `Document content:\n${docContent}` : 'No document provided — ge
         }
 
         send('done', {});
-        controller.close();
+        writer.close();
+      },
+      cancel() {
+        writer.cancel();
+        cancellation.abort();
       },
     });
 

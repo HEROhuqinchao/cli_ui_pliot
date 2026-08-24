@@ -44,6 +44,7 @@ import {
   type AgentRuntime,
 } from "@/lib/runtime/effective";
 import type { TranslationKey } from "@/i18n";
+import { releasePlatformLabel } from "@/lib/update-release";
 import { OverviewHeatmap } from "./OverviewHeatmap";
 import { OverviewCard } from "./OverviewCard";
 import {
@@ -63,6 +64,9 @@ export function OverviewSection() {
   const { accountInfo } = useAccountInfo();
   const { updateInfo, checking, checkForUpdates } = useUpdate();
   const { status: claudeStatus } = useClaudeStatus();
+  const nativeUpdateBusy = updateInfo?.nativePhase === "downloading"
+    || updateInfo?.nativePhase === "downloaded"
+    || updateInfo?.nativePhase === "installing";
 
   // Settings is a route-level split now (one page per /settings/<section>),
   // so cross-section jumps must go through the router or they only mutate
@@ -314,10 +318,14 @@ export function OverviewSection() {
               size="sm"
               className="-ml-2 gap-1 text-xs text-muted-foreground hover:text-foreground"
               onClick={checkForUpdates}
-              disabled={checking}
+              disabled={checking || nativeUpdateBusy}
             >
               <ArrowsClockwise size={12} className={checking ? "animate-spin" : undefined} />
-              {checking ? (isZh ? "检查中…" : "Checking…") : (isZh ? "检查更新" : "Check updates")}
+              {checking
+                ? t("settings.checking")
+                : nativeUpdateBusy
+                  ? t("update.checkUnavailableDuringUpdate")
+                  : t("settings.checkForUpdates")}
             </Button>
           }
         >
@@ -325,9 +333,14 @@ export function OverviewSection() {
             <p className="text-status-warning-foreground flex items-start gap-1">
               <Warning size={12} weight="fill" className="mt-0.5 shrink-0" />
               <span>
-                {isZh
-                  ? `有新版本 v${updateInfo.latestVersion} 可用`
-                  : `Update available: v${updateInfo.latestVersion}`}
+                {updateInfo.platformAssetMissing
+                  ? t("update.platformAssetMissing", {
+                      version: updateInfo.latestVersion,
+                      platform: releasePlatformLabel(updateInfo.detectedPlatform),
+                    })
+                  : isZh
+                    ? `有新版本 v${updateInfo.latestVersion} 可用`
+                    : `Update available: v${updateInfo.latestVersion}`}
               </span>
             </p>
           ) : (

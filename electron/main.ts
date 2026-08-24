@@ -6,13 +6,12 @@ import { configureElectronMainIntegrations, resolveTelemetryConfig, TELEMETRY_IG
 import { sanitizeTelemetryBreadcrumb, sanitizeTelemetryEvent } from '../src/lib/telemetry/sanitize';
 import { createTelemetrySmokeError, telemetrySmokeEnabled } from '../src/lib/telemetry/smoke';
 import { buildUtilityProcessFailureEvent } from '../src/lib/telemetry/utility-process-failure';
+import { resolveCodePilotDataDir } from '../src/lib/codepilot-data-dir';
+
+const codePilotDataDir = resolveCodePilotDataDir();
 
 // Check opt-out before init — reads a marker file that the renderer writes
-const sentryOptOutPath = join(
-  process.env.HOME || process.env.USERPROFILE || '',
-  '.codepilot',
-  'sentry-disabled',
-);
+const sentryOptOutPath = join(codePilotDataDir, 'sentry-disabled');
 const sentryDisabled = existsSync(sentryOptOutPath) &&
   readFileSync(sentryOptOutPath, 'utf-8').trim() === 'true';
 
@@ -23,6 +22,13 @@ const electronTelemetry = resolveTelemetryConfig({
   nodeEnv: process.env.NODE_ENV,
   optedOut: sentryDisabled,
 });
+// Native minidumps are raw attachments and bypass beforeSend sanitization.
+// They are therefore disabled in every distributable build. The manually
+// compiled telemetry-smoke artifact is the only explicit opt-in; CI never
+// publishes that artifact and needs the integration on its recovery launch
+// so the completed dump can be drained.
+const nativeMinidumpTelemetryEnabled = electronTelemetry.enabled
+  && telemetrySmokeEnabled(process.env.CODEPILOT_TELEMETRY_SMOKE);
 
 if (electronTelemetry.enabled) {
   Sentry.init({
@@ -37,6 +43,7 @@ if (electronTelemetry.enabled) {
       defaults,
       Sentry.mainProcessSessionIntegration({ sendOnCreate: true }),
       Sentry.childProcessIntegration({ events: [] }),
+      { allowNativeMinidumps: nativeMinidumpTelemetryEnabled },
     ),
     beforeBreadcrumb(breadcrumb) {
       return sanitizeTelemetryBreadcrumb(breadcrumb);
@@ -61,7 +68,7 @@ const nativeCrashSmokeEnabled = electronTelemetry.enabled
   && telemetrySmokeEnabled(process.env.CODEPILOT_TELEMETRY_SMOKE)
   && process.env.CODEPILOT_NATIVE_CRASH_SMOKE === '1';
 
-import { app, BrowserWindow, Notification, nativeImage, nativeTheme, dialog, session, utilityProcess, ipcMain, shell, Tray, Menu, clipboard } from 'electron';
+import { app, autoUpdater as nativeAutoUpdater, BrowserWindow, Notification, nativeImage, nativeTheme, dialog, session, utilityProcess, ipcMain, shell, Tray, Menu, clipboard } from 'electron';
 import { resolveDefaultAssistantHome } from './default-assistant-home';
 import {
   buildNativeNotificationOptions,
@@ -124,6 +131,16 @@ import {
   validateScopedPathInspection,
 } from '../src/lib/local-path-security';
 import { parseServerRuntimeObservabilityMessage } from '../src/lib/server-runtime-observability';
+import {
+  cancelFreshDatabaseIntent,
+  continueFreshDatabaseIntent,
+  DATABASE_RECOVERY_DIRNAME,
+  DATABASE_STARTUP_DIAGNOSTIC_MARKER,
+  DATABASE_STARTUP_MARKER,
+  prepareFreshDatabase,
+  SERVER_HEALTH_DIAGNOSTIC_MARKER,
+} from '../src/lib/database-recovery';
+import { disposeAutoUpdaterTimers, initAutoUpdater, setUpdaterWindow } from './updater';
 
 // B-025: hard caps for the persistent main log + the in-memory server-output
 // ring. The 12.5 GB log a user hit came from an unbounded active file plus an
@@ -182,6 +199,8 @@ let lastServerFailureReason = 'server_exit';
 let lastServerRecoveryAttempt = 0;
 let lastServerRecoveryPageState: ServerRecoveryPageState = 'recovering';
 let activeServerRecoveryDataUrl: string | null = null;
+let lastDatabaseStartupDiagnostic: string | null = null;
+let lastServerHealthDiagnostic: string | null = null;
 const serverDescendantRegistries = new Map<number, ServerDescendantRegistry>();
 let lastServerRuntimeMetrics: ReturnType<typeof parseServerRuntimeObservabilityMessage> = null;
 let lastServerProcessMetric: {
@@ -196,6 +215,8 @@ let resolvedProxyEnv: Record<string, string> = {};
 let providerSecretEnvironment: Record<string, string> = {};
 let macosKeychainEnvironment: Record<string, string> = {};
 let isQuitting = false;
+let appQuitTeardownStarted = false;
+let updaterInstallLifecycleArmed = false;
 let tray: Tray | null = null;
 let nativeDeliveryTimer: ReturnType<typeof setInterval> | null = null;
 let nativeDeliveryPolling = false;
@@ -329,6 +350,73 @@ async function isBridgeActive(): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+async function getActiveUpdateWork(): Promise<Array<'chat' | 'bridge' | 'task'>> {
+  if (!serverPort) throw new Error('activity state unavailable');
+  try {
+    const response = await fetch(`http://127.0.0.1:${serverPort}/api/app/activity`, {
+      cache: 'no-store',
+      signal: AbortSignal.timeout(2_000),
+    });
+    if (!response.ok) throw new Error('activity endpoint unavailable');
+    const body = await response.json() as { chat?: unknown; bridge?: unknown; task?: unknown };
+    const blockers: Array<'chat' | 'bridge' | 'task'> = [];
+    if (body.chat === true) blockers.push('chat');
+    if (body.bridge === true) blockers.push('bridge');
+    if (body.task === true) blockers.push('task');
+    return blockers;
+  } catch {
+    // Fail closed: inability to prove idle work must never force an install.
+    throw new Error('activity state unavailable');
+  }
+}
+
+function isTrustedUpdaterSender(event: Electron.IpcMainInvokeEvent): boolean {
+  if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents || !serverPort) {
+    return false;
+  }
+  try {
+    const senderUrl = new URL(event.sender.getURL());
+    return senderUrl.protocol === 'http:'
+      && senderUrl.hostname === '127.0.0.1'
+      && senderUrl.port === String(serverPort);
+  } catch {
+    return false;
+  }
+}
+
+function initializeAutoUpdaterForWindow(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  initAutoUpdater({
+    win: mainWindow,
+    currentVersion: app.getVersion(),
+    channel: process.env.CODEPILOT_APP_CHANNEL || 'local',
+    isPackaged: app.isPackaged,
+    officialBuild: process.env.CODEPILOT_OFFICIAL_UPDATE_BUILD === '1',
+    platform: process.platform,
+    appImagePath: process.env.APPIMAGE,
+    isTrustedSender: isTrustedUpdaterSender,
+    getActiveWork: getActiveUpdateWork,
+    onInstallLifecycleChange: (installing) => {
+      if (installing) {
+        updaterInstallLifecycleArmed = true;
+        isQuitting = true;
+        serverLifecyclePhase = 'quitting';
+        return;
+      }
+      if (!updaterInstallLifecycleArmed || appQuitTeardownStarted) return;
+      updaterInstallLifecycleArmed = false;
+      isQuitting = false;
+      serverLifecyclePhase = serverProcess && !serverExited ? 'running' : 'recovering';
+      if (!mainWindow || mainWindow.isDestroyed()) {
+        createWindow(serverPort ? `http://127.0.0.1:${serverPort}${lastRecoverableRoute}` : undefined);
+      } else {
+        mainWindow.show();
+      }
+      ensureTray();
+    },
+  });
 }
 
 /**
@@ -945,6 +1033,10 @@ async function startServerOnStablePort(): Promise<number> {
       try { serverProcess?.kill(); } catch { /* already gone */ }
       serverProcess = null;
 
+      // Database health is independent of the port. Retrying every stable
+      // port would create duplicate backups and keep the user waiting.
+      if (msg.includes(DATABASE_STARTUP_MARKER)) throw err;
+
       // Non-port errors (Next.js boot crash, missing file, etc.) won't be
       // fixed by switching ports, but we still try the rest because the cost
       // is small and a transient error on the first port shouldn't be fatal.
@@ -986,9 +1078,31 @@ async function waitForServer(port: number, timeout = 30000): Promise<void> {
           path: '/api/health',
           family: 4,
           timeout: 2000,
-        }, (res: { statusCode?: number }) => {
-          if (res.statusCode === 200) resolve();
-          else reject(new Error(`Status ${res.statusCode}`));
+        }, (res: {
+          statusCode?: number;
+          on: (event: string, listener: (chunk?: Buffer) => void) => void;
+          resume: () => void;
+        }) => {
+          if (res.statusCode === 200) {
+            res.resume();
+            resolve();
+            return;
+          }
+          let body = '';
+          res.on('data', (chunk?: Buffer) => {
+            if (chunk && body.length < 2_048) {
+              body += chunk.toString('utf8').slice(0, 2_048 - body.length);
+            }
+          });
+          res.on('end', () => {
+            if (body.includes(DATABASE_STARTUP_MARKER)) {
+              const code = body.match(/"code":"([a-z_]+)"/)?.[1] ?? 'database_unavailable';
+              const preservation = body.match(/"preservation":"([a-z_]+)"/)?.[1] ?? 'failed';
+              reject(new Error(`${DATABASE_STARTUP_MARKER} code=${code} preservation=${preservation}`));
+              return;
+            }
+            reject(new Error(`Status ${res.statusCode}`));
+          });
         });
         req.on('error', (err: Error) => reject(err));
         req.on('timeout', () => {
@@ -999,6 +1113,10 @@ async function waitForServer(port: number, timeout = 30000): Promise<void> {
       return;
     } catch (err) {
       lastError = err instanceof Error ? err.message : String(err);
+      // The health route already returned a complete, path-free startup
+      // classification. Retrying the same blocked process for 30 seconds only
+      // delays the recovery UI and cannot make a process-stable DB fault heal.
+      if (lastError.includes(DATABASE_STARTUP_MARKER)) throw err;
       await new Promise(r => setTimeout(r, 300));
     }
   }
@@ -1046,6 +1164,24 @@ function showServerRecoveryPage(
   mainWindow?.show();
 }
 
+function parseDatabaseStartupBlock(message: string): {
+  code: string;
+  preservation: string;
+  pageState: ServerRecoveryPageState;
+} | null {
+  if (!message.includes(DATABASE_STARTUP_MARKER)) return null;
+  const code = message.match(/code=([a-z_]+)/)?.[1] ?? 'database_unavailable';
+  const preservation = message.match(/preservation=([a-z_]+)/)?.[1] ?? 'failed';
+  const pageState: ServerRecoveryPageState = code === 'database_corrupt'
+    ? 'database'
+    : code === 'database_fresh_start_conflict'
+      ? 'database-fresh-start-conflict'
+    : code === 'database_migration_failed' || code === 'database_runtime_recovery_failed'
+      ? 'database-migration'
+      : 'database-retryable';
+  return { code, preservation, pageState };
+}
+
 function isPidAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
@@ -1086,6 +1222,8 @@ function serverRecoveryDiagnostics(): string {
         }
       : null,
     electronUtilityMetric: lastServerProcessMetric,
+    databaseStartupDiagnostic: lastDatabaseStartupDiagnostic,
+    serverHealthDiagnostic: lastServerHealthDiagnostic,
   }, null, 2);
 }
 
@@ -1192,12 +1330,48 @@ function beginServerRecovery(generation: number, reason: string): void {
   serverRecoveryPromise = runServerRecovery(generation, reason).finally(finishServerRecoveryRun);
 }
 
-function retryServerRecoveryFromUser(): void {
-  if (serverRecoveryPromise || !serverPort || isQuitting) return;
+async function retryInitialServerStartupFromUser(): Promise<void> {
+  showServerRecoveryPage('recovering', 1, 'manual_database_retry');
+  try {
+    const port = await startServerOnStablePort();
+    serverPort = port;
+    serverSupervisor.markHealthy();
+    serverLifecyclePhase = 'running';
+    activeServerRecoveryDataUrl = null;
+    void mainWindow?.loadURL(`http://127.0.0.1:${port}${lastRecoverableRoute}`);
+    startNativeDeliveryService();
+    initializeAutoUpdaterForWindow();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const databaseBlock = parseDatabaseStartupBlock(message);
+    serverPort = null;
+    serverSupervisor.markFailed();
+    serverLifecyclePhase = 'recovering';
+    if (databaseBlock) {
+      console.warn(`[database-recovery] retry code=${databaseBlock.code} preservation=${databaseBlock.preservation}`);
+      showServerRecoveryPage(
+        databaseBlock.pageState,
+        1,
+        `${databaseBlock.code}:${databaseBlock.preservation}`,
+      );
+      return;
+    }
+    console.warn('[database-recovery] manual retry failed', {
+      reason: error instanceof Error ? error.name : 'unknown_error',
+    });
+    showServerRecoveryPage('failed', 1, 'manual_retry_failed');
+  }
+}
+
+function retryServerRecoveryFromUser(): boolean {
+  if (serverRecoveryPromise || isQuitting) return false;
   serverSupervisor.resetRestartBudgetForManualRetry();
   serverLifecyclePhase = 'recovering';
-  serverRecoveryPromise = runServerRecovery(activeServerGeneration, 'manual_retry')
+  serverRecoveryPromise = (serverPort
+    ? runServerRecovery(activeServerGeneration, 'manual_retry')
+    : retryInitialServerStartupFromUser())
     .finally(finishServerRecoveryRun);
+  return true;
 }
 
 function startServer(port: number, recoverySafeMode = false): Electron.UtilityProcess {
@@ -1208,6 +1382,8 @@ function startServer(port: number, recoverySafeMode = false): Electron.UtilityPr
   console.log(`Standalone dir: ${standaloneDir}`);
 
   serverErrors.clear();
+  lastDatabaseStartupDiagnostic = null;
+  lastServerHealthDiagnostic = null;
   serverExited = false;
   serverExitCode = null;
   lastServerRuntimeMetrics = null;
@@ -1240,7 +1416,7 @@ function startServer(port: number, recoverySafeMode = false): Electron.UtilityPr
       ...providerSecretEnvironment,
       PORT: String(port),
       HOSTNAME: '127.0.0.1',
-      CLAUDE_GUI_DATA_DIR: path.join(home, '.codepilot'),
+      CLAUDE_GUI_DATA_DIR: codePilotDataDir,
       HOME: home,
       USERPROFILE: home,
       PATH: constructedPath,
@@ -1371,6 +1547,24 @@ function startServer(port: number, recoverySafeMode = false): Electron.UtilityPr
 
   child.stderr?.on('data', (data: Buffer) => {
     const msg = data.toString().trim();
+    const diagnosticIndex = msg.lastIndexOf(DATABASE_STARTUP_DIAGNOSTIC_MARKER);
+    if (diagnosticIndex >= 0) {
+      lastDatabaseStartupDiagnostic = msg
+        .slice(diagnosticIndex)
+        .split(/\r?\n/, 1)[0]
+        .slice(0, 1_024);
+    }
+    const healthDiagnosticIndex = msg.lastIndexOf(SERVER_HEALTH_DIAGNOSTIC_MARKER);
+    if (healthDiagnosticIndex >= 0) {
+      lastServerHealthDiagnostic = msg
+        .slice(healthDiagnosticIndex)
+        .split(/\r?\n/, 1)[0]
+        .slice(0, 1_024);
+    }
+    if (msg.includes(DATABASE_STARTUP_MARKER)) {
+      childFailureReason = 'database_startup_blocked';
+      lastServerFailureReason = childFailureReason;
+    }
     console.error(`[server:err] ${msg}`);
     serverErrors.push(msg);
   });
@@ -1587,6 +1781,7 @@ function createWindow(url?: string) {
   }
 
   mainWindow = new BrowserWindow(windowOptions);
+  setUpdaterWindow(mainWindow);
   attachRendererEditingContextMenu(mainWindow);
   mainWindow.webContents.on('did-start-loading', () => {
     // A navigation replaces the renderer and its IPC listeners. Hold native
@@ -3110,14 +3305,17 @@ app.whenReady().then(async () => {
     return true;
   });
   ipcMain.handle('server-recovery:retry', (event) => {
-    if (!isTrustedServerRecoverySender(event)) return false;
-    retryServerRecoveryFromUser();
-    return true;
+    if (
+      !isTrustedServerRecoverySender(event)
+      || ['database', 'database-fresh-start-conflict'].includes(lastServerRecoveryPageState)
+    ) return false;
+    return retryServerRecoveryFromUser();
   });
   ipcMain.handle('server-recovery:restart-app', (event) => {
     if (
       !isTrustedServerRecoverySender(event)
       || lastServerRecoveryPageState === 'blocked'
+      || ['database', 'database-fresh-start-conflict'].includes(lastServerRecoveryPageState)
     ) return false;
     isQuitting = true;
     serverLifecyclePhase = 'quitting';
@@ -3128,16 +3326,103 @@ app.whenReady().then(async () => {
   ipcMain.handle('server-recovery:quit-app', (event) => {
     if (
       !isTrustedServerRecoverySender(event)
-      || lastServerRecoveryPageState !== 'blocked'
+      || !['blocked', 'database', 'database-retryable', 'database-migration', 'database-fresh-start-conflict'].includes(lastServerRecoveryPageState)
     ) return false;
-    // Blocked page only. The descendant registry lives in this Main's memory
-    // and cannot prove single ownership across a process restart, so the safe
-    // exit is a plain quit — the user cleans up any remaining Codex process
-    // (or reboots) and reopens the app manually. This handler must never
-    // restart the process itself.
+    // These offline pages intentionally expose plain quit separately from
+    // restart. In the blocked descendant case the user must clean up the old
+    // process tree manually; DB fault pages also keep quit non-destructive.
     serverLifecyclePhase = 'quitting';
     quitApp();
     return true;
+  });
+  ipcMain.handle('server-recovery:open-database-backups', async (event) => {
+    if (!isTrustedServerRecoverySender(event) || lastServerRecoveryPageState !== 'database') return false;
+    const recoveryRoot = path.join(codePilotDataDir, DATABASE_RECOVERY_DIRNAME);
+    if (!fs.existsSync(recoveryRoot)) return false;
+    return (await shell.openPath(recoveryRoot)) === '';
+  });
+  ipcMain.handle('server-recovery:start-fresh-database', async (event) => {
+    if (!isTrustedServerRecoverySender(event) || lastServerRecoveryPageState !== 'database') return false;
+    const zh = serverRecoveryLocale().toLowerCase().startsWith('zh');
+    const confirmation = await dialog.showMessageBox(mainWindow!, {
+      type: 'warning',
+      title: zh ? '新建空数据库' : 'Start with a new database',
+      message: zh
+        ? '这会先再次完整备份现有数据库，然后让 CodePilot 创建一个空数据库。'
+        : 'CodePilot will make another complete backup, then create an empty database.',
+      detail: zh
+        ? '原聊天、服务商和设置不会导入空数据库，但会保留在时间戳备份中。只有备份校验成功后才会继续。'
+        : 'Existing chats, providers and settings will not be imported into the empty database, but remain in the timestamped backup. This continues only after the backup is verified.',
+      buttons: [zh ? '取消' : 'Cancel', zh ? '备份并新建' : 'Back up and start fresh'],
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true,
+    });
+    if (confirmation.response !== 1) return false;
+    const databasePath = path.join(codePilotDataDir, 'codepilot.db');
+    const result = prepareFreshDatabase(databasePath);
+    if (result.status !== 'complete') {
+      dialog.showErrorBox(
+        zh ? '无法安全新建数据库' : 'Could not safely create a new database',
+        zh
+          ? '完整备份未能验证。CodePilot 不会继续。请打开备份目录手工恢复。'
+          : 'A complete backup could not be verified. CodePilot will not continue. Open the backup folder for manual recovery.',
+      );
+      return false;
+    }
+    isQuitting = true;
+    serverLifecyclePhase = 'quitting';
+    app.relaunch();
+    app.quit();
+    return true;
+  });
+  ipcMain.handle('server-recovery:keep-restored-database', (event) => {
+    if (
+      !isTrustedServerRecoverySender(event)
+      || lastServerRecoveryPageState !== 'database-fresh-start-conflict'
+    ) return false;
+    const databasePath = path.join(codePilotDataDir, 'codepilot.db');
+    try {
+      cancelFreshDatabaseIntent(databasePath);
+      return retryServerRecoveryFromUser();
+    } catch {
+      return false;
+    }
+  });
+  ipcMain.handle('server-recovery:continue-fresh-database', async (event) => {
+    if (
+      !isTrustedServerRecoverySender(event)
+      || lastServerRecoveryPageState !== 'database-fresh-start-conflict'
+    ) return false;
+    const zh = serverRecoveryLocale().toLowerCase().startsWith('zh');
+    const confirmation = await dialog.showMessageBox(mainWindow!, {
+      type: 'warning',
+      title: zh ? '继续新建空数据库' : 'Continue with an empty database',
+      message: zh
+        ? '当前数据库文件是在上次确认新建空库后出现的。继续会删除这些当前文件。'
+        : 'The current database files appeared after the previous empty-database confirmation. Continuing will delete these current files.',
+      detail: zh
+        ? 'CodePilot 会先重新校验上次生成的完整备份；备份缺失或被修改时不会删除任何文件。'
+        : 'CodePilot will first re-verify the complete backup from the prior confirmation. Nothing is deleted if that backup is missing or changed.',
+      buttons: [zh ? '取消' : 'Cancel', zh ? '校验备份并继续' : 'Verify backup and continue'],
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true,
+    });
+    if (confirmation.response !== 1) return false;
+    const databasePath = path.join(codePilotDataDir, 'codepilot.db');
+    try {
+      continueFreshDatabaseIntent(databasePath);
+      return retryServerRecoveryFromUser();
+    } catch {
+      dialog.showErrorBox(
+        zh ? '无法安全继续' : 'Could not continue safely',
+        zh
+          ? '上次的完整备份无法重新校验。当前数据库文件没有被删除。'
+          : 'The prior complete backup could not be re-verified. The current database files were not deleted.',
+      );
+      return false;
+    }
   });
 
   try {
@@ -3198,8 +3483,23 @@ app.whenReady().then(async () => {
     }
 
     startNativeDeliveryService();
+    initializeAutoUpdaterForWindow();
 
   } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const databaseBlock = parseDatabaseStartupBlock(message);
+    if (databaseBlock) {
+      console.warn(`[database-recovery] code=${databaseBlock.code} preservation=${databaseBlock.preservation}`);
+      serverPort = null;
+      serverSupervisor.markFailed();
+      serverLifecyclePhase = 'recovering';
+      showServerRecoveryPage(
+        databaseBlock.pageState,
+        0,
+        `${databaseBlock.code}:${databaseBlock.preservation}`,
+      );
+      return;
+    }
     console.error('Failed to start:', err);
     dialog.showErrorBox(
       'CodePilot - Failed to Start',
@@ -3252,6 +3552,7 @@ app.on('activate', async () => {
       serverSupervisor.markHealthy();
       serverLifecyclePhase = 'running';
       startNativeDeliveryService();
+      initializeAutoUpdaterForWindow();
       if (mainWindow) {
         mainWindow.loadURL(`http://127.0.0.1:${port}`);
       }
@@ -3269,15 +3570,26 @@ app.on('activate', async () => {
   }
 });
 
+// electron-updater closes windows before Electron emits app.before-quit.
+// Raise the lifecycle fence on the updater-specific event so the resident
+// close handler cannot convert installation into a hidden-window no-op.
+nativeAutoUpdater.on('before-quit-for-update', () => {
+  updaterInstallLifecycleArmed = true;
+  isQuitting = true;
+  serverLifecyclePhase = 'quitting';
+});
+
 app.on('before-quit', async (e) => {
   // First firing: tear down resources, then re-emit quit. Any subsequent
   // firing (after we re-call app.quit() below) just proceeds to exit. The
   // `isQuitting` flag also tells the main window's `close` handler to let
   // the close go through instead of hiding.
+  appQuitTeardownStarted = true;
   isQuitting = true;
   serverLifecyclePhase = 'quitting';
   serverSupervisor.markStopped();
   stopNativeDeliveryService();
+  disposeAutoUpdaterTimers();
 
   // Kill all terminal processes
   terminalManager.killAll();

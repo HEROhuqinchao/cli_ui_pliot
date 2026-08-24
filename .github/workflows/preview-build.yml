@@ -3,8 +3,8 @@ name: Preview Build (manual · artifacts only · no release)
 # Manual-only branch-preview packaging.
 #
 # WHY a separate workflow (not build.yml): build.yml is the STABLE release flow
-# — it triggers on pushed tags and has `contents: write` to create GitHub
-# Releases. Preview builds must NEVER create a Release, push a tag, or feed the
+# — it triggers on pushed tags and grants `contents: write` only to its Release
+# job. Preview builds must NEVER create a Release, push a tag, or feed the
 # stable auto-update channel. They only UPLOAD workflow artifacts (installer +
 # SHA + commit + version check + native ABI check + logs) so every preview
 # package is traceable to a CI run instead of one developer's local machine.
@@ -18,8 +18,9 @@ name: Preview Build (manual · artifacts only · no release)
 #     local build failed exactly because extraMetadata only stamped Electron
 #     metadata while package.json stayed 0.53.0 (app showed 0.53, Codex
 #     clientInfo + NEXT_PUBLIC_APP_VERSION disagreed).
-#   - macOS = arm64 ONLY (user decision; no Intel real machine to smoke, and
-#     cross-building x64 on arm64 pollutes better-sqlite3 ABI).
+#   - macOS publishes native arm64/x64 manual installers plus one universal
+#     updater ZIP. The runner-native arm64 app receives the ABI smoke; Intel
+#     execution remains a separate real-machine gate.
 #   - Windows = x64 ONLY, built on windows-latest (native .node cannot be
 #     cross-compiled from macOS — preview-build-readiness Phase 2 实现路径 5).
 
@@ -32,14 +33,14 @@ on:
         default: "0.55.0-preview.3"
         type: string
       build_macos_arm64:
-        description: "Build macOS arm64 (Apple Silicon)"
+        description: "Build macOS arm64 + x64 + universal updater"
         required: true
         default: true
         type: boolean
       build_windows_x64:
-        description: "Build Windows x64"
+        description: "Build signed Windows x64 artifact (requires Windows signer; never released)"
         required: true
-        default: true
+        default: false
         type: boolean
       commit_sha:
         description: "Commit to build (blank = the ref this workflow runs on)"
@@ -198,9 +199,10 @@ jobs:
           retention-days: 7
 
   # --------------------------------------------------------------------------
-  # macOS arm64 installer
+  # macOS arm64/x64 installers + universal updater asset
   # --------------------------------------------------------------------------
   build-macos-arm64:
+    name: Build macOS arm64 + x64 + universal updater
     needs: [validate-inputs, verify-source]
     if: ${{ inputs.build_macos_arm64 }}
     # Pinned explicit Apple Silicon runner — NOT floating `macos-latest`, which
@@ -226,34 +228,81 @@ jobs:
       - run: npm ci
       - name: Patch version (single source — NOT extraMetadata)
         run: npm version "${{ inputs.preview_version }}" --no-git-tag-version --allow-same-version
-      - name: Build + package (arm64 only, no publish)
-        timeout-minutes: 25
+
+      - name: Configure fail-closed Apple notarization credentials
         env:
+          APPLE_NOTARIZATION_KEY_BASE64: ${{ secrets.APPLE_NOTARIZATION_KEY_BASE64 }}
+          NOTARY_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          NOTARY_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          set -euo pipefail
+          [ -n "$APPLE_NOTARIZATION_KEY_BASE64" ] || { echo "::error::APPLE_NOTARIZATION_KEY_BASE64 is required"; exit 1; }
+          [ -n "$NOTARY_KEY_ID" ] || { echo "::error::APPLE_API_KEY_ID is required"; exit 1; }
+          [ -n "$NOTARY_ISSUER" ] || { echo "::error::APPLE_API_ISSUER is required"; exit 1; }
+          KEY_PATH="$RUNNER_TEMP/AuthKey_CodePilot.p8"
+          printf '%s' "$APPLE_NOTARIZATION_KEY_BASE64" | base64 --decode > "$KEY_PATH"
+          chmod 600 "$KEY_PATH"
+          echo "APPLE_API_KEY=$KEY_PATH" >> "$GITHUB_ENV"
+          echo "APPLE_API_KEY_ID=$NOTARY_KEY_ID" >> "$GITHUB_ENV"
+          echo "APPLE_API_ISSUER=$NOTARY_ISSUER" >> "$GITHUB_ENV"
+
+      - name: Build macOS preview bundles
+        timeout-minutes: 30
+        env:
+          CODEPILOT_APP_CHANNEL: preview
+          CODEPILOT_OFFICIAL_UPDATE_BUILD: "1"
+        run: npm run electron:build
+
+      - name: Package native macOS preview assets (arm64 + x64)
+        timeout-minutes: 45
+        env:
+          CODEPILOT_APP_CHANNEL: preview
+          CODEPILOT_OFFICIAL_UPDATE_BUILD: "1"
           CSC_LINK: ${{ secrets.MAC_CERT_P12_BASE64 }}
           CSC_KEY_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
           CODEPILOT_APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           CODEPILOT_REQUIRE_DEVELOPER_ID: "1"
         run: |
-          npm run electron:build
-          npx electron-builder --mac --arm64 --config electron-builder.yml --publish never
+          npx electron-builder --mac --arm64 --x64 --config electron-builder.yml -c.publish.channel=preview --publish never
+
+      - name: Package universal macOS preview updater
+        timeout-minutes: 45
+        env:
+          CODEPILOT_APP_CHANNEL: preview
+          CODEPILOT_OFFICIAL_UPDATE_BUILD: "1"
+          CSC_LINK: ${{ secrets.MAC_CERT_P12_BASE64 }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+          CODEPILOT_APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          CODEPILOT_REQUIRE_DEVELOPER_ID: "1"
+        run: npx electron-builder --mac --universal --config electron-builder.yml -c.publish.channel=preview --publish never
+
+      - name: Notarize and staple preview DMG
+        timeout-minutes: 45
+        env:
+          CODEPILOT_APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: node scripts/notarize-macos-dmgs.mjs release 3
+
       - name: Verify packaged version == input (filename + Info.plist)
         env:
           CODEPILOT_APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
-          DMG=$(find release -name "CodePilot-*-arm64.dmg" | head -1)
-          echo "DMG=$DMG" | tee -a build-meta-macos-arm64.txt
-          [ -n "$DMG" ] || { echo "::error::no arm64 DMG produced"; exit 1; }
-          case "$DMG" in *"${{ inputs.preview_version }}"*) ;; *) echo "::error::DMG name lacks ${{ inputs.preview_version }}"; exit 1 ;; esac
-          APP=$(find release -maxdepth 4 -name "CodePilot.app" -type d | head -1)
-          node scripts/verify-macos-developer-id.mjs release 1
+          for ARCH in arm64 x64; do
+            DMG=$(find release -name "CodePilot-*-${ARCH}.dmg" | head -1)
+            echo "DMG_${ARCH}=$DMG" | tee -a build-meta-macos-arm64.txt
+            [ -n "$DMG" ] || { echo "::error::no ${ARCH} DMG produced"; exit 1; }
+            case "$DMG" in *"${{ inputs.preview_version }}"*) ;; *) echo "::error::${ARCH} DMG name lacks ${{ inputs.preview_version }}"; exit 1 ;; esac
+          done
+          APP=$(find release -maxdepth 4 -path "*mac-arm64*" -name "CodePilot.app" -type d | head -1)
+          node scripts/verify-macos-developer-id.mjs release 3
+          node scripts/verify-macos-notarization.mjs release 3
           PLIST_VER=$(plutil -extract CFBundleShortVersionString raw "$APP/Contents/Info.plist")
           echo "Info.plist CFBundleShortVersionString=$PLIST_VER" | tee -a build-meta-macos-arm64.txt
           [ "$PLIST_VER" = "${{ inputs.preview_version }}" ] || { echo "::error::Info.plist $PLIST_VER != ${{ inputs.preview_version }}"; exit 1; }
       - name: Verify native module ABI (better-sqlite3 loads under packaged Electron)
         run: |
           set -euo pipefail
-          APP=$(find release -maxdepth 4 -name "CodePilot.app" -type d | head -1)
+          APP=$(find release -maxdepth 4 -path "*mac-arm64*" -name "CodePilot.app" -type d | head -1)
           BIN="$APP/Contents/MacOS/CodePilot"
           SQLITE=$(find "$APP/Contents/Resources" -path "*better-sqlite3*" -name "*.node" | head -1)
           echo "better-sqlite3=$SQLITE" | tee -a build-meta-macos-arm64.txt
@@ -262,17 +311,23 @@ jobs:
       - name: Verify packaged server startup
         run: |
           set -euo pipefail
-          APP=$(find release -maxdepth 4 -name "CodePilot.app" -type d | head -1)
+          APP=$(find release -maxdepth 4 -path "*mac-arm64*" -name "CodePilot.app" -type d | head -1)
           node scripts/verify-packaged-server.mjs "$APP/Contents/MacOS/CodePilot" "$APP/Contents/Resources"
+          node scripts/verify-electron-main-health.mjs "$APP/Contents/MacOS/CodePilot"
       - name: Checksums
-        run: cd release && shasum -a 256 CodePilot-*-arm64.dmg CodePilot-*-arm64*.zip 2>/dev/null | tee checksums-macos-arm64.sha256
+        run: |
+          cd release
+          find . -maxdepth 1 -type f \( -name 'CodePilot-*.dmg' -o -name 'CodePilot-*.zip' -o -name '*.blockmap' -o -name 'preview-mac.yml' \) -print0 \
+            | sort -z | xargs -0 shasum -a 256 | tee checksums-macos.sha256
       - uses: actions/upload-artifact@v4
         with:
-          name: preview-macos-arm64
+          name: preview-macos
           path: |
-            release/CodePilot-*-arm64.dmg
-            release/CodePilot-*-arm64*.zip
-            release/checksums-macos-arm64.sha256
+            release/CodePilot-*.dmg
+            release/CodePilot-*.zip
+            release/CodePilot-*.blockmap
+            release/preview-mac.yml
+            release/checksums-macos.sha256
             build-meta-macos-arm64.txt
           retention-days: 7
 
@@ -302,11 +357,32 @@ jobs:
       - run: npm ci
       - name: Patch version (single source — NOT extraMetadata)
         run: npm version "${{ inputs.preview_version }}" --no-git-tag-version --allow-same-version
+
+      - name: Configure fail-closed Windows signing credentials
+        shell: pwsh
+        env:
+          WINDOWS_CERT_PFX_BASE64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+          WINDOWS_PUBLISHER_SUBJECT: ${{ vars.WINDOWS_PUBLISHER_SUBJECT }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_CERT_PFX_BASE64)) { throw 'WINDOWS_CERT_PFX_BASE64 is required' }
+          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_CERT_PASSWORD)) { throw 'WINDOWS_CERT_PASSWORD is required' }
+          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_PUBLISHER_SUBJECT)) { throw 'WINDOWS_PUBLISHER_SUBJECT repository variable is required' }
+          $certificatePath = Join-Path $env:RUNNER_TEMP 'codepilot-windows-signing.pfx'
+          [IO.File]::WriteAllBytes($certificatePath, [Convert]::FromBase64String($env:WINDOWS_CERT_PFX_BASE64))
+          "WIN_CSC_LINK=$certificatePath" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "CODEPILOT_WINDOWS_PUBLISHER_SUBJECT=$($env:WINDOWS_PUBLISHER_SUBJECT)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
       - name: Build + package (x64 only, no publish)
         timeout-minutes: 30
+        env:
+          CODEPILOT_APP_CHANNEL: preview
+          CODEPILOT_OFFICIAL_UPDATE_BUILD: "0"
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
         run: |
           npm run electron:build
-          npx electron-builder --win --x64 --config electron-builder.yml --publish never
+          npx electron-builder --win --x64 --config electron-builder.yml -c.publish.channel=preview --publish never
       - name: Verify packaged version == input (installer filename)
         shell: bash
         run: |
@@ -330,14 +406,25 @@ jobs:
           set -euo pipefail
           BIN=$(find release/win-unpacked -maxdepth 1 -name "CodePilot.exe" | head -1)
           node scripts/verify-packaged-server.mjs "$BIN" "$(dirname "$BIN")/resources"
+          node scripts/verify-electron-main-health.mjs "$BIN"
+
+      - name: Verify Authenticode publisher and RFC3161 timestamp
+        shell: pwsh
+        run: ./scripts/verify-windows-signing.ps1 -ReleaseRoot release -ExpectedSubject $env:CODEPILOT_WINDOWS_PUBLISHER_SUBJECT
+
       - name: Checksums
         shell: bash
-        run: cd release && sha256sum CodePilot.Setup.*.exe 2>/dev/null | tee checksums-windows-x64.sha256
+        run: |
+          cd release
+          find . -maxdepth 1 -type f \( -name 'CodePilot.Setup.*.exe' -o -name 'CodePilot.Setup.*.exe.blockmap' -o -name 'preview.yml' \) -print0 \
+            | sort -z | xargs -0 sha256sum | tee checksums-windows-x64.sha256
       - uses: actions/upload-artifact@v4
         with:
           name: preview-windows-x64
           path: |
             release/CodePilot.Setup.*.exe
+            release/CodePilot.Setup.*.exe.blockmap
+            release/preview.yml
             release/checksums-windows-x64.sha256
             build-meta-windows-x64.txt
           retention-days: 7

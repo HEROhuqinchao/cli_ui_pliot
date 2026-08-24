@@ -39,14 +39,28 @@ import {
 import type { TitleOrigin } from './conversation-title';
 import { normalizePermissionProfile, type SessionPermissionProfile } from './permission/profile';
 import type { DelegatedAgentResult, SubagentStatusError } from './subagent-status';
+import {
+  isLegacyCatalogModelRow,
+  type LocalCatalogIdentityRow,
+} from './catalog-model-identity';
+import { blockDatabaseBootstrap, verifyDatabaseBeforeBootstrap } from './database-integrity';
+import {
+  clearFreshDatabaseIntent,
+  DatabaseStartupError,
+  enforceFreshDatabaseIntent,
+  classifyDatabaseStartupCode,
+  formatDatabaseStartupDiagnostic,
+} from './database-recovery';
+import { resolveCodePilotDataDir } from './codepilot-data-dir';
 
-const dataDir = process.env.CLAUDE_GUI_DATA_DIR || path.join(os.homedir(), '.codepilot');
+const dataDir = resolveCodePilotDataDir();
 const DB_PATH = path.join(dataDir, 'codepilot.db');
 
 interface DatabaseProcessState {
   db: Database.Database | null;
   schemaRevision?: string;
   runtimeOwnerToken?: string;
+  startupError?: DatabaseStartupError;
 }
 
 interface RuntimeOwnerRecord {
@@ -125,6 +139,7 @@ function withMigrationLock(dbInstance: Database.Database, fn: (db: Database.Data
 
 export function getDb(): Database.Database {
   const state = getDatabaseProcessState();
+  if (state.startupError) throw state.startupError;
   let openedDatabase = false;
   if (!state.db) {
     const dir = path.dirname(DB_PATH);
@@ -132,16 +147,27 @@ export function getDb(): Database.Database {
       fs.mkdirSync(dir, { recursive: true });
     }
 
+    // A user-confirmed fresh start is durable across relaunch. Consume it
+    // before looking at old paths so an old/corrupt legacy DB cannot be copied
+    // back and recreate a blocked → fresh → copy → blocked loop.
+    let freshStartIntent = false;
+    try {
+      freshStartIntent = enforceFreshDatabaseIntent(DB_PATH);
+    } catch (error) {
+      if (error instanceof DatabaseStartupError) throw error;
+      throw new DatabaseStartupError(classifyDatabaseStartupCode(error), 'not_attempted');
+    }
+
     // Migrate from old locations if the new DB doesn't exist yet.
     //
     // CODEPILOT_DISABLE_DB_MIGRATION_IN_TESTS (set by the unit-test
-    // db-isolation setup, never in prod) skips this copy entirely. Without
-    // it, any fresh temp dataDir — including one a test re-points to in its
-    // own beforeEach without pre-touching an empty codepilot.db — would copy
-    // the user's REAL ~/Library/.../codepilot.db into /tmp, leaking real data
-    // and coupling the test to real contents. This is the worker-wide backstop
-    // (the setup's empty-file pre-touch only covers the initial dir).
-    if (!fs.existsSync(DB_PATH) && process.env.CODEPILOT_DISABLE_DB_MIGRATION_IN_TESTS !== '1') {
+    // db-isolation setup, never in prod) skips this copy entirely. This is an
+    // independent worker-wide backstop for tests that deliberately re-point
+    // the data directory after setup: an empty test root must remain a fresh
+    // install, not trigger a copy from the user's real legacy database.
+    if (!fs.existsSync(DB_PATH)
+      && !freshStartIntent
+      && process.env.CODEPILOT_DISABLE_DB_MIGRATION_IN_TESTS !== '1') {
       const home = os.homedir();
       const oldPaths = [
         // Old Electron userData paths (app.getPath('userData'))
@@ -170,11 +196,25 @@ export function getDb(): Database.Database {
       }
     }
 
-    state.db = new Database(DB_PATH);
-    state.db.pragma('journal_mode = WAL');
-    state.db.pragma('busy_timeout = 5000');
-    state.db.pragma('foreign_keys = ON');
-    openedDatabase = true;
+    try {
+      if (fs.existsSync(DB_PATH)) verifyDatabaseBeforeBootstrap(DB_PATH);
+      state.db = new Database(DB_PATH);
+      state.db.pragma('journal_mode = WAL');
+      state.db.pragma('busy_timeout = 5000');
+      state.db.pragma('foreign_keys = ON');
+      openedDatabase = true;
+      if (freshStartIntent) clearFreshDatabaseIntent(DB_PATH);
+    } catch (error) {
+      try { state.db?.close(); } catch { /* failed bootstrap */ }
+      state.db = null;
+      const startupError = error instanceof DatabaseStartupError
+        ? error
+        : blockDatabaseBootstrap(DB_PATH, error);
+      // A bounded transient lock is retryable inside this utility process;
+      // every other startup block remains stable until process restart.
+      if (startupError.code !== 'database_busy') state.startupError = startupError;
+      throw startupError;
+    }
   }
 
   // A live dev process can keep an older global database handle across HMR.
@@ -182,11 +222,39 @@ export function getDb(): Database.Database {
   // changes; runtime recovery remains tied to opening/owning the process and
   // must not run merely because a route module was hot-reloaded.
   if (openedDatabase || state.schemaRevision !== DATABASE_SCHEMA_REVISION) {
-    withMigrationLock(state.db, initDb);
-    state.schemaRevision = DATABASE_SCHEMA_REVISION;
+    try {
+      withMigrationLock(state.db, initDb);
+      state.schemaRevision = DATABASE_SCHEMA_REVISION;
+    } catch (error) {
+      console.error(formatDatabaseStartupDiagnostic('migration', error));
+      try { state.db.close(); } catch { /* migration failed */ }
+      state.db = null;
+      state.schemaRevision = undefined;
+      const classified = classifyDatabaseStartupCode(error);
+      const startupError = new DatabaseStartupError(
+        classified === 'database_busy' ? 'database_busy' : 'database_migration_failed',
+        'not_attempted',
+      );
+      if (startupError.code !== 'database_busy') state.startupError = startupError;
+      throw startupError;
+    }
   }
   if (openedDatabase) {
-    runRuntimeStartupRecoveryOnce(state.db);
+    try {
+      runRuntimeStartupRecoveryOnce(state.db);
+    } catch (error) {
+      console.error(formatDatabaseStartupDiagnostic('runtime_recovery', error));
+      try { state.db.close(); } catch { /* runtime recovery failed */ }
+      state.db = null;
+      state.schemaRevision = undefined;
+      const classified = classifyDatabaseStartupCode(error);
+      const startupError = new DatabaseStartupError(
+        classified === 'database_busy' ? 'database_busy' : 'database_runtime_recovery_failed',
+        'not_attempted',
+      );
+      if (startupError.code !== 'database_busy') state.startupError = startupError;
+      throw startupError;
+    }
   }
   return state.db;
 }
@@ -1890,6 +1958,26 @@ export function getActiveSessions(): ChatSession[] {
   return db.prepare(
     "SELECT * FROM chat_sessions WHERE runtime_status IN ('running', 'waiting_permission') ORDER BY runtime_updated_at DESC"
   ).all() as ChatSession[];
+}
+
+/**
+ * Updater safety fact: an active-looking status is live only while the same
+ * session also has a non-expired runtime owner. A process crash can leave an
+ * active runtime_status behind; treating that residue as permanent work would
+ * make installation impossible until another startup repair writes it.
+ */
+export function hasActiveSessionWork(now: Date = new Date()): boolean {
+  const db = getDb();
+  const current = now.toISOString().replace('T', ' ').split('.')[0];
+  const row = db.prepare(`
+    SELECT 1
+    FROM chat_sessions AS sessions
+    INNER JOIN session_runtime_locks AS locks ON locks.session_id = sessions.id
+    WHERE sessions.runtime_status IN ('running', 'streaming', 'waiting_permission')
+      AND locks.expires_at >= ?
+    LIMIT 1
+  `).get(current);
+  return !!row;
 }
 
 export function getSession(id: string): ChatSession | undefined {
@@ -4065,6 +4153,7 @@ type CatalogSyncModel = {
   upstreamModelId?: string;
   displayName: string;
   capabilities?: Record<string, unknown> | undefined;
+  legacyFingerprints?: import('./catalog-model-identity').CatalogModelLegacyFingerprint[];
 };
 
 /**
@@ -4323,22 +4412,15 @@ export function mergeCatalogManagedModels(
 
   const db = getDb();
   const rows = db.prepare(
-    `SELECT model_id, upstream_model_id, display_name, capabilities_json,
-            sort_order, source, user_edited, enable_source
+    `SELECT id, model_id, upstream_model_id, display_name, capabilities_json,
+            sort_order, enabled, source, user_edited, enable_source
      FROM provider_models
      WHERE provider_id = ?`,
-  ).all(providerId) as Array<{
-    model_id: string;
-    upstream_model_id: string;
-    display_name: string;
-    capabilities_json: string | null;
+  ).all(providerId) as Array<LocalCatalogIdentityRow & {
+    id: string;
     sort_order: number;
-    source: import('@/types').ProviderModelSource;
-    user_edited: number;
-    enable_source: import('@/types').ModelEnableSource;
   }>;
   const rowsById = new Map(rows.map(row => [row.model_id, row]));
-  const rowsByUpstream = new Map(rows.map(row => [row.upstream_model_id, row]));
   const now = new Date().toISOString().replace('T', ' ').split('.')[0];
   const insertStmt = db.prepare(
     `INSERT OR IGNORE INTO provider_models (id, provider_id, model_id, upstream_model_id, display_name, capabilities_json, variants_json, sort_order, enabled, created_at, source, last_refreshed_at, user_edited, enable_source)
@@ -4356,19 +4438,36 @@ export function mergeCatalogManagedModels(
        AND source = 'catalog' AND user_edited = 0
        AND enable_source NOT IN ('manual_enabled', 'manual_hidden')`,
   );
+  const updateLegacyStmt = db.prepare(
+    `UPDATE provider_models
+     SET upstream_model_id = ?, display_name = ?,
+         capabilities_json = COALESCE(?, capabilities_json), sort_order = ?,
+         source = 'catalog', enable_source = 'catalog'
+     WHERE id = ? AND provider_id = ? AND model_id = ?
+       AND upstream_model_id = ? AND display_name = ?
+       AND capabilities_json IS ?
+       AND user_edited = 0
+       AND enable_source NOT IN ('manual_enabled', 'manual_hidden')`,
+  );
 
   const isCatalogManaged = (row: (typeof rows)[number]) => row.source === 'catalog'
     && row.user_edited === 0
     && row.enable_source !== 'manual_enabled'
     && row.enable_source !== 'manual_hidden';
+  const isMergeManaged = (row: (typeof rows)[number], model: CatalogSyncModel) =>
+    isCatalogManaged(row) || isLegacyCatalogModelRow(row, model);
 
   // Catalog rows are movable, but every row outside that narrow ownership
   // boundary keeps its exact order. Allocate around those reserved slots so
   // adding a new catalog SKU never ties a user-pinned/manual row.
   const catalogIds = new Set(catalogModels.map(model => model.modelId));
+  const catalogById = new Map(catalogModels.map(model => [model.modelId, model]));
   const movableCatalogIds = new Set(
     rows
-      .filter(row => catalogIds.has(row.model_id) && isCatalogManaged(row))
+      .filter(row => {
+        const model = catalogById.get(row.model_id);
+        return catalogIds.has(row.model_id) && !!model && isMergeManaged(row, model);
+      })
       .map(row => row.model_id),
   );
   const reservedSortOrders = new Set(
@@ -4377,21 +4476,42 @@ export function mergeCatalogManagedModels(
       .map(row => row.sort_order),
   );
   const claimedModelIds = new Set<string>();
-  const claimedUpstreamIds = new Set(rowsByUpstream.keys());
+  const claimedUpstreamCounts = new Map<string, number>();
+  for (const row of rows) {
+    claimedUpstreamCounts.set(
+      row.upstream_model_id,
+      (claimedUpstreamCounts.get(row.upstream_model_id) ?? 0) + 1,
+    );
+  }
+  const isUpstreamClaimed = (upstreamModelId: string) =>
+    (claimedUpstreamCounts.get(upstreamModelId) ?? 0) > 0;
+  const releaseUpstream = (upstreamModelId: string) => {
+    const next = (claimedUpstreamCounts.get(upstreamModelId) ?? 0) - 1;
+    if (next <= 0) claimedUpstreamCounts.delete(upstreamModelId);
+    else claimedUpstreamCounts.set(upstreamModelId, next);
+  };
+  const claimUpstream = (upstreamModelId: string) => {
+    claimedUpstreamCounts.set(upstreamModelId, (claimedUpstreamCounts.get(upstreamModelId) ?? 0) + 1);
+  };
   const targetSortOrders = new Map<string, number>();
   catalogModels.forEach((model, index) => {
     if (claimedModelIds.has(model.modelId)) return;
     const upstreamModelId = model.upstreamModelId || model.modelId;
     const existing = rowsById.get(model.modelId);
-    if (existing && !isCatalogManaged(existing)) return;
-    if (!existing && claimedUpstreamIds.has(upstreamModelId)) return;
+    if (existing && !isMergeManaged(existing, model)) return;
+    if (existing && existing.upstream_model_id !== upstreamModelId && isUpstreamClaimed(upstreamModelId)) return;
+    if (!existing && isUpstreamClaimed(upstreamModelId)) return;
+
+    if (existing && existing.upstream_model_id !== upstreamModelId) {
+      releaseUpstream(existing.upstream_model_id);
+    }
 
     let targetSortOrder = index;
     while (reservedSortOrders.has(targetSortOrder)) targetSortOrder++;
     targetSortOrders.set(model.modelId, targetSortOrder);
     reservedSortOrders.add(targetSortOrder);
     claimedModelIds.add(model.modelId);
-    claimedUpstreamIds.add(upstreamModelId);
+    if (!existing || existing.upstream_model_id !== upstreamModelId) claimUpstream(upstreamModelId);
   });
 
   let inserted = 0;
@@ -4435,6 +4555,23 @@ export function mergeCatalogManagedModels(
         && existing.sort_order === targetSortOrder
         && (capabilitiesJson === null || existing.capabilities_json === capabilitiesJson);
       if (fieldsAlreadyMatch) return;
+
+      if (isLegacyCatalogModelRow(existing, model)) {
+        const result = updateLegacyStmt.run(
+          upstreamModelId,
+          displayName,
+          capabilitiesJson,
+          targetSortOrder,
+          existing.id,
+          providerId,
+          model.modelId,
+          existing.upstream_model_id,
+          existing.display_name,
+          existing.capabilities_json,
+        );
+        updated += result.changes;
+        return;
+      }
 
       const result = updateStmt.run(
         upstreamModelId,

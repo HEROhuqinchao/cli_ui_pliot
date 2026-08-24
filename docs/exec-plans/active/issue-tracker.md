@@ -1,7 +1,7 @@
 # Issue Tracker — 统一问题跟踪
 
 > 创建时间：2026-04-13
-> 最后更新：2026-08-16（v0.67.1 GLM-5.3 模型管理热修已发布；CI 全绿，stable Release 12 assets uploaded）
+> 最后更新：2026-08-24（GLM gen-0 legacy identity 与 DB recovery 收口完成；正式凭据/真实升级尚未发布验证）
 > 合并自：`open-issues-2026-03-12.md` + `v0.48-post-release-issues.md` + GitHub Issues 最新盘点
 
 **AI 须知：**
@@ -207,13 +207,19 @@ GitHub milestone `v0.56.x Stability / Trust`（#1）+ P0/P1 label 体系已建�
 - **下一步:** 用可控 provider/凭据跑 active-turn interruption、历史 route/文件树恢复；跑 fresh/history 15 分钟和长任务 60 分钟内存曲线；下一 stable 核验 utility fatal event 的脱敏/分组和 Graphite/utility crash cohort。条件允许时在受影响机器执行经批准的 profile/heap/network A/B。未获外部分发/机器 A/B 授权时继续只做本地/合成验证。
 
 #### B-031 GLM-5.3 显示已添加但模型管理仍停在 5.2
-- **状态:** 🟢 v0.67.1 hotfix Shipped + Code complete + Tests pass + Build pass + isolated UI smoke passed；修复后 Claude 复审未重跑
+- **状态:** 🟡 2026-08-23 候选修复 Code/Tests/Build 已完成；production 用户路径保持打开，直到受影响 0.67.1 用户 smoke
+- **重开计划:** [v0.67.1 生产反馈闭环 × 全平台签名与自动更新](v0.67.1-production-feedback-signing-auto-update-2026-08-23.md)
 - **现象:** v0.67.0 用户在 GLM (CN) 的 Add Model 看到 GLM-5.3“已添加”，但 Models 列表仍只有旧 GLM-5.2，composer 也没有可选的 5.3 行。
-- **根因:** Runtime/final picker 有当前 catalog 的只读 enrichment，但 per-provider Models GET 只在空表 seed，已有 SQLite 快照不升级；Add Model 又把 stable alias 与 wire id 混作一个“已添加”布尔值。初版热修复审还发现并发 INSERT、同 upstream 双行、hidden 候选无恢复动作，以及 catalog 重加被降级成 manual 空能力行。
+- **2026-08-23 新 Signal:** 用户明确已升级 `0.67.1`；截图中 GLM-5.3 仍显示“已添加”，Models/模型选择仍找不到，旧 GLM-5-Turbo 继续存在。该证据打回真实 legacy upgrade path；不是“尚未升级”或“仅 UI 未刷新”可以解释。
+- **2026-08-24 候选修复:** 新增 catalog `legacyFingerprints` 与五态 presence（current enabled/hidden、legacy upgrade、identity conflict、missing）；从已发布 git 历史补齐真实 sonnet→`sonnet` 的 gen-0 `GLM-4.7`、后续 `GLM-5-Turbo`/`GLM-5.2`，以及 haiku→`haiku` 的 `GLM-4.5-Air` 槽位，删除无历史来源的 sonnet→`glm-5-turbo` 猜测。只有 upstream/display/capabilities 完整吻合且无用户所有权信号的历史系统行才 compare-and-swap 升级。upstream 占用或歧义 fail-closed，不 delete/disable/覆盖用户行。2026-08-24 修复轮 review 曾证明首版遗漏 gen-0；计划先回退为“部分”，补齐 git 证据、三行 fixture 与 conflict 行为断言后才恢复为 Code complete。
+- **已确认的 0.67.0 根因:** Runtime/final picker 有当前 catalog 的只读 enrichment，但 per-provider Models GET 只在空表 seed，已有 SQLite 快照不升级；Add Model 又把 stable alias 与 wire id 混作一个“已添加”布尔值。初版热修复审还发现并发 INSERT、同 upstream 双行、hidden 候选无恢复动作，以及 catalog 重加被降级成 manual 空能力行。
+- **已确认机制 / 未确认用户行形:** `search-models.getPresence()` 会因 stable `model_id=sonnet` 命中旧 wire 而把 5.3 判“已添加”；旧 merge 又可能因 ownership/identity 保护不升级，这两条已由源码和历史 fixture 确认。该用户的具体 source/user-edited/enable-source/duplicate 组合仍未读取，必须以脱敏四面对账确认，不能把 fixture 冒充用户 DB。
 - **修复:** catalog-only plan 的 Models GET 执行非破坏 merge；stable/wire identity 分离并双查重；候选区分 enabled/hidden/missing，hidden 可直接重新启用；精确 catalog POST 从服务端目录恢复 display/upstream/capabilities/source/order；冲突插入与用户排序有反例测试。
-- **边界:** 不自动清理历史 user-owned 双行（可能被 session pin），需要未来 preview-first 整理；当前 catalog 项若只想停用应“隐藏”，物理删除后会被目录重新物化。
+- **边界:** 不自动清理历史 user-owned 双行（可能被 session pin），需要未来 preview-first 整理；但 canonical current SKU 已存在时不会因额外旧行整体降级为 conflict。真正 CAS conflict 会返回 model ids，Add Dialog 展示解释与 Models 恢复入口。当前 catalog 项若只想停用应“隐藏”，物理删除后会被目录重新物化。
 - **验证:** 定向 210/210；标准全量 5257 pass / 0 fail / 1 skipped（5258 tests）；production build 136 pages；隔离 UI 已验证 `glm-5.3[1m]` 搜索、hidden 恢复、3/3 列表刷新与正确 stable/wire 映射，控制台无 warning/error，真实用户 DB 未写入。
 - **发布:** v0.67.1（commit `634a0dc7`；CI `31898968564` 全绿；stable Release 12 assets uploaded）
+- **重新关闭门禁:** 必须增加受影响/历史真实 row shape 的 failing-then-passing fixture，Models/Search/Runtime/Composer 四面一致，并由至少一名受影响 0.67.1 用户完成候选版本升级 smoke；isolated pristine fixture 不再足以关闭。
+- **当前验证:** gen-0 与后续两组完整三行 published-history fixture 验证 sonnet/haiku 原位升级、各世代非目标 opus 保留；五态/conflict recovery、真实 `identity_conflict` fail-closed 断言与四面合同通过。2026-08-24 收口定向 49/49；标准全量与 build 数字见关联计划最新 Smoke Ledger。真实用户 DB 未写入，最后一条 production smoke 仍待跑。
 
 ---
 
@@ -438,7 +444,7 @@ GitHub milestone `v0.56.x Stability / Trust`（#1）+ P0/P1 label 体系已建�
 | [#459](https://github.com/op7418/CodePilot/issues/459) | 左侧 UI 采用 Codex 文案风格 | 📋 待评估 | |
 | [#458](https://github.com/op7418/CodePilot/issues/458) | 多 OpenAI OAuth 账号 | 📋 待评估 | |
 | [#463](https://github.com/op7418/CodePilot/issues/463) | 代码界面可编辑 + 语法高亮 | 🔵 设计如此 | Claude Code 理念：AI 写 100% 代码 |
-| [#246](https://github.com/op7418/CodePilot/issues/246) | 应用内自动更新 | 📋 待实现 | 已有 electron-updater 依赖 |
+| [#246](https://github.com/op7418/CodePilot/issues/246) | 应用内自动更新 | 🟡 本地实现/二轮 blocker 修复完成，待正式凭据/RC 升级 | [执行计划](v0.67.1-production-feedback-signing-auto-update-2026-08-23.md)；Main/preload/types/UI、official-build gate、stable/preview metadata、mac ZIP-only updater graph、签名/公证 fail-closed workflow 与全安装包 attestation 已落地；mac close-to-hide 假安装已修。未发布，Apple/Windows 正式 CI 与 RC-A → RC-B 仍待 human gate |
 | FR-auto-permission | 自动权限系统：Claude Code / Codex 已支持自动权限；后续 CodePilot 也应支持根据请求内容自动分析并完成审批 | 📋 待设计 | 用户要求记录：自动权限会自动分析内容并完成审批；需定义安全边界、可审计日志、可关闭开关 |
 | FR-edit-user-message | 对话编辑：用户停止对话后，可点击自己发出的消息，在“复制”旁增加笔形编辑按钮；编辑后直接再次发送 | 📋 待设计 | 目标是避免复制、粘贴到输入框再发送；需考虑消息重放、后续 assistant 消息处理、队列/停止状态 |
 | [#254](https://github.com/op7418/CodePilot/issues/254) | 会话列表待确认状态指示 | 📋 待实现 | |

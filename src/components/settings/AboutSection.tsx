@@ -28,6 +28,7 @@ import { SettingsCard } from "@/components/patterns/SettingsCard";
 import { ImportSessionDialog } from "@/components/layout/ImportSessionDialog";
 import { showToast } from "@/hooks/useToast";
 import type { TranslationKey } from "@/i18n";
+import { releasePlatformLabel } from "@/lib/update-release";
 
 const APP_VERSION = process.env.NEXT_PUBLIC_APP_VERSION || "0.0.0";
 
@@ -122,6 +123,13 @@ export function AboutSection() {
     updateInfo?.isNativeUpdate &&
     !updateInfo.readyToInstall &&
     updateInfo.downloadProgress != null;
+  const nativeUpdateBusy = updateInfo?.nativePhase === "downloading"
+    || updateInfo?.nativePhase === "downloaded"
+    || updateInfo?.nativePhase === "installing";
+  const updateCheckDisabled = checking || nativeUpdateBusy;
+  const updateErrorMessage = updateInfo?.lastErrorCode
+    ? t(`update.error.${updateInfo.lastErrorCode}` as TranslationKey)
+    : updateInfo?.lastError;
 
   /**
    * Phase 2C.6: download a sanitized diagnostic bundle. The /api/doctor/export
@@ -208,9 +216,13 @@ export function AboutSection() {
                 <Button
                   size="sm"
                   variant="outline"
-                  onClick={() => window.open(updateInfo.releaseUrl, "_blank")}
+                  onClick={() => window.open(updateInfo.downloadUrl || updateInfo.releaseUrl, "_blank")}
                 >
-                  {t("settings.viewRelease")}
+                  {updateInfo.platformAssetMissing
+                    ? t("update.viewReleaseDetails")
+                    : updateInfo.downloadAssetName
+                      ? t("update.getRecommendedBuild")
+                      : t("settings.viewRelease")}
                 </Button>
               ) : null
             )}
@@ -218,7 +230,7 @@ export function AboutSection() {
               variant="outline"
               size="sm"
               onClick={checkForUpdates}
-              disabled={checking}
+              disabled={updateCheckDisabled}
               className="gap-2"
             >
               {checking ? (
@@ -226,7 +238,11 @@ export function AboutSection() {
               ) : (
                 <CodePilotIcon name="refresh" size="sm" aria-hidden />
               )}
-              {checking ? t("settings.checking") : t("settings.checkForUpdates")}
+              {checking
+                ? t("settings.checking")
+                : nativeUpdateBusy
+                  ? t("update.checkUnavailableDuringUpdate")
+                  : t("settings.checkForUpdates")}
             </Button>
           </div>
         </div>
@@ -265,10 +281,20 @@ export function AboutSection() {
                     />
                   </div>
                 )}
-                {updateInfo.lastError && (
-                  <p className="text-xs text-status-error-foreground">{updateInfo.lastError}</p>
+                {updateInfo.platformAssetMissing && (
+                  <p className="text-xs text-status-warning-foreground">
+                    {t("update.platformAssetMissing", {
+                      version: updateInfo.latestVersion,
+                      platform: releasePlatformLabel(updateInfo.detectedPlatform),
+                    })}
+                  </p>
+                )}
+                {updateErrorMessage && (
+                  <p className="text-xs text-status-error-foreground">{updateErrorMessage}</p>
                 )}
               </div>
+            ) : updateErrorMessage ? (
+              <p className="text-xs text-status-error-foreground">{updateErrorMessage}</p>
             ) : (
               <p className="text-sm text-muted-foreground">{t("settings.latestVersion")}</p>
             )}

@@ -23,6 +23,8 @@
 import '../db-isolation.setup';
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 import {
   alignEnabledWithCatalog,
   mergeCatalogManagedModels,
@@ -36,6 +38,7 @@ import {
 } from '../../lib/db';
 import { resolveProvider } from '../../lib/provider-resolver';
 import { getCatalogDefaultModelsForRecord as getCatalogDefaultModelsForRecordResolved } from '../../lib/provider-catalog';
+import { classifyCatalogModelPresence } from '../../lib/catalog-model-identity';
 
 const TEST_PROVIDER_PREFIX = '__test_caps_rt_';
 
@@ -76,6 +79,11 @@ function resolvedModel(providerId: string, modelId: string) {
 describe('catalog capabilities survive the DB round-trip — GLM', () => {
   beforeEach(cleanup);
   afterEach(cleanup);
+
+  it('keeps the complete legacy capabilities snapshot in the SQL compare-and-swap', () => {
+    const source = fs.readFileSync(path.resolve(__dirname, '../../lib/db.ts'), 'utf8');
+    assert.match(source, /upstream_model_id = \? AND display_name = \?\s+AND capabilities_json IS \?/);
+  });
 
   it('fresh seed: resolver sees current GLM-5.3 metadata and effort contract', () => {
     const providerId = createScratchProvider(GLM_BASE_URL);
@@ -185,6 +193,238 @@ describe('catalog capabilities survive the DB round-trip — GLM', () => {
     assert.equal(flagship.user_edited, 1);
     assert.equal(flagship.enable_source, 'manual_hidden');
     assert.deepEqual(JSON.parse(flagship.capabilities_json), { private: true });
+  });
+
+  it('upgrades the exact three-row pre-source-migration GLM snapshot without inventing fingerprints', () => {
+    const providerId = createScratchProvider(GLM_BASE_URL);
+    upsertProviderModel({
+      provider_id: providerId,
+      model_id: 'sonnet',
+      upstream_model_id: 'sonnet',
+      display_name: 'GLM-5-Turbo',
+      capabilities_json: '{}',
+      variants_json: '{}',
+      sort_order: 0,
+      enabled: 1,
+      // Old databases received this conservative source backfill even for
+      // rows originally seeded from the built-in catalog.
+      source: 'manual',
+      user_edited: 0,
+      enable_source: 'recommended',
+    });
+    upsertProviderModel({
+      provider_id: providerId,
+      model_id: 'opus',
+      upstream_model_id: 'opus',
+      display_name: 'GLM-5.1',
+      capabilities_json: '{}',
+      variants_json: '{}',
+      sort_order: 1,
+      enabled: 1,
+      source: 'manual',
+      user_edited: 0,
+      enable_source: 'recommended',
+    });
+    upsertProviderModel({
+      provider_id: providerId,
+      model_id: 'haiku',
+      upstream_model_id: 'haiku',
+      display_name: 'GLM-4.5-Air',
+      capabilities_json: '{}',
+      variants_json: '{}',
+      sort_order: 2,
+      enabled: 1,
+      source: 'manual',
+      user_edited: 0,
+      enable_source: 'recommended',
+    });
+
+    const catalog = getCatalogDefaultModelsForRecord({
+      provider_type: 'anthropic',
+      base_url: GLM_BASE_URL,
+    });
+    const result = mergeCatalogManagedModels(providerId, catalog);
+    assert.deepEqual(result, { inserted: 1, updated: 2 });
+
+    const rows = getAllModelsForProvider(providerId);
+    const flagship = rows.find(row => row.model_id === 'sonnet')!;
+    assert.equal(flagship.upstream_model_id, 'glm-5.3[1m]');
+    assert.equal(flagship.display_name, 'GLM-5.3');
+    assert.equal(flagship.source, 'catalog');
+    assert.equal(flagship.enable_source, 'catalog');
+    assert.ok(rows.some(row => row.model_id === 'glm-5-turbo'),
+      'moving the legacy stable slot must release the old Turbo upstream for its current dedicated row');
+    assert.equal(rows.find(row => row.model_id === 'haiku')?.upstream_model_id, 'glm-4.7');
+    assert.equal(rows.find(row => row.model_id === 'haiku')?.display_name, 'GLM-4.7');
+    assert.equal(rows.find(row => row.model_id === 'opus')?.display_name, 'GLM-5.1',
+      'the retired opus slot is historical data and must not be silently deleted or rewritten');
+  });
+
+  it('upgrades the gen-0 GLM-4.7 sonnet slot shipped from 2026-03-09 through 2026-03-28', () => {
+    const providerId = createScratchProvider(GLM_BASE_URL);
+    for (const [modelId, displayName, sortOrder] of [
+      ['sonnet', 'GLM-4.7', 0],
+      ['opus', 'GLM-5', 1],
+      ['haiku', 'GLM-4.5-Air', 2],
+    ] as const) {
+      upsertProviderModel({
+        provider_id: providerId,
+        model_id: modelId,
+        upstream_model_id: modelId,
+        display_name: displayName,
+        capabilities_json: '{}',
+        variants_json: '{}',
+        sort_order: sortOrder,
+        enabled: 1,
+        source: 'manual',
+        user_edited: 0,
+        enable_source: 'recommended',
+      });
+    }
+
+    const catalog = getCatalogDefaultModelsForRecord({
+      provider_type: 'anthropic',
+      base_url: GLM_BASE_URL,
+    });
+    assert.deepEqual(mergeCatalogManagedModels(providerId, catalog), { inserted: 1, updated: 2 });
+
+    const rows = getAllModelsForProvider(providerId);
+    assert.equal(rows.find(row => row.model_id === 'sonnet')?.upstream_model_id, 'glm-5.3[1m]');
+    assert.equal(rows.find(row => row.model_id === 'sonnet')?.display_name, 'GLM-5.3');
+    assert.equal(rows.find(row => row.model_id === 'haiku')?.upstream_model_id, 'glm-4.7');
+    assert.equal(rows.find(row => row.model_id === 'opus')?.display_name, 'GLM-5',
+      'retired gen-0 opus history is preserved rather than guessed into a current slot');
+  });
+
+  it('keeps a canonical current SKU usable when an extra direct-wire row remains', () => {
+    const catalog = getCatalogDefaultModelsForRecord({
+      provider_type: 'anthropic',
+      base_url: GLM_BASE_URL,
+    });
+    const flagship = catalog.find(model => model.modelId === 'sonnet')!;
+    const presence = classifyCatalogModelPresence([
+      {
+        model_id: 'sonnet',
+        upstream_model_id: 'glm-5.3[1m]',
+        display_name: 'GLM-5.3',
+        capabilities_json: '{}',
+        enabled: 1,
+        source: 'catalog',
+        user_edited: 0,
+        enable_source: 'catalog',
+      },
+      {
+        model_id: 'glm-5.3[1m]',
+        upstream_model_id: 'glm-5.3[1m]',
+        display_name: 'Older direct row',
+        capabilities_json: '{}',
+        enabled: 1,
+        source: 'manual',
+        user_edited: 1,
+        enable_source: 'manual_enabled',
+      },
+    ], flagship);
+    assert.deepEqual(presence, { state: 'current_enabled', existingModelId: 'sonnet' });
+  });
+
+  it('reports the current SKU enabled when a unique direct wire is enabled beside a hidden canonical row', () => {
+    const catalog = getCatalogDefaultModelsForRecord({
+      provider_type: 'anthropic',
+      base_url: GLM_BASE_URL,
+    });
+    const flagship = catalog.find(model => model.modelId === 'sonnet')!;
+    const presence = classifyCatalogModelPresence([
+      {
+        model_id: 'sonnet',
+        upstream_model_id: 'glm-5.3[1m]',
+        display_name: 'GLM-5.3',
+        capabilities_json: '{}',
+        enabled: 0,
+        source: 'catalog',
+        user_edited: 0,
+        enable_source: 'manual_hidden',
+      },
+      {
+        model_id: 'glm-5.3[1m]',
+        upstream_model_id: 'glm-5.3[1m]',
+        display_name: 'GLM-5.3 direct',
+        capabilities_json: '{}',
+        enabled: 1,
+        source: 'manual',
+        user_edited: 1,
+        enable_source: 'manual_enabled',
+      },
+    ], flagship);
+
+    assert.deepEqual(presence, {
+      state: 'current_enabled',
+      existingModelId: 'glm-5.3[1m]',
+    });
+  });
+
+  it('fails closed with explicit model ids when no row is a unique current or legacy identity', () => {
+    const catalog = getCatalogDefaultModelsForRecord({
+      provider_type: 'anthropic',
+      base_url: GLM_BASE_URL,
+    });
+    const flagship = catalog.find(model => model.modelId === 'sonnet')!;
+    const presence = classifyCatalogModelPresence([
+      {
+        model_id: 'sonnet',
+        upstream_model_id: 'private-sonnet-route',
+        display_name: 'My custom Sonnet slot',
+        capabilities_json: '{}',
+        enabled: 1,
+        source: 'manual',
+        user_edited: 1,
+        enable_source: 'manual_enabled',
+      },
+      {
+        model_id: 'glm-5.3[1m]',
+        upstream_model_id: 'proxy-glm-route',
+        display_name: 'Conflicting direct-id row',
+        capabilities_json: '{}',
+        enabled: 0,
+        source: 'manual',
+        user_edited: 1,
+        enable_source: 'manual_hidden',
+      },
+    ], flagship);
+
+    assert.deepEqual(presence, {
+      state: 'identity_conflict',
+      conflictModelIds: ['sonnet', 'glm-5.3[1m]'],
+    });
+  });
+
+  it('does not upgrade a lookalike GLM row after the user has claimed ownership', () => {
+    const providerId = createScratchProvider(GLM_BASE_URL);
+    upsertProviderModel({
+      provider_id: providerId,
+      model_id: 'sonnet',
+      upstream_model_id: 'sonnet',
+      display_name: 'GLM-5-Turbo',
+      capabilities_json: '{}',
+      variants_json: '{}',
+      sort_order: 17,
+      enabled: 0,
+      source: 'manual',
+      user_edited: 1,
+      enable_source: 'manual_hidden',
+    });
+
+    const catalog = getCatalogDefaultModelsForRecord({
+      provider_type: 'anthropic',
+      base_url: GLM_BASE_URL,
+    });
+    const result = mergeCatalogManagedModels(providerId, catalog);
+    assert.equal(result.updated, 0);
+    const flagship = getAllModelsForProvider(providerId).find(row => row.model_id === 'sonnet')!;
+    assert.equal(flagship.upstream_model_id, 'sonnet');
+    assert.equal(flagship.display_name, 'GLM-5-Turbo');
+    assert.equal(flagship.enabled, 0);
+    assert.equal(flagship.sort_order, 17);
+    assert.equal(flagship.source, 'manual');
   });
 
   it('does not create a stable alias when a user row already owns the catalog upstream id', () => {

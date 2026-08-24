@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
-import os from 'os';
+import { resolveCodePilotDataDir } from '@/lib/codepilot-data-dir';
 
 /** Path to the Sentry opt-out marker file, read by Electron main process at startup */
 function getSentryMarkerPath() {
-  return path.join(os.homedir(), '.codepilot', 'sentry-disabled');
+  return path.join(resolveCodePilotDataDir(), 'sentry-disabled');
 }
 
 /** GET /api/settings/sentry — read opt-out state */

@@ -78,6 +78,10 @@ describe('shouldReportToSentry — Sentry blind spot 1 (audit 2026-07)', () => {
     assert.equal(shouldReportToSentry('RATE_LIMITED', new Error('429')), false);
     assert.equal(shouldReportToSentry('NO_CREDENTIALS', new Error('no key')), false);
     assert.equal(shouldReportToSentry('CLI_NOT_FOUND', new Error('missing binary')), false);
+    assert.equal(
+      shouldReportToSentry('EXECUTION_PERMISSION_DENIED', new Error('spawn claude EPERM')),
+      false,
+    );
   });
 
   it('all structured 4xx values create zero Error/info/message Issues', () => {

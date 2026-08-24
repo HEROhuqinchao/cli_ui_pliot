@@ -146,6 +146,7 @@ export function reportNativeError(
 
 export type ClaudeErrorCategory =
   | 'CLI_NOT_FOUND'
+  | 'EXECUTION_PERMISSION_DENIED'
   | 'NO_CREDENTIALS'
   | 'AUTH_REJECTED'
   | 'AUTH_FORBIDDEN'
@@ -252,6 +253,21 @@ const providerHint = (ctx: ErrorContext) =>
   ctx.providerName ? ` (Provider: ${ctx.providerName})` : '';
 
 const ERROR_PATTERNS: ErrorPattern[] = [
+  // ── Local process launch denied by the operating system ──
+  // Keep the text patterns spawn/exec-specific: provider APIs also use
+  // phrases such as "permission denied", which belong to AUTH_FORBIDDEN.
+  {
+    category: 'EXECUTION_PERMISSION_DENIED',
+    patterns: [
+      /(?:spawn|exec(?:file)?) [^\n]+ e(?:perm|acces)/i,
+      /(?:spawn|exec(?:file)?)[^\n]+operation not permitted/i,
+      /(?:spawn|exec(?:file)?)[^\n]+permission denied/i,
+    ],
+    userMessage: () => 'The operating system blocked CodePilot from starting a required process.',
+    actionHint: () => 'Check the executable permissions and your system security or antivirus policy, then restart CodePilot. On a managed device, ask your administrator to allow the process.',
+    retryable: false,
+  },
+
   // ── CLI not found ──
   {
     category: 'CLI_NOT_FOUND',
@@ -582,6 +598,10 @@ function buildRecoveryActions(category: ClaudeErrorCategory, ctx: ErrorContext):
       if (meta?.apiKeyUrl) actions.push({ label: 'Check API Key', url: meta.apiKeyUrl });
       if (meta?.docsUrl) actions.push({ label: 'View Docs', url: meta.docsUrl });
       actions.push({ label: 'Open Settings', action: 'open_settings' });
+      break;
+    case 'EXECUTION_PERMISSION_DENIED':
+      // There is no safe cross-platform deep link for OS/antivirus policy.
+      // The classifier's actionHint is the complete recovery instruction.
       break;
     default:
       actions.push({ label: 'Open Settings', action: 'open_settings' });

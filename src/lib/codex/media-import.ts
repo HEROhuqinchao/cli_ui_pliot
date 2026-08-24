@@ -33,12 +33,12 @@
  */
 
 import path from 'path';
-import os from 'os';
 import {
   findReusableImportedFile,
   importFileToLibrary,
   stageFileForMediaPreview,
 } from '@/lib/media-saver';
+import { resolveCodePilotDataDir } from '@/lib/codepilot-data-dir';
 import type { MediaBlock } from '@/types';
 import type { RuntimeRunEvent } from '@/lib/runtime/contract';
 
@@ -51,8 +51,7 @@ interface MaterializeOptions {
 }
 
 function getMediaDir(): string {
-  const dataDir = process.env.CLAUDE_GUI_DATA_DIR || path.join(os.homedir(), '.codepilot');
-  return path.resolve(dataDir, '.codepilot-media');
+  return path.resolve(resolveCodePilotDataDir(), '.codepilot-media');
 }
 
 function isInsideMediaDir(filePath: string): boolean {

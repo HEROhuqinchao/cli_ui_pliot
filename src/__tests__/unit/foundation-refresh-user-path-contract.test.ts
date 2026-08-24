@@ -42,6 +42,7 @@ import { POST as searchModelsPOST } from '@/app/api/providers/[id]/search-models
 import {
   buildSearchCandidateMutation,
   filterSearchCandidates,
+  isModelIdentityConflictResponse,
   type SearchCandidate,
 } from '@/components/settings/OpenRouterSearchDialog';
 
@@ -259,6 +260,75 @@ describe('U3 — CodePlan add-model is not held hostage by an optional upstream 
         display_name: 'GLM-5.3',
       },
     });
+    assert.equal(isModelIdentityConflictResponse(409, {
+      code: 'MODEL_IDENTITY_CONFLICT',
+      conflictModelIds: ['sonnet'],
+    }), true);
+    assert.equal(isModelIdentityConflictResponse(500, {
+      code: 'MODEL_IDENTITY_CONFLICT',
+    }), false);
+  });
+
+  it('renders conflict row ids with an action instead of a dead warning badge', () => {
+    const dialogSource = fs.readFileSync(
+      path.join(SRC, 'components/settings/OpenRouterSearchDialog.tsx'),
+      'utf8',
+    );
+    assert.match(dialogSource, /candidate\.conflictModelIds\?\.join/);
+    assert.match(dialogSource, /provider\.search\.openrouter\.identityConflictDetail/);
+    assert.match(dialogSource, /provider\.search\.openrouter\.reviewModels/);
+    assert.match(dialogSource, /await fetchCandidates\(\)/,
+      'mutation success must be followed by the server-owned classifier, not an optimistic badge flip');
+    assert.match(dialogSource, /isModelIdentityConflictResponse\(res\.status, body\)[\s\S]*await fetchCandidates\(\)/,
+      'a conflict response must also reload the server-owned candidate list');
+    assert.match(dialogSource, /provider\.search\.openrouter\.mutationIdentityConflict/,
+      'the renderer must translate the typed 409 instead of showing the route fallback string');
+  });
+
+  it('returns a typed 409 without overwriting a user-owned GLM identity', async () => {
+    const provider = createProvider({
+      name: `${TEST_PROVIDER_PREFIX}glm_conflict_${Date.now()}`,
+      provider_type: 'anthropic',
+      protocol: 'anthropic',
+      base_url: 'https://open.bigmodel.cn/api/anthropic',
+      api_key: 'sk-test',
+      extra_env: '{}',
+    });
+    upsertProviderModel({
+      provider_id: provider.id,
+      model_id: 'sonnet',
+      upstream_model_id: 'user-owned-glm-route',
+      display_name: 'My GLM route',
+      capabilities_json: JSON.stringify({ private: true }),
+      sort_order: 7,
+      enabled: 1,
+      source: 'manual',
+      user_edited: 1,
+      enable_source: 'manual_enabled',
+    });
+
+    const response = await providerModelsPOST(
+      new NextRequest(`http://localhost/api/providers/${provider.id}/models`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          model_id: 'sonnet',
+          upstream_model_id: 'glm-5.3[1m]',
+          display_name: 'GLM-5.3',
+        }),
+      }),
+      { params: Promise.resolve({ id: provider.id }) },
+    );
+    assert.equal(response.status, 409);
+    assert.deepEqual(await response.json(), {
+      error: 'Model identity conflict requires review in Settings > Models',
+      code: 'MODEL_IDENTITY_CONFLICT',
+      conflictModelIds: ['sonnet'],
+    });
+    const preserved = getAllModelsForProvider(provider.id).find(model => model.model_id === 'sonnet');
+    assert.equal(preserved?.upstream_model_id, 'user-owned-glm-route');
+    assert.equal(preserved?.display_name, 'My GLM route');
+    assert.deepEqual(JSON.parse(preserved!.capabilities_json), { private: true });
   });
 
   it('falls back to the built-in GLM plan catalog when /models is unreachable', async () => {
@@ -410,6 +480,7 @@ describe('U3 — CodePlan add-model is not held hostage by an optional upstream 
       displayName: 'GLM-5.3',
       alreadyAdded: true,
       existingHidden: false,
+      presenceState: 'current_enabled',
       existingModelId: 'sonnet',
     });
 
@@ -429,6 +500,88 @@ describe('U3 — CodePlan add-model is not held hostage by an optional upstream 
       changesBeforeRepeat,
       'a second Models GET against current catalog metadata must perform zero writes',
     );
+  });
+
+  it('classifies and repairs the pre-source-migration GLM-5-Turbo row across all consumer surfaces', async () => {
+    const provider = createProvider({
+      name: `${TEST_PROVIDER_PREFIX}glm_legacy_manual_${Date.now()}`,
+      provider_type: 'anthropic',
+      protocol: 'anthropic',
+      base_url: 'https://open.bigmodel.cn/api/anthropic',
+      api_key: 'sk-test',
+      extra_env: '{}',
+    });
+    upsertProviderModel({
+      provider_id: provider.id,
+      model_id: 'sonnet',
+      upstream_model_id: 'sonnet',
+      display_name: 'GLM-5-Turbo',
+      capabilities_json: '{}',
+      sort_order: 0,
+      enabled: 1,
+      source: 'manual',
+      user_edited: 0,
+      enable_source: 'recommended',
+    });
+
+    const beforeSearch = await searchModelsPOST(
+      new NextRequest(`http://localhost/api/providers/${provider.id}/search-models`, { method: 'POST' }),
+      { params: Promise.resolve({ id: provider.id }) },
+    );
+    assert.equal(beforeSearch.status, 200);
+    const beforeBody = await beforeSearch.json() as {
+      candidates: Array<{
+        modelId: string;
+        alreadyAdded: boolean;
+        presenceState: string;
+      }>;
+    };
+    const beforeFlagship = beforeBody.candidates.find(candidate => candidate.modelId === 'sonnet')!;
+    assert.equal(beforeFlagship.alreadyAdded, false,
+      'a stable slot carrying an old wire must not be presented as the current SKU');
+    assert.equal(beforeFlagship.presenceState, 'legacy_upgrade_available');
+
+    const upgrade = await providerModelsPOST(
+      new NextRequest(`http://localhost/api/providers/${provider.id}/models`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          model_id: 'sonnet',
+          upstream_model_id: 'glm-5.3[1m]',
+          display_name: 'GLM-5.3',
+        }),
+      }),
+      { params: Promise.resolve({ id: provider.id }) },
+    );
+    assert.equal(upgrade.status, 200);
+
+    const settingsResponse = await providerModelsGET(
+      new NextRequest(`http://localhost/api/providers/${provider.id}/models?all=1`),
+      { params: Promise.resolve({ id: provider.id }) },
+    );
+    const settingsBody = await settingsResponse.json() as {
+      models: Array<{ model_id: string; upstream_model_id: string; display_name: string }>;
+    };
+    const settingsFlagship = settingsBody.models.find(model => model.model_id === 'sonnet')!;
+    assert.equal(settingsFlagship.upstream_model_id, 'glm-5.3[1m]');
+    assert.equal(settingsFlagship.display_name, 'GLM-5.3');
+    assert.ok(settingsBody.models.some(model => model.model_id === 'glm-5-turbo'));
+
+    const groups = await getGroups();
+    const composerGroup = groups.find(group => group.provider_id === provider.id)!;
+    const composerFlagship = composerGroup.models.find(model => model.value === 'sonnet')!;
+    assert.equal(composerFlagship.label, 'GLM-5.3');
+
+    const afterSearch = await searchModelsPOST(
+      new NextRequest(`http://localhost/api/providers/${provider.id}/search-models`, { method: 'POST' }),
+      { params: Promise.resolve({ id: provider.id }) },
+    );
+    const afterBody = await afterSearch.json() as {
+      candidates: Array<{ modelId: string; alreadyAdded: boolean; presenceState: string }>;
+    };
+    const afterFlagship = afterBody.candidates.find(candidate => candidate.modelId === 'sonnet')!;
+    assert.equal(afterFlagship.alreadyAdded, true);
+    assert.equal(afterFlagship.presenceState, 'current_enabled');
   });
 
   it('keeps a hidden upstream-id row actionable instead of claiming it is simply added', async () => {
@@ -475,6 +628,7 @@ describe('U3 — CodePlan add-model is not held hostage by an optional upstream 
       displayName: 'GLM-5.3',
       alreadyAdded: true,
       existingHidden: true,
+      presenceState: 'current_hidden',
       existingModelId: 'glm-5.3[1m]',
     });
 
