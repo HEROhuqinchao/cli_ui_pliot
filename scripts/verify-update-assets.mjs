@@ -8,10 +8,12 @@ import yaml from 'js-yaml';
 const root = process.argv[2] ? path.resolve(process.argv[2]) : '';
 const expectedVersion = process.argv[3] || '';
 const channel = process.argv[4] || 'stable';
+const target = process.argv[5] || 'all';
 if (!root || !expectedVersion) {
-  throw new Error('Usage: node scripts/verify-update-assets.mjs <artifact-root> <version> [stable|preview]');
+  throw new Error('Usage: node scripts/verify-update-assets.mjs <artifact-root> <version> [stable|preview] [all|macos]');
 }
 if (!['stable', 'preview'].includes(channel)) throw new Error(`Unsupported update channel: ${channel}`);
+if (!['all', 'macos'].includes(target)) throw new Error(`Unsupported release target: ${target}`);
 
 function walk(directory) {
   const files = [];
@@ -57,19 +59,21 @@ function requireCount(label, pattern, count) {
 }
 
 const escapedVersion = expectedVersion.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-if (channel === 'stable') {
-  const macDmgNames = requireCount(
-    'macOS DMG assets',
-    new RegExp(`^CodePilot-${escapedVersion}-(?:arm64|x64|universal)\\.dmg$`),
-    3,
-  );
-  void macDmgNames;
-  const macZipNames = requireCount(
-    'macOS ZIP assets',
-    new RegExp(`^CodePilot-${escapedVersion}-(?:arm64|x64|universal)\\.zip$`),
-    3,
-  );
-  for (const zipName of macZipNames) one(`${zipName}.blockmap`);
+const macLabelPrefix = channel === 'stable' ? '' : 'preview ';
+const macDmgNames = requireCount(
+  `${macLabelPrefix}macOS DMG assets`,
+  new RegExp(`^CodePilot-${escapedVersion}-(?:arm64|x64|universal)\\.dmg$`),
+  3,
+);
+void macDmgNames;
+const macZipNames = requireCount(
+  `${macLabelPrefix}macOS ZIP assets`,
+  new RegExp(`^CodePilot-${escapedVersion}-(?:arm64|x64|universal)\\.zip$`),
+  3,
+);
+for (const zipName of macZipNames) one(`${zipName}.blockmap`);
+
+if (target === 'all' && channel === 'stable') {
   requireCount('Windows NSIS installer', new RegExp(`^CodePilot\\.Setup\\.${escapedVersion}\\.exe$`), 1);
   for (const extension of ['AppImage', 'deb', 'rpm']) {
     const linuxAssets = requireCount(
@@ -81,25 +85,25 @@ if (channel === 'stable') {
       throw new Error(`Linux ${extension} assets are missing arm64/aarch64`);
     }
   }
-} else {
-  const previewDmgs = requireCount(
-    'preview macOS DMG assets',
-    new RegExp(`^CodePilot-${escapedVersion}-(?:arm64|x64|universal)\\.dmg$`),
-    3,
-  );
-  void previewDmgs;
-  const previewZips = requireCount(
-    'preview macOS ZIP assets',
-    new RegExp(`^CodePilot-${escapedVersion}-(?:arm64|x64|universal)\\.zip$`),
-    3,
-  );
-  for (const zipName of previewZips) one(`${zipName}.blockmap`);
+} else if (target === 'all') {
   requireCount('preview Windows NSIS installer', new RegExp(`^CodePilot\\.Setup\\.${escapedVersion}\\.exe$`), 1);
 }
 
-const metadataNames = channel === 'stable'
-  ? ['latest.yml', 'latest-mac.yml', 'latest-linux.yml', 'latest-linux-arm64.yml']
-  : ['preview.yml', 'preview-mac.yml'];
+if (target === 'macos') {
+  const forbidden = channel === 'stable'
+    ? /^(?:latest\.yml|latest-linux(?:-arm64)?\.yml|CodePilot\.Setup\..*\.exe(?:\.blockmap)?|CodePilot-.*\.(?:AppImage|deb|rpm))$/i
+    : /^(?:preview\.yml|CodePilot\.Setup\..*\.exe(?:\.blockmap)?)$/i;
+  const unexpected = matching(forbidden);
+  if (unexpected.length > 0) {
+    throw new Error(`macOS-only release contains non-macOS update assets: ${unexpected.join(', ')}`);
+  }
+}
+
+const metadataNames = target === 'macos'
+  ? [channel === 'stable' ? 'latest-mac.yml' : 'preview-mac.yml']
+  : channel === 'stable'
+    ? ['latest.yml', 'latest-mac.yml', 'latest-linux.yml', 'latest-linux-arm64.yml']
+    : ['preview.yml', 'preview-mac.yml'];
 for (const metadataName of metadataNames) {
   const metadataPath = one(metadataName);
   const raw = fs.readFileSync(metadataPath, 'utf8');
@@ -146,10 +150,12 @@ if (!macMetadata.files.every((item) => /\.zip$/i.test(String(item.url)))) {
 if (!macMetadata.files.some((item) => /-universal\.zip$/i.test(String(item.url)))) {
   throw new Error(`${macMetadataName} must target the universal ZIP so arm64 and x64 share one trusted feed`);
 }
-const windowsMetadataName = channel === 'stable' ? 'latest.yml' : 'preview.yml';
-const windowsMetadata = yaml.load(fs.readFileSync(one(windowsMetadataName), 'utf8'));
-if (!windowsMetadata.files.every((item) => /CodePilot\.Setup\..*\.exe$/i.test(String(item.url)))) {
-  throw new Error(`${windowsMetadataName} must target the full NSIS installer`);
+if (target === 'all') {
+  const windowsMetadataName = channel === 'stable' ? 'latest.yml' : 'preview.yml';
+  const windowsMetadata = yaml.load(fs.readFileSync(one(windowsMetadataName), 'utf8'));
+  if (!windowsMetadata.files.every((item) => /CodePilot\.Setup\..*\.exe$/i.test(String(item.url)))) {
+    throw new Error(`${windowsMetadataName} must target the full NSIS installer`);
+  }
 }
 
 const checksumText = allFiles
@@ -165,4 +171,4 @@ for (const [name] of byBasename) {
   }
 }
 
-console.log(`Update asset graph OK: channel=${channel} version=${expectedVersion} metadata=${metadataNames.length}`);
+console.log(`Update asset graph OK: channel=${channel} target=${target} version=${expectedVersion} metadata=${metadataNames.length}`);

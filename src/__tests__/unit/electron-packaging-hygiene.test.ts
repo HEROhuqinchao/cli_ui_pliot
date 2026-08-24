@@ -244,7 +244,7 @@ describe('Electron packaging hygiene', () => {
     assert.doesNotMatch(mainHealthSmoke, /ELECTRON_RUN_AS_NODE/);
   });
 
-  it('publishes Linux x64 and arm64 from native runners behind strict release gates', () => {
+  it('retains Linux x64/arm64 manual artifact jobs without publishing them', () => {
     const releaseWorkflow = fs.readFileSync(
       path.join(repoRoot, '.github/workflows/build.yml'),
       'utf8',
@@ -256,6 +256,7 @@ describe('Electron packaging hygiene', () => {
     const linuxJob = releaseWorkflow.match(
       /  build-linux:\n[\s\S]*?(?=\n  release:)/,
     )?.[0];
+    const releaseJob = releaseWorkflow.slice(releaseWorkflow.indexOf('\n  release:\n'));
 
     assert.ok(linuxJob, 'stable workflow must define a Linux build job');
     assert.match(releaseWorkflow, /options:[\s\S]*?- linux/);
@@ -267,20 +268,23 @@ describe('Electron packaging hygiene', () => {
       /electron-builder --linux --\$\{\{ matrix\.arch \}\}/,
     );
     assert.match(linuxJob, /Upload Linux source maps to Sentry/);
+    assert.match(linuxJob, /github\.event_name == 'workflow_dispatch'/);
+    assert.match(linuxJob, /CODEPILOT_OFFICIAL_UPDATE_BUILD:\s*"0"/);
     assert.match(linuxJob, /better-sqlite3 OK/);
     assert.match(linuxJob, /node scripts\/verify-packaged-server\.mjs/);
     assert.match(linuxJob, /xvfb-run -a node scripts\/verify-electron-main-health\.mjs/);
     for (const extension of ['AppImage', 'deb', 'rpm']) {
       assert.match(linuxJob, new RegExp(`release/CodePilot-\\*\\.${extension}`));
-      assert.match(
-        releaseWorkflow,
+      assert.doesNotMatch(
+        releaseJob,
         new RegExp(`-name "\\\*\\.${extension}"`),
       );
     }
     assert.match(
-      releaseWorkflow,
-      /needs:\s*\[build-macos, verify-macos-intel-abi, build-windows, build-linux\]/,
+      releaseJob,
+      /needs:\s*\[build-macos, verify-macos-intel-abi\]/,
     );
+    assert.doesNotMatch(releaseJob, /build-linux|latest-linux|\.AppImage|\.deb|\.rpm/);
     assert.match(builderConfig, /linux:[\s\S]*?target:[\s\S]*?- AppImage[\s\S]*?- deb[\s\S]*?- rpm/);
   });
 

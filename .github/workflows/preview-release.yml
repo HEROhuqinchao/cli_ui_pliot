@@ -1,6 +1,7 @@
 name: Preview Release (testers only)
 
-# Tag-only preview packaging for internal testers.
+# Tag-only macOS preview packaging for internal testers. Windows/Linux remain
+# outside the published preview feed until their release trust model is armed.
 #
 # Trigger with a semver prerelease tag equal to package.json, for example:
 #   0.68.0-preview.5
@@ -179,83 +180,8 @@ jobs:
             release/checksums-macos.sha256
           retention-days: 7
 
-  build-windows-x64:
-    needs: verify-source
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: npm
-
-      - run: npm ci
-
-      - name: Configure fail-closed Windows signing credentials
-        shell: pwsh
-        env:
-          WINDOWS_CERT_PFX_BASE64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
-          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
-          WINDOWS_PUBLISHER_SUBJECT: ${{ vars.WINDOWS_PUBLISHER_SUBJECT }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_CERT_PFX_BASE64)) { throw 'WINDOWS_CERT_PFX_BASE64 is required' }
-          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_CERT_PASSWORD)) { throw 'WINDOWS_CERT_PASSWORD is required' }
-          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_PUBLISHER_SUBJECT)) { throw 'WINDOWS_PUBLISHER_SUBJECT repository variable is required' }
-          $certificatePath = Join-Path $env:RUNNER_TEMP 'codepilot-windows-signing.pfx'
-          [IO.File]::WriteAllBytes($certificatePath, [Convert]::FromBase64String($env:WINDOWS_CERT_PFX_BASE64))
-          "WIN_CSC_LINK=$certificatePath" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          "CODEPILOT_WINDOWS_PUBLISHER_SUBJECT=$($env:WINDOWS_PUBLISHER_SUBJECT)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-
-      - name: Build + package Windows x64
-        timeout-minutes: 35
-        env:
-          CODEPILOT_APP_CHANNEL: preview
-          CODEPILOT_OFFICIAL_UPDATE_BUILD: "1"
-          WIN_CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
-        run: |
-          npm run electron:build
-          npx electron-builder --win --x64 --config electron-builder.yml -c.publish.channel=preview --publish never
-
-      - name: Verify packaged version, native ABI, and server startup
-        shell: bash
-        run: |
-          set -euo pipefail
-          VERSION="${{ needs.verify-source.outputs.version }}"
-          EXE=$(find release -name "CodePilot.Setup.*.exe" | head -1)
-          [ -n "$EXE" ] || { echo "::error::no NSIS installer produced"; exit 1; }
-          case "$EXE" in *"$VERSION"*) ;; *) echo "::error::installer name lacks $VERSION"; exit 1 ;; esac
-          SQLITE=$(find release/win-unpacked -path "*better-sqlite3*" -name "*.node" 2>/dev/null | head -1)
-          [ -n "$SQLITE" ] || { echo "::error::better-sqlite3 .node not found"; exit 1; }
-          BIN=$(find release/win-unpacked -maxdepth 1 -name "CodePilot.exe" | head -1)
-          ELECTRON_RUN_AS_NODE=1 "$BIN" -e "const path = require('node:path'); require(path.resolve(process.argv[1])); console.log('better-sqlite3 OK, ABI=' + process.versions.modules)" "$SQLITE"
-          node scripts/verify-packaged-server.mjs "$BIN" "$(dirname "$BIN")/resources"
-          node scripts/verify-electron-main-health.mjs "$BIN"
-
-      - name: Verify Authenticode publisher and RFC3161 timestamp
-        shell: pwsh
-        run: ./scripts/verify-windows-signing.ps1 -ReleaseRoot release -ExpectedSubject $env:CODEPILOT_WINDOWS_PUBLISHER_SUBJECT
-
-      - name: Checksums
-        shell: bash
-        run: |
-          cd release
-          find . -maxdepth 1 -type f \( -name 'CodePilot.Setup.*.exe' -o -name 'CodePilot.Setup.*.exe.blockmap' -o -name 'preview.yml' \) -print0 \
-            | sort -z | xargs -0 sha256sum | tee checksums-windows-x64.sha256
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: preview-windows-x64
-          path: |
-            release/CodePilot.Setup.*.exe
-            release/CodePilot.Setup.*.exe.blockmap
-            release/preview.yml
-            release/checksums-windows-x64.sha256
-          retention-days: 7
-
   create-prerelease:
-    needs: [verify-source, build-macos-arm64, build-windows-x64]
+    needs: [verify-source, build-macos-arm64]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -284,14 +210,13 @@ jobs:
             echo ""
             echo "- Not a stable \`v*\` release."
             echo "- Marked as GitHub prerelease and \`--latest=false\`."
-            echo "- Preview builds use the signed \`preview*.yml\` prerelease channel and can update only to newer preview builds."
+            echo "- macOS preview builds use the signed \`preview-mac.yml\` prerelease channel and can update only to newer preview builds."
             echo ""
             echo "### Test focus"
             echo "- Existing data compatibility after installing over 0.54.x or older preview packages."
             echo "- Codex runtime startup and model loading."
             echo "- Claude Code runtime model loading and first message."
             echo "- macOS tray icon visibility in light/dark mode."
-            echo "- Windows command generation uses PowerShell by default."
             echo ""
             echo "### Report P0/P1 issues with"
             echo "- OS version and CPU architecture."
@@ -308,18 +233,17 @@ jobs:
           done
           cat SHA256SUMS.txt
 
-          node scripts/verify-update-assets.mjs artifacts "$VERSION" preview
+          node scripts/verify-update-assets.mjs artifacts "$VERSION" preview macos
 
       - name: List release assets
-        run: find artifacts -type f \( -name "*.dmg" -o -name "*.zip" -o -name "*.exe" -o -name "*.blockmap" -o -name "preview*.yml" \) -print | sort
+        run: find artifacts -type f \( -name "*.dmg" -o -name "*.zip" -o -name "*.blockmap" -o -name "preview-mac.yml" \) -print | sort
 
       - name: Attest every preview release asset
         uses: actions/attest@v4
         with:
           subject-path: |
             artifacts/CodePilot-*
-            artifacts/CodePilot.Setup.*
-            artifacts/preview*.yml
+            artifacts/preview-mac.yml
             SHA256SUMS.txt
 
       - name: Create GitHub prerelease
@@ -333,7 +257,6 @@ jobs:
           files: |
             artifacts/*.dmg
             artifacts/*.zip
-            artifacts/*.exe
             artifacts/*.blockmap
-            artifacts/preview*.yml
+            artifacts/preview-mac.yml
             SHA256SUMS.txt

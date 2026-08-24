@@ -69,19 +69,17 @@ function makeStableFixture(version: string): string {
   return root;
 }
 
-function makePreviewFixture(version: string): string {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'codepilot-preview-assets-'));
+function makeMacOnlyFixture(version: string, channel: 'stable' | 'preview'): string {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), `codepilot-${channel}-mac-assets-`));
   for (const arch of ['arm64', 'x64', 'universal']) {
     writeFile(root, `CodePilot-${version}-${arch}.dmg`);
     const zip = writeFile(root, `CodePilot-${version}-${arch}.zip`);
     writeFile(root, `${path.basename(zip)}.blockmap`);
   }
-  const windows = writeFile(root, `CodePilot.Setup.${version}.exe`);
-  writeFile(root, `${path.basename(windows)}.blockmap`);
-  writeMetadata(root, 'preview-mac.yml', version, `CodePilot-${version}-universal.zip`);
-  writeMetadata(root, 'preview.yml', version, `CodePilot.Setup.${version}.exe`);
+  const metadataName = channel === 'stable' ? 'latest-mac.yml' : 'preview-mac.yml';
+  writeMetadata(root, metadataName, version, `CodePilot-${version}-universal.zip`);
   fs.writeFileSync(
-    path.join(root, 'checksums-preview.sha256'),
+    path.join(root, `checksums-${channel}-macos.sha256`),
     fs.readdirSync(root).sort().map((name) => `fixture  ${name}`).join('\n'),
   );
   return root;
@@ -106,6 +104,8 @@ describe('release signing and update asset contracts', () => {
     for (const workflow of [stable, previewBuild, previewRelease]) {
       assert.match(workflow, /APPLE_NOTARIZATION_KEY_BASE64/);
       assert.match(workflow, /verify-macos-notarization\.mjs/);
+    }
+    for (const workflow of [stable, previewBuild]) {
       assert.match(workflow, /WINDOWS_CERT_PFX_BASE64/);
       assert.match(workflow, /WINDOWS_PUBLISHER_SUBJECT/);
       assert.match(workflow, /verify-windows-signing\.ps1/);
@@ -120,26 +120,36 @@ describe('release signing and update asset contracts', () => {
       'release/CodePilot-*.blockmap',
       'release/CodePilot.Setup.*.exe.blockmap',
     ]) assert.ok(stable.includes(expected), `stable artifact allow-list must contain ${expected}`);
-    assert.match(stable, /verify-update-assets\.mjs artifacts "\$VERSION"/);
+    assert.match(stable, /verify-update-assets\.mjs artifacts "\$VERSION" stable macos/);
     assert.match(stable, /-name "\*\.blockmap"/);
-    assert.match(stable, /-name "latest\*\.yml"/);
+    assert.match(stable, /-name "latest-mac\.yml"/);
     assert.match(stable, /uses:\s*actions\/attest@v4/);
-    assert.match(stable, /artifacts\/CodePilot\.Setup\.\*/);
     assert.match(stable, /artifact-metadata:\s*write/);
     assert.match(stable, /runs-on:\s*macos-15-intel/);
     assert.match(stable, /CodePilot-\*-universal\.zip/);
 
+    const stableRelease = stable.slice(stable.indexOf('\n  release:\n'));
+    assert.match(stableRelease, /needs:\s*\[build-macos, verify-macos-intel-abi\]/);
+    assert.doesNotMatch(stableRelease, /build-windows|build-linux|CodePilot\.Setup|latest-linux|\.AppImage|\.deb|\.rpm/);
+    assert.match(stable, /build-windows:[\s\S]*?if:\s*\$\{\{ github\.event_name == 'workflow_dispatch'/);
+    assert.match(stable, /build-linux:[\s\S]*?if:\s*\$\{\{ github\.event_name == 'workflow_dispatch'/);
+    assert.match(stable, /build-windows:[\s\S]*?CODEPILOT_OFFICIAL_UPDATE_BUILD:\s*"0"/);
+    assert.match(stable, /build-linux:[\s\S]*?CODEPILOT_OFFICIAL_UPDATE_BUILD:\s*"0"/);
+    assert.match(previewBuild, /build-windows-x64:[\s\S]*?CODEPILOT_OFFICIAL_UPDATE_BUILD:\s*"0"/);
+
     for (const preview of [previewBuild, previewRelease]) {
       assert.match(preview, /-c\.publish\.channel=preview/);
       assert.match(preview, /release\/preview-mac\.yml/);
-      assert.match(preview, /release\/preview\.yml/);
       assert.doesNotMatch(preview, /release\/latest(?:-mac)?\.yml/);
       assert.match(preview, /--mac --arm64 --x64/);
       assert.match(preview, /--mac --universal/);
       assert.match(preview, /release\/CodePilot-\*\.dmg/);
       assert.match(preview, /release\/CodePilot-\*\.zip/);
     }
-    assert.match(previewRelease, /artifacts\/CodePilot\.Setup\.\*/);
+    assert.match(previewBuild, /release\/preview\.yml/);
+    assert.doesNotMatch(previewRelease, /WINDOWS_CERT|WINDOWS_PUBLISHER|CodePilot\.Setup|release\/preview\.yml|artifacts\/\*\.exe/);
+    assert.match(previewRelease, /verify-update-assets\.mjs artifacts "\$VERSION" preview macos/);
+    assert.match(previewRelease, /needs:\s*\[verify-source, build-macos-arm64\]/);
     assert.match(previewRelease, /tags:\s*\n\s*- "\*-preview\.\*"/);
     assert.match(previewRelease, /VERSION="\$GITHUB_REF_NAME"/);
     assert.doesNotMatch(previewRelease, /GITHUB_REF_NAME#preview-/);
@@ -150,6 +160,31 @@ describe('release signing and update asset contracts', () => {
     assert.match(windowsVerifier, /win-unpacked'\) 'CodePilot\.exe'/);
     assert.doesNotMatch(windowsVerifier, /-Recurse/);
     assert.doesNotMatch(windowsVerifier, /-Filter '\*\.exe'/);
+  });
+
+  it('accepts a macOS-only stable graph and rejects non-macOS update assets', () => {
+    const version = '1.2.5';
+    const fixture = makeMacOnlyFixture(version, 'stable');
+    try {
+      const valid = spawnSync(
+        process.execPath,
+        [assetVerifier, fixture, version, 'stable', 'macos'],
+        { encoding: 'utf8' },
+      );
+      assert.equal(valid.status, 0, valid.stderr);
+      assert.match(valid.stdout, /channel=stable target=macos/);
+
+      writeFile(fixture, `CodePilot.Setup.${version}.exe`);
+      const mixed = spawnSync(
+        process.execPath,
+        [assetVerifier, fixture, version, 'stable', 'macos'],
+        { encoding: 'utf8' },
+      );
+      assert.notEqual(mixed.status, 0);
+      assert.match(mixed.stderr, /macOS-only release contains non-macOS update assets/);
+    } finally {
+      fs.rmSync(fixture, { recursive: true, force: true });
+    }
   });
 
   it('accepts a complete stable graph and rejects missing blockmaps or a metadata hash mismatch', () => {
@@ -194,16 +229,20 @@ describe('release signing and update asset contracts', () => {
 
   it('requires preview to carry Intel bootstrap assets and one universal updater feed', () => {
     const version = '1.2.4-preview.1';
-    const fixture = makePreviewFixture(version);
+    const fixture = makeMacOnlyFixture(version, 'preview');
     try {
-      const valid = spawnSync(process.execPath, [assetVerifier, fixture, version, 'preview'], { encoding: 'utf8' });
+      const valid = spawnSync(
+        process.execPath,
+        [assetVerifier, fixture, version, 'preview', 'macos'],
+        { encoding: 'utf8' },
+      );
       assert.equal(valid.status, 0, valid.stderr);
-      assert.match(valid.stdout, /channel=preview/);
+      assert.match(valid.stdout, /channel=preview target=macos/);
 
       fs.unlinkSync(path.join(fixture, `CodePilot-${version}-x64.dmg`));
       const missingIntel = spawnSync(
         process.execPath,
-        [assetVerifier, fixture, version, 'preview'],
+        [assetVerifier, fixture, version, 'preview', 'macos'],
         { encoding: 'utf8' },
       );
       assert.notEqual(missingIntel.status, 0);

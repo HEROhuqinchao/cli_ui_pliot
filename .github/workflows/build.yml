@@ -2,9 +2,10 @@ name: Build & Package
 
 # Stable tag-release workflow.
 #
-# Triggers on `v*` tags → builds macOS (arm64 + x64), Windows x64, and Linux
-# (x64 + arm64) packages, then creates a real GitHub Release (NOT a prerelease)
-# whose body is RELEASE_NOTES.md.
+# Triggers on `v*` tags → builds macOS arm64/x64 bootstrap assets plus one
+# universal updater ZIP, then creates a real GitHub Release (NOT a prerelease)
+# whose body is RELEASE_NOTES.md. Windows/Linux remain manual artifact jobs and
+# are deliberately excluded from tag releases until their trust model is armed.
 # The internal tester channel lives in `preview-build.yml` / `preview-release.yml`
 # (artifacts-only / prerelease) and has its own signed `preview*.yml` feed.
 #
@@ -23,7 +24,7 @@ on:
       platform:
         description: "Target platform"
         required: true
-        default: "all"
+        default: "macos"
         type: choice
         options:
           - all
@@ -360,7 +361,7 @@ jobs:
 
   build-windows:
     needs: verify-source
-    if: ${{ github.event_name == 'push' || inputs.platform == 'all' || inputs.platform == 'windows' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && (inputs.platform == 'all' || inputs.platform == 'windows') }}
     # Pinned to windows-2022 (VS 2022 / MSVC v17). `windows-latest` rolled to a
     # VS 18 image whose toolchain the bundled node-gyp can't detect ("unknown
     # version undefined"), breaking native builds (zlib-sync / better-sqlite3)
@@ -380,7 +381,7 @@ jobs:
         timeout-minutes: 35
         env:
           CODEPILOT_APP_CHANNEL: stable
-          CODEPILOT_OFFICIAL_UPDATE_BUILD: "1"
+          CODEPILOT_OFFICIAL_UPDATE_BUILD: "0"
           CODEPILOT_SOURCE_MAPS: "1"
           SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
         run: npm run electron:build
@@ -388,7 +389,7 @@ jobs:
       - name: Upload Windows source maps to Sentry
         env:
           CODEPILOT_APP_CHANNEL: stable
-          CODEPILOT_OFFICIAL_UPDATE_BUILD: "1"
+          CODEPILOT_OFFICIAL_UPDATE_BUILD: "0"
           CODEPILOT_SOURCE_MAPS: "1"
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
           SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
@@ -457,7 +458,7 @@ jobs:
 
   build-linux:
     needs: verify-source
-    if: ${{ github.event_name == 'push' || inputs.platform == 'all' || inputs.platform == 'linux' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && (inputs.platform == 'all' || inputs.platform == 'linux') }}
     strategy:
       fail-fast: false
       matrix:
@@ -490,7 +491,7 @@ jobs:
         timeout-minutes: 35
         env:
           CODEPILOT_APP_CHANNEL: stable
-          CODEPILOT_OFFICIAL_UPDATE_BUILD: "1"
+          CODEPILOT_OFFICIAL_UPDATE_BUILD: "0"
           CODEPILOT_SOURCE_MAPS: "1"
           CODEPILOT_TELEMETRY_SMOKE: "0"
           SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
@@ -499,7 +500,7 @@ jobs:
       - name: Upload Linux source maps to Sentry
         env:
           CODEPILOT_APP_CHANNEL: stable
-          CODEPILOT_OFFICIAL_UPDATE_BUILD: "1"
+          CODEPILOT_OFFICIAL_UPDATE_BUILD: "0"
           CODEPILOT_SOURCE_MAPS: "1"
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
           SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
@@ -605,10 +606,10 @@ jobs:
           node scripts/verify-electron-main-health.mjs "$APP/Contents/MacOS/CodePilot"
 
   release:
-    # Only on a `v*` tag push, and only after all build jobs succeed (default
-    # `needs` semantics skip this job if any dependency fails).
+    # Only on a `v*` tag push, and only after both macOS architecture gates
+    # succeed. Windows/Linux are manual artifact jobs and cannot enter Release.
     if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
-    needs: [build-macos, verify-macos-intel-abi, build-windows, build-linux]
+    needs: [build-macos, verify-macos-intel-abi]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -652,15 +653,14 @@ jobs:
 
           # Builder metadata, referenced assets, hashes, sizes and blockmaps
           # must all come from this one downloaded build graph.
-          node scripts/verify-update-assets.mjs artifacts "$VERSION"
+          node scripts/verify-update-assets.mjs artifacts "$VERSION" stable macos
 
       - name: Attest every release asset
         uses: actions/attest@v4
         with:
           subject-path: |
             artifacts/CodePilot-*
-            artifacts/CodePilot.Setup.*
-            artifacts/latest*.yml
+            artifacts/latest-mac.yml
             artifacts/SHA256SUMS.txt
 
       - name: Create stable GitHub Release + upload immutable asset graph
@@ -674,7 +674,7 @@ jobs:
           FILES=()
           while IFS= read -r f; do
             FILES+=("$f")
-          done < <(find artifacts -type f \( -name "*.dmg" -o -name "*.zip" -o -name "*.exe" -o -name "*.AppImage" -o -name "*.deb" -o -name "*.rpm" -o -name "*.blockmap" -o -name "latest*.yml" \) | sort)
+          done < <(find artifacts -type f \( -name "*.dmg" -o -name "*.zip" -o -name "*.blockmap" -o -name "latest-mac.yml" \) | sort)
           FILES+=("artifacts/SHA256SUMS.txt")
           echo "=== Release assets ==="
           printf '%s\n' "${FILES[@]}"

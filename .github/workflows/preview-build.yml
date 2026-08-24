@@ -38,9 +38,9 @@ on:
         default: true
         type: boolean
       build_windows_x64:
-        description: "Build Windows x64"
+        description: "Build signed Windows x64 artifact (requires Windows signer; never released)"
         required: true
-        default: true
+        default: false
         type: boolean
       commit_sha:
         description: "Commit to build (blank = the ref this workflow runs on)"
@@ -376,7 +376,7 @@ jobs:
         timeout-minutes: 30
         env:
           CODEPILOT_APP_CHANNEL: preview
-          CODEPILOT_OFFICIAL_UPDATE_BUILD: "1"
+          CODEPILOT_OFFICIAL_UPDATE_BUILD: "0"
           WIN_CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
         run: |
           npm run electron:build

@@ -25,7 +25,7 @@
 | 2 | 构建前只清理 `release/` + `.next/` + `dist-electron/`，且先验证当前目录确为 CodePilot 项目 | `scripts/clean-electron-build.mjs` |
 | 3 | standalone 根目录只允许 `.next`、`node_modules`、`server.js`、`package.json`、`cache-handler.js`；本地 DB、uploads、Git/agent/worktree 状态不得入包 | build scripts |
 | 4 | `extraResources` 中 standalone root、`node_modules`、`.next` 的目标互斥；禁止 `**/*` 再叠加子目录 FileSet | `electron-builder.yml` + tests |
-| 5 | macOS/Windows 产物必须校验版本、native ABI 与 packaged server health 后才能上传 | build workflow |
+| 5 | 当前 macOS Release 产物必须校验版本、native ABI 与 packaged server health 后才能上传；Windows/Linux 手工 artifact job 仍执行各自校验，但 official updater provenance 必须关闭且不得进入 tag Release | build workflow |
 | 6 | 主窗口外部导航必须经过 `classifyNavigation`；非 http/https 协议不得交给系统 shell | `electron/main.ts` + tests |
 | 7 | Renderer 的 input / textarea / contenteditable 使用 Electron role 菜单；密码框不得启用复制、剪切 | `attachRendererEditingContextMenu` |
 | 8 | Grok Build browser OAuth callback 只绑定 `127.0.0.1`，生产由 OS 分配动态端口；authorize/token exchange 必须复用同一 redirect URI | OAuth manager |
@@ -179,3 +179,4 @@
 - 2026-08-12 — 第二台 Mac 的 `codepilot Safe Storage` 授权框与本机 `SecItemCopyMatching` 阻塞揭示 stable/preview CI 也在静默产出 ad-hoc 包。macOS distributable 改为 Developer ID + exact Team ID fail-closed，并在最终产物后置复核；本地 recovery smoke 只能在 canonical 临时 userData 隔离跳过 Safe Storage。
 - 2026-08-24 — DB migration/runtime 错误可以发生在 `serverPort` 赋值前；旧 retry 因 `!serverPort` 早退却向 Renderer 返回成功。Main 现在为初次启动失败提供独立重试路径并返回真实结果；原始根因只经共享 sanitizer 形成有界本地 marker，供日志与复制诊断使用，不改变低基数恢复分类。
 - 2026-08-24 — `/api/health` 的 DB marker 改为立即失败；恢复路径与 utility 统一使用 `CLAUDE_GUI_DATA_DIR` resolver。fresh-start 后出现 DB 时 Main 不自动删除，而以 trusted、无路径参数的 IPC 提供“保留当前库 / 校验旧备份后继续空库”。
+- 2026-08-24 — 本轮 tag/prerelease 发布范围收窄为 macOS。Windows/Linux 原生构建 job 保留作手工 artifact 验证，但 `CODEPILOT_OFFICIAL_UPDATE_BUILD=0` 且 central Release 明确排除其资产。

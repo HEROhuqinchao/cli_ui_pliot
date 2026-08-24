@@ -1,6 +1,6 @@
 # Release Guardrail
 
-> **Status: Active contract** — 已覆盖版本 source of truth、tag/资产不可变、全平台签名/公证、update metadata、真实 ABI/server-health、attestation 与失败后的补丁版本策略。
+> **Status: Active contract** — 已覆盖版本 source of truth、tag/资产不可变、当前 macOS-only 发布、update metadata、真实 ABI/server-health、attestation 与失败后的补丁版本策略。
 > **为什么先读**：发版有严格顺序（RELEASE_NOTES → package.json version → npm install → 提交推送 → tag → CI 自动构建发布）；**不能删 tag**——一旦 tag 被删再重建，已发布的 Release 会变 Draft（`feedback_never_delete_release_tags.md`）。CI 会自动建 Release 并上传产物，不要手动建。
 > **已知关键文件**：`RELEASE_NOTES.md`、`package.json`（version 字段）、`package-lock.json`、`.github/workflows/*`（CI 发版流程）。
 
@@ -22,11 +22,12 @@
 | 4 | 更新内容必须用用户能理解的语言，不要出现 commit hash / 函数名 / 文件路径 | 人 |
 | 5 | 下载链接必须是完整 GitHub release download URL，用户点击即可下载 | 人 |
 | 6 | tag CI 任一平台失败时不得删除/重建该 tag；修复后递增 patch 版本重新发布 | 人 + CI |
-| 7 | 只有 macOS arm64/x64（含 Intel 实机 ABI）、Windows、Linux 双架构的版本/真实 Main health/ABI/source-map 门禁均通过且 Release job 成功，才能报告 Shipped | `.github/workflows/build.yml` + 执行 Agent |
-| 8 | stable/preview 都必须签名；macOS app+DMG 公证/staple/Gatekeeper 通过。Windows 只对 CodePilot 自有的 NSIS installer 与顶层 `win-unpacked/CodePilot.exe` 校验同一 Authenticode subject/timestamp；Electron/Chromium helper 与第三方 EXE 保留各自 publisher | CI verifier |
-| 9 | installer、`latest*.yml`/`preview*.yml`、blockmap、checksum 来自同一输出；mac metadata 只允许 ZIP entry，DMG 不生成 update blockmap；缺失/错 hash/重复 basename/stagingPercentage 均阻断 | `verify-update-assets.mjs` |
+| 7 | 当前只有 macOS arm64/x64（含 Intel universal ABI）的版本/真实 Main health/ABI/source-map 门禁均通过且 Release job 成功，才能报告 Shipped | `.github/workflows/build.yml` + 执行 Agent |
+| 8 | 当前 stable/preview 的 macOS app+DMG 必须签名、公证、staple 并通过 Gatekeeper。Windows 重新发布时，只对 CodePilot 自有 NSIS installer 与顶层 `win-unpacked/CodePilot.exe` 校验同一 Authenticode subject/timestamp；Electron/Chromium helper 与第三方 EXE 保留各自 publisher | CI verifier |
+| 9 | 当前 macOS installer、`latest-mac.yml`/`preview-mac.yml`、blockmap、checksum 来自同一输出；metadata 只允许 ZIP entry，DMG 不生成 update blockmap；缺失/错 hash/重复 basename/stagingPercentage 均阻断 | `verify-update-assets.mjs` |
 | 10 | stable 资产发布后不可变；坏版本只发更高 patch。preview metadata 独立且 prerelease 不得覆盖 stable feed | 人 + CI |
 | 11 | 私钥只存在于 secret/signing service；轮换/丢失按 `docs/rules/release.md` runbook，publisher/Team ID 变化不得直接自动更新 | 人 + CI |
+| 12 | tag/prerelease 只能发布 macOS 资产；Windows/Linux job 只允许手工 artifact 构建，official updater provenance 必须为 `0`。重新纳入 Release 需要用户明确决策与对应 trust gate | workflow + verifier |
 
 ## 关键文件 + 责任
 
@@ -49,10 +50,10 @@
 - [ ] `npm install` 同步 lock 后再提交
 - [ ] 用户明确指示后才 `git push origin main && git tag v{版本号} && git push origin v{版本号}`
 - [ ] 不要手动建 GitHub Release——CI 会自动建并上传产物
-- [ ] tag 后持续监控 CI；核实 Release URL、全平台安装包、universal ZIP、`latest*.yml`、ZIP/NSIS blockmap、SHA256SUMS 与 attestations 均存在；mac DMG 不得有 update blockmap/metadata entry
+- [ ] tag 后持续监控 CI；核实 Release URL、macOS 双架构 DMG/ZIP、universal ZIP、`latest-mac.yml`、ZIP blockmap、SHA256SUMS 与 attestations 均存在；不得出现 Windows/Linux 资产，mac DMG 不得有 update blockmap/metadata entry
 - [ ] macOS app/DMG/ZIP 的 Developer ID、公证、staple、Gatekeeper 与 Team ID 全通过
-- [ ] Windows installer 与顶层 CodePilot.exe 的 Authenticode subject、SHA-256 与 RFC3161 timestamp 全通过；签名密码只注入 package step，不写 `GITHUB_ENV`
-- [ ] preview 使用 `preview*.yml` + prerelease，stable 不包含 `stagingPercentage`，central asset audit 全通过
+- [ ] Windows 重新纳入发布前，installer 与顶层 CodePilot.exe 的 Authenticode subject、SHA-256 与 RFC3161 timestamp 全通过；签名密码只注入 package step，不写 `GITHUB_ENV`
+- [ ] preview 使用 `preview-mac.yml` + prerelease，stable 不包含 `stagingPercentage`，central macOS-only asset audit 全通过
 - [ ] signer 到期/轮换窗口已检查；identity 变化或 key loss 已按 release runbook 处理
 - [ ] packaged server 必须在 Electron runtime 下启动并通过 `/api/health`，不能只凭打包成功、Next.js `Ready` 或 native ABI 判定可发布
 - [ ] CI 失败时保留失败 tag，修复后发新 patch 版本
@@ -77,7 +78,7 @@
 | 契约 | 测试文件 |
 |------|----------|
 | 构建产物 server 启动 | `scripts/verify-packaged-server.mjs` + `.github/workflows/build.yml` |
-| tag/version、P0 regression、双平台 version/ABI/server-health/checksum | `.github/workflows/build.yml` |
+| tag/version、P0 regression、macOS version/ABI/server-health/checksum | `.github/workflows/build.yml` |
 | release notes / package version drift | `scripts/lint-docs-drift.mjs` + CI verify-source |
 | macOS Developer ID + notarization | `macos-signing-policy.test.ts` + final CI verifier |
 | Windows Authenticode | `release-trust-update-assets.test.ts` + final CI PowerShell verifier |
@@ -91,3 +92,4 @@
 - 2026-08-23 — updater 资产改为 builder metadata/blockmap/installer/checksum 同输出审计与一次上传；不采用 stagingPercentage，坏 stable 只发更高 patch。
 - 2026-08-23 — macOS `dmg.writeUpdateInfo=false`：公证/staple 后的 DMG 仍发布供手工安装，但不进入 updater graph；`latest-mac.yml` 只引用 ZIP，verifier 拒绝 DMG entry，避免后置 staple 令 metadata hash 失真。
 - 2026-08-24 — stable/preview macOS 都产出 arm64+x64 手工 DMG 与 universal updater ZIP，native/universal/notarize 分别计时。Windows verifier 收窄到两个 CodePilot 自有 EXE，签名密码只在 package step 注入，不跨 step 持久化。
+- 2026-08-24 — 用户决定本轮只交付 macOS 自动更新。tag/prerelease 发布依赖收窄到 Mac，central verifier 使用 `macos` target 并拒绝非 Mac 资产；Windows/Linux job 保留为 updater provenance 关闭的手工 artifact 入口。
