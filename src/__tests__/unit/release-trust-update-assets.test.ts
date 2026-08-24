@@ -92,8 +92,35 @@ describe('release signing and update asset contracts', () => {
     const previewBuild = read('.github/workflows/preview-build.yml');
     const previewRelease = read('.github/workflows/preview-release.yml');
     const packageJson = JSON.parse(read('package.json'));
+    const universalRuntimePrep = read('scripts/prepare-macos-universal-runtime.mjs');
 
     assert.match(builder, /mac:[\s\S]*?notarize:\s*true/);
+    const x64ArchFiles = /x64ArchFiles:\s*"([^"]+)"/.exec(builder)?.[1];
+    assert.ok(x64ArchFiles, 'mac universal build must declare an exact x64ArchFiles allow-list');
+    for (const expected of [
+      '@anthropic-ai/claude-agent-sdk/vendor/',
+      'audio-capture/{arm64,x64}-darwin/audio-capture.node',
+      'ripgrep/{arm64,x64}-darwin/rg',
+      '@img/{sharp-darwin-arm64/lib/sharp-darwin-arm64.node',
+      'sharp-darwin-x64/lib/sharp-darwin-x64.node',
+      'sharp-libvips-darwin-arm64/lib/libvips-cpp.8.17.3.dylib',
+      'sharp-libvips-darwin-x64/lib/libvips-cpp.8.17.3.dylib',
+      'trash/lib/macos-trash',
+      '.next/server/assets/macos-trash.*',
+    ]) assert.ok(x64ArchFiles.includes(expected), `x64ArchFiles must include ${expected}`);
+    assert.doesNotMatch(x64ArchFiles, /\*\*|linux|win32|better-sqlite3|zlib-sync/);
+    assert.match(packageJson.scripts['electron:build'], /^node scripts\/prepare-macos-universal-runtime\.mjs &&/);
+    for (const packageName of [
+      '@img/sharp-darwin-arm64',
+      '@img/sharp-darwin-x64',
+      '@img/sharp-libvips-darwin-arm64',
+      '@img/sharp-libvips-darwin-x64',
+    ]) assert.ok(universalRuntimePrep.includes(packageName), `runtime prep must include ${packageName}`);
+    assert.match(universalRuntimePrep, /createHash\('sha512'\)/);
+    assert.doesNotMatch(universalRuntimePrep, /npm['"], \['install|--force/);
+    const afterPack = read('scripts/after-pack.js');
+    assert.match(afterPack, /better-sqlite3[\s\S]*zlib-sync/);
+    assert.match(afterPack, /if \(arch === 4\)[\s\S]*preserving native slices[\s\S]*return;/);
     assert.match(builder, /dmg:[\s\S]*?writeUpdateInfo:\s*false/);
     assert.match(builder, /win:[\s\S]*?forceCodeSigning:\s*true/);
     assert.match(builder, /verifyUpdateCodeSignature:\s*true/);

@@ -139,7 +139,7 @@ describe('Electron packaging hygiene', () => {
     }
   });
 
-  it('release build runs cleanup before Next and excludes private agent roots', () => {
+  it('release build prepares universal runtime, then cleans before Next and excludes private agent roots', () => {
     const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
     const nextConfig = fs.readFileSync(path.join(repoRoot, 'next.config.ts'), 'utf8');
     const claudeHomeShadow = fs.readFileSync(
@@ -153,7 +153,7 @@ describe('Electron packaging hygiene', () => {
 
     assert.match(
       packageJson.scripts['electron:build'],
-      /^node scripts\/clean-electron-build\.mjs && next build && node scripts\/build-electron\.mjs$/,
+      /^node scripts\/prepare-macos-universal-runtime\.mjs && node scripts\/clean-electron-build\.mjs && next build && node scripts\/build-electron\.mjs$/,
     );
     assert.equal(
       packageJson.scripts.prebuild,

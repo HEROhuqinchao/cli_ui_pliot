@@ -30,6 +30,7 @@
 | 12 | tag/prerelease 只能发布 macOS 资产；Windows/Linux job 只允许手工 artifact 构建，official updater provenance 必须为 `0`。重新纳入 Release 需要用户明确决策与对应 trust gate | workflow + verifier |
 | 13 | Windows 手工 artifact job 仍是 fail-closed 签名构建，必须配置 `WINDOWS_CERT_PFX_BASE64`、`WINDOWS_CERT_PASSWORD` 与 `WINDOWS_PUBLISHER_SUBJECT`；缺失时失败是预期信任门禁，不得宣称“保留 job 即可无签名构建” | workflow + docs |
 | 14 | workflow 顶层只有 `contents: read`；`contents`/OIDC/attestation 写权限只授予 stable/preview 发布 job。发布 job 先把完整资产图上传到可恢复 draft，全部成功后才一次切为公开 stable/prerelease；上传中断不得留下用户可见的半 feed | workflow + source-contract test |
+| 15 | universal 合并时，按目录选型的 SDK/Sharp Darwin 预编译文件与 already-universal Trash helper 只能由精确 `x64ArchFiles` glob 保留；`better-sqlite3` / `zlib-sync` 必须先逐架构替换再由 universal 合并，合并后的 `afterPack`（Arch=4）必须 no-op，不得把 fat binary 覆盖回单架构 | builder config + hooks + source-contract test + universal package probe |
 
 ## 关键文件 + 责任
 
@@ -57,6 +58,7 @@
 - [ ] Windows 重新纳入发布前，installer 与顶层 CodePilot.exe 的 Authenticode subject、SHA-256 与 RFC3161 timestamp 全通过；签名密码只注入 package step，不写 `GITHUB_ENV`
 - [ ] preview 使用 `preview-mac.yml` + prerelease，stable 不包含 `stagingPercentage`，central macOS-only asset audit 全通过
 - [ ] metadata 是否恰好一条 universal ZIP；stable/preview 是否先完整上传 draft，再一次切换可见性；失败 draft 是否可由同 tag workflow rerun 恢复
+- [ ] universal package 是否实际合并成功；双架构 Sharp 是否在 `next build` 前按 lockfile integrity 准备；`x64ArchFiles` 是否仍为逐路径 allow-list；最终 SQLite/zlib 与主程序是否保留 arm64+x86_64 双 slice，并由 Intel universal health gate 验证？
 - [ ] signer 到期/轮换窗口已检查；identity 变化或 key loss 已按 release runbook 处理
 - [ ] packaged server 必须在 Electron runtime 下启动并通过 `/api/health`，不能只凭打包成功、Next.js `Ready` 或 native ABI 判定可发布
 - [ ] CI 失败时保留失败 tag，修复后发新 patch 版本
@@ -76,6 +78,8 @@
 - 把 Windows PFX 密码写入 `GITHUB_ENV`：secret 会跨后续 step 常驻。只在 electron-builder package step 的 `env` 注入。
 - 把 native 双架构与 universal 包塞进同一个 45 分钟 step：第二段没有独立预算。三段 package/package/notarize 各自有界。
 - 先创建公开 Release 再逐个上传：上传中断会让客户端或用户看到半套资产。必须先写入 draft；重跑只允许恢复同 tag 的 draft，发现同 tag 已公开则 fail closed。
+- 把 universal 合并失败粗暴修成宽泛 `x64ArchFiles`：会让 native ABI 错误绕过 lipo 检查。只允许逐路径选型的 SDK/Sharp 与 already-universal Trash 文件；SQLite/zlib 必须真实合并。
+- universal 合并成功后仍在 `afterPack` 用 Arch=4 重编 native：会把刚生成的 fat binary 覆盖成宿主单 slice。Arch=4 只允许保留合并结果。
 
 ## 测试覆盖
 
@@ -98,3 +102,4 @@
 - 2026-08-24 — stable/preview macOS 都产出 arm64+x64 手工 DMG 与 universal updater ZIP，native/universal/notarize 分别计时。Windows verifier 收窄到两个 CodePilot 自有 EXE，签名密码只在 package step 注入，不跨 step 持久化。
 - 2026-08-24 — 用户决定本轮只交付 macOS 自动更新。tag/prerelease 发布依赖收窄到 Mac，central verifier 使用 `macos` target 并拒绝非 Mac 资产；Windows/Linux job 保留为 updater provenance 关闭的手工 artifact 入口。
 - 2026-08-24 — 发布写权限从 workflow 顶层收窄到 stable/preview 发布 job；两条发布链先上传/恢复 draft，完整后再公开。mac metadata 收紧为恰好一条 universal ZIP，Mac-only preview 与 stable 对称拒绝 Windows/Linux 资产。
+- 2026-08-24 — `v0.67.2` 首次正式 CI 在 universal 合并处发现同 app tree 预编译文件。真实本地探针完整枚举并分型：SDK/Sharp 按目录选型、Trash 已是 universal，逐路径 allow-list；zlib 与 SQLite 则逐架构重编、真实 lipo。探针还发现 universal 后置 `afterPack` 会用 Arch=4 覆盖 fat binary，因此明确 no-op。旧 tag 保留且未创建 Release，修复后递增 `v0.67.3`。
