@@ -3810,6 +3810,16 @@ function providerSecretErrorCode(error: unknown): string {
   return 'provider_secret_decrypt_failed';
 }
 
+/**
+ * Return only the low-cardinality failure code for a provider secret that was
+ * materialized unsuccessfully. Callers use this to distinguish an unreadable
+ * encrypted credential from a provider that was intentionally saved empty;
+ * ciphertext and key material never leave this module.
+ */
+export function getProviderSecretErrorCode(providerId: string): string | null {
+  return providerSecretErrors.get(providerId) ?? null;
+}
+
 function encodeProviderSecret(providerId: string, plaintext: string): StoredProviderSecret {
   if (!plaintext) return { plaintext: '', ciphertext: '', storage: 'none' };
   const environment = getProviderSecretEnvironmentStatus();
@@ -3836,8 +3846,14 @@ function materializeProvider(row: ApiProviderStorageRow | undefined): ApiProvide
   // is the current user value; trusting the ciphertext can resurrect a stale
   // key or make the provider unusable after moving the database to a machine
   // with a different data-encryption key.
+  // A plaintext value can remain because a legacy-secret migration failed.
+  // Keep that migration diagnostic until an explicit user key write succeeds;
+  // merely reading the recoverable plaintext must not erase it.
   if (provider.api_key) return provider;
-  if (!ciphertext) return provider;
+  if (!ciphertext) {
+    providerSecretErrors.delete(row.id);
+    return provider;
+  }
   try {
     provider.api_key = decryptProviderSecret(row.id, ciphertext);
     providerSecretErrors.delete(row.id);
@@ -4008,6 +4024,11 @@ export function updateProvider(id: string, data: UpdateProviderRequest): ApiProv
      extra_env = ?, headers_json = ?, env_overrides_json = ?, role_models_json = ?, options_json = ?,
      notes = ?, sort_order = ?, updated_at = ? WHERE id = ?`
   ).run(name, providerType, presetKey, protocol, baseUrl, storedSecret.plaintext, storedSecret.ciphertext, storedSecret.storage, extraEnv, headersJson, envOverridesJson, roleModelsJson, optionsJson, notes, sortOrder, now, id);
+
+  // A successful explicit key write replaces (or intentionally clears) the
+  // envelope that produced any prior decrypt error. Do not let the in-memory
+  // diagnostic misclassify a now-empty provider as still unreadable.
+  if (data.api_key !== undefined) providerSecretErrors.delete(id);
 
   return getProvider(id);
 }

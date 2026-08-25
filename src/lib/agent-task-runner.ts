@@ -449,6 +449,10 @@ export async function runScheduledAgentTask(
       const reasonLabel =
         resolved.invalidReason === 'provider-missing'
           ? 'session provider no longer exists'
+          : resolved.invalidReason === 'credentials-unreadable'
+            ? 'session provider credential cannot be decrypted'
+            : resolved.invalidReason === 'credentials-missing'
+              ? 'session provider credential is missing'
           : resolved.invalidReason === 'model-missing'
             ? 'session model not available'
             : 'session runtime no longer compatible';

@@ -76,7 +76,12 @@ export function createModel(opts: CreateModelOptions): CreateModelResult {
   });
   assertProviderCallAllowed(resolved.provider, opts.callScene);
 
-  if (!resolved.hasCredentials && !resolved.provider) {
+  if (!resolved.hasCredentials) {
+    if (resolved.provider) {
+      throw new Error(
+        'The selected provider credential is missing or unavailable. Re-enter its API key in Settings → Providers.',
+      );
+    }
     // If the user has credentials in ~/.claude/settings.json (e.g. cc-switch)
     // but we landed here anyway, it means the native runtime was explicitly
     // selected — native cannot read settings.json, only the Claude Code SDK

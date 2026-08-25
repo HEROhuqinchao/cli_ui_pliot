@@ -29,6 +29,7 @@ import {
   getSetting,
   getAllModelsForProvider,
   getProviderOptions,
+  getProviderSecretErrorCode,
 } from './db';
 import { ensureTokenFresh } from './openai-oauth-manager';
 import { CODEX_API_ENDPOINT } from './openai-oauth';
@@ -90,22 +91,23 @@ export interface ResolvedProvider {
    */
   _codexAccount?: boolean;
   /**
-   * Phase 2 Step 2 — invalid-session signal. Set ONLY by
-   * `resolveProviderForSession` when the session's stored
-   * `provider_id` is non-empty but no longer points at a real DB
-   * provider (deleted by the user, lost in import, etc.). The send
-   * route must check this field and refuse to send rather than
-   * silently routing through the env fallback the resolver picks
-   * for the same input shape today. Frontend already has the
-   * matching gate via `RunCheckpoint`; this is the resolver-side
-   * surface so the route can't be reached with a stale session.
+   * Session-aware invalid destination signal. `resolveProviderForSession`
+   * sets it when an explicitly referenced provider no longer exists OR when
+   * the final resolved DB provider (including default/active fallback for a
+   * legacy unpinned session) has no usable credential. The send route must
+   * check this field before recording or delivering the message.
    *
    * Other callers (`resolveProvider` directly, anything not session-
    * scoped) do NOT set this — they keep the legacy "fall through to
    * env" behaviour, because they don't have a session intent to
    * compare against.
    */
-  invalidReason?: 'provider-missing' | 'model-missing' | 'runtime-incompatible';
+  invalidReason?:
+    | 'provider-missing'
+    | 'model-missing'
+    | 'runtime-incompatible'
+    | 'credentials-missing'
+    | 'credentials-unreadable';
 }
 
 /** Model-level effort truth already carried by a resolved provider catalog. */
@@ -410,6 +412,14 @@ export function toClaudeCodeEnv(
   baseEnv: Record<string, string>,
   resolved: ResolvedProvider,
 ): Record<string, string> {
+  // An explicitly selected DB provider owns the whole auth group. If its
+  // credential is missing/unreadable, continuing here would leave ambient
+  // ANTHROPIC_* variables or Claude OAuth available to the SDK and silently
+  // send the request to a different vendor. Session routes normally catch
+  // this earlier; this guard protects auxiliary/direct SDK callers too.
+  if (resolved.provider && !resolved.hasCredentials) {
+    throw new Error('provider_credentials_unavailable');
+  }
   const env = { ...baseEnv };
   const roleModelForEnv = (modelId: string | undefined): string | undefined => {
     if (!modelId) return undefined;
@@ -571,12 +581,10 @@ export function toClaudeCodeEnv(
  *     clears every ANTHROPIC_* var then injects this provider's base_url. An empty
  *     base_url leaves it unset → SDK falls back to official api.anthropic.com
  *     (return undefined).
- *   - DB provider WITHOUT credentials (`provider && !hasCredentials`): toClaudeCodeEnv
- *     runs NEITHER branch — its provider branch is gated on `hasCredentials`, its
- *     env branch on `!provider` — so it neither clears nor injects ANTHROPIC_*. The
- *     SDK inherits ONLY the ambient `process.env.ANTHROPIC_BASE_URL`; provider.base_url
- *     is NOT injected and settings is NOT consulted. Mirror that (a third-party env
- *     override here must still untrust the window — Codex P2, 2026-06-20).
+ *   - DB provider WITHOUT credentials (`provider && !hasCredentials`): subprocess
+ *     construction now fails closed before this trust helper is consumed. This
+ *     branch remains conservative for diagnostic callers that inspect a resolution
+ *     without spawning: report only the ambient URL, never the selected provider URL.
  *   - env / legacy / cc-switch (`!provider`): SDK inherits the ambient base URL —
  *     `settings.anthropic_base_url` first (mirrors the `!resolved.provider` branch),
  *     then `process.env.ANTHROPIC_BASE_URL`.
@@ -1820,14 +1828,10 @@ export interface SessionRuntimeIntent {
 /**
  * Phase 2 Step 2: session-aware provider resolver.
  *
- * Wraps `resolveProvider` and adds **one** behavior on top: when the
- * session committed to a specific provider id but that provider no
- * longer exists in the DB (deleted, lost in import, never created),
- * the wrapper returns a `ResolvedProvider` carrying
- * `invalidReason: 'provider-missing'`. Callers (chat send route,
- * future RunCheckpoint signal) can then refuse to send instead of
- * silently falling through to the env provider — which is what the
- * raw `resolveProvider` does today and what the user is afraid of.
+ * Wraps `resolveProvider` with fail-closed session intent checks. It labels
+ * deleted providers and DB providers whose selected credential is missing or
+ * unreadable. Callers can then refuse before any side effect instead of
+ * silently falling through to env credentials / Claude OAuth.
  *
  * Everything else delegates straight to `resolveProvider` with the
  * session's data plumbed in: per-message request overrides win, then
@@ -1867,14 +1871,15 @@ export function resolveProviderForSession(
   // instead of silently rerouting through env.
   const isExplicitOverride = !!requestProviderId && requestProviderId !== sessionProviderId;
   const effectiveProviderId = isExplicitOverride ? requestProviderId : sessionProviderId;
-  if (
+  const isDbProviderId = !!(
     effectiveProviderId
     && effectiveProviderId !== 'env'
     && effectiveProviderId !== 'openai-oauth'
     && effectiveProviderId !== 'xai-oauth'
     && effectiveProviderId !== 'codex_account'
-    && !getProvider(effectiveProviderId)
-  ) {
+  );
+  const exactProvider = isDbProviderId ? getProvider(effectiveProviderId) : undefined;
+  if (isDbProviderId && !exactProvider) {
     // Still produce a ResolvedProvider shape so destructuring callers
     // don't crash; the env-fallback fields are populated so a route
     // that forgets to check `invalidReason` at least doesn't behave
@@ -1890,8 +1895,8 @@ export function resolveProviderForSession(
     });
     return { ...fallback, invalidReason: 'provider-missing' };
   }
-  // Healthy path — same priority chain as the legacy resolver.
-  return resolveProvider({
+  // Healthy identity path — same priority chain as the legacy resolver.
+  const resolved = resolveProvider({
     providerId: requestProviderId || undefined,
     sessionProviderId: sessionProviderId || undefined,
     model: intent.requestModel,
@@ -1900,4 +1905,20 @@ export function resolveProviderForSession(
     runtime: extras.runtime,
     callScene: extras.callScene,
   });
+
+  // Gate the FINAL resolved DB provider, not only an explicit/session id.
+  // Legacy sessions may have provider_id='' and resolve through the current
+  // default/active provider. If that row's encrypted secret is unreadable,
+  // waiting for the SDK/native guard would reject only after the chat route
+  // had already persisted the user's message. Virtual/env providers have no
+  // `resolved.provider`; env_only DB providers resolve hasCredentials=true.
+  if (resolved.provider && !resolved.hasCredentials) {
+    return {
+      ...resolved,
+      invalidReason: getProviderSecretErrorCode(resolved.provider.id)
+        ? 'credentials-unreadable'
+        : 'credentials-missing',
+    };
+  }
+  return resolved;
 }

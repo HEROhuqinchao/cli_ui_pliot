@@ -1162,6 +1162,10 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
       // (idle is already gated above, never reaches here.)
       const sendModel = providerFetchState === 'loaded' ? resolvedModel : (resolvedModel || currentModel);
       const sendProviderId = providerFetchState === 'loaded' ? resolvedProviderId : (resolvedProviderId || currentProviderId);
+      // A previous credentials banner may refer to the same provider after the
+      // user repaired its key in Settings. Clear it on retry; if recovery did
+      // not work the typed 409 event below will immediately restore it.
+      setInvalidSessionProvider(null);
       startStream({
         sessionId,
         content,
@@ -1735,9 +1739,24 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
           className="mb-2 rounded-md border border-status-error-border bg-status-error-muted px-3 py-2 text-xs text-status-error-foreground"
           role="alert"
         >
-          {t('chat.invalidSessionProvider.message' as TranslationKey, {
-            providerId: invalidSessionProvider.sessionProviderId,
-          })}
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span>
+              {t(
+                invalidSessionProvider.reason === 'credentials-unreadable'
+                  ? 'chat.providerCredentialsUnreadable.message'
+                  : invalidSessionProvider.reason === 'credentials-missing'
+                    ? 'chat.providerCredentialsUnavailable.message'
+                    : 'chat.invalidSessionProvider.message',
+                { providerId: invalidSessionProvider.sessionProviderId },
+              )}
+            </span>
+            <a
+              href="/settings/providers"
+              className="shrink-0 rounded border border-current/30 px-2 py-1 font-medium hover:bg-black/5 dark:hover:bg-white/5"
+            >
+              {t('chat.providerCredentialsUnavailable.action')}
+            </a>
+          </div>
         </div>
       )}
       {sessionProviderRuntimeIncompatible && (

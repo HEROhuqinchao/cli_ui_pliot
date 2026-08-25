@@ -116,6 +116,9 @@ const en = {
   // continue. The picker below already only lists real providers, so
   // picking one and sending again will route through the new choice.
   'chat.invalidSessionProvider.message': 'This session\'s saved provider "{providerId}" was deleted and the message could not be sent. Pick another provider in the composer below, or return to Settings to reconnect it.',
+  'chat.providerCredentialsUnavailable.message': 'The credential for provider "{providerId}" is missing. The message was not sent to any provider. Open Settings → Providers, enter its API key, then retry.',
+  'chat.providerCredentialsUnreadable.message': 'CodePilot can no longer decrypt the saved credential for provider "{providerId}" after the update. The API key itself may still be valid, and the message was not sent to any provider. Open Settings → Providers, delete the old provider, add it again using the same API key, then select it again in this chat and retry. Deleting a provider also removes its custom model settings; note them first if needed.',
+  'chat.providerCredentialsUnavailable.action': 'Open provider settings',
   'chat.codexRecoverySafeMode': 'CodePilot recovered its local service in safe mode. Codex Runtime and automatic background tasks are paused; restart the app to return to normal mode.',
 
   // ── Settings: General ───────────────────────────────────────
@@ -1842,6 +1845,7 @@ const en = {
   'error.pushFailed': 'Push failed',
   'error.directoryInvalid': 'Directory no longer exists',
   'error.providerUnavailable': 'No API provider available',
+  'error.providerCredentialUnavailable': 'Saved provider credential unavailable',
   'error.invalidDefault': 'Pinned default model unavailable',
   'error.invalidDefaultDesc': 'Your pinned default ({pinned}) cannot run under the current Runtime. Switch Runtime, enable the model, pick another default, or revert to Auto.',
   'error.invalidDefaultGoRuntime': 'Open Runtime',
