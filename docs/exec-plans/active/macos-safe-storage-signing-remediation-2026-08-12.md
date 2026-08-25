@@ -12,7 +12,7 @@
 | Phase 2 | 本地 recovery smoke 的 Safe Storage 隔离 | ✅ Code complete | 仅 exact env + packaged + canonical temp userData 可跳过，flag 不下传 child |
 | Phase 3 | 自动回归、构建与本地 packaged smoke | ✅ 已完成 | 5192/0/1；build/package/签名/0-map/health；single/budget/blocked 全通过 |
 | Phase 4 | official-signed CI / 旧 ad-hoc 用户升级验收 | 🟡 CI 已完成 / 用户迁移待验 | v0.66.2 official-signed gate、Release 与 12 assets 已通过；旧钥匙串 ACL 首次迁移可能仍需一次授权 |
-| Phase 5 | v0.67.7 不可读 Provider secret 热修 | 🟡 Release candidate；Code complete + Tests pass + Build pass | session/SDK/Native 三层 fail closed；同一个真实 GLM Key 删除旧服务商并重加后已恢复；完整三模型 smoke 未冒充通过 |
+| Phase 5 | v0.67.7 不可读 Provider secret 热修 | ✅ Shipped；Code complete + Tests pass + Build pass + official CI pass | session/SDK/Native 三层 fail closed；同一个真实 GLM Key 删除旧服务商并重加后已恢复；完整三模型 smoke 未冒充通过 |
 
 ## 用户结果
 
@@ -87,6 +87,7 @@
 | _待执行_ | affected Mac | 旧 ad-hoc → Developer ID | 首次授权与后续升级 | ⏳ | 允许首次迁移授权，不允许每版重复 |
 | 2026-08-25 | local Node + Next production | v0.67.6 production-log fixture / v0.67.7 candidate | 不可读/缺失 GLM secret → session/SDK/Native；legacy default/active 回退 | ✅ Tests + Build pass | 58/58 targeted；完整 1222 suites / 5315 tests / 5314 pass / 0 fail / 1 skip；Next production 136 routes。fixture 不算 Provider smoke |
 | 2026-08-25 | affected Mac | v0.67.6 / GLM (CN) | 删除不可读旧服务商 → 同一个真实 Key 重加 | ✅ 恢复路径通过 | 用户确认原 Key 有效且重加后恢复；Key 未进入日志/fixture；未逐一验证三个 GLM 模型 |
+| 2026-08-25 | GitHub Actions macOS + Intel + Windows + Linux | v0.67.7 stable / tag `04fd9655` | 正式签名、公证、universal updater、Intel ABI 与 mixed-distribution Release | ✅ Shipped | run [`32812166154`](https://github.com/op7418/CodePilot/actions/runs/32812166154) 全绿；[Release v0.67.7](https://github.com/op7418/CodePilot/releases/tag/v0.67.7) 为 Latest，18 资产且 `latest-mac.yml` 唯一指向 universal ZIP。该 CI 不替代下方真实三模型请求 |
 | _待执行_ | affected Mac | v0.67.7 / GLM (CN) | GLM-5.3、GLM-5-Turbo、GLM-4.7 各一次最小请求 | ⏳ accepted release risk | 不阻塞本次发版，不冒充 Smoke passed |
 
 ## 决策日志
@@ -101,3 +102,4 @@
 - 2026-08-13：v0.66.2 stable CI 的 Developer ID 双架构签名与最终 bundle gate 全绿，Release 已发布。该证据关闭发布签名链门禁，但不替代旧 ad-hoc 用户机器首次升级和后续同 Team ID 版本不再弹窗的真实 ACL 验收。
 - 2026-08-25：v0.67.6 真实日志证明跳过旧 ad-hoc → Developer ID 数据迁移 smoke 留下了产品缺口：Safe Storage 不可用时旧 Provider 密文会 fail closed 到空 Key，但调用链却串到 Claude OAuth。热修不破坏或猜测恢复旧密文；以“阻断 + 重新填写 Key”作为可验证恢复路径，并把真实 GLM 三模型请求保留为 human gate。
 - 2026-08-25：用户确认原 GLM Key 本身有效，删除旧服务商并用同一个 Key 重加后恢复。终审 P2 要求 legacy 空 provider pin 经 default/active 回退也必须在消息落库前阻断，已一并修复；最终 58/58 定向、完整 5314/0/1 与 Next production 136 routes 通过。选择 `v0.67.7` 发布该热修，用户接受不补跑完整三模型线上 smoke，但状态不得写成 Smoke passed。
+- 2026-08-25：不可变 `v0.67.7` tag `04fd9655` 的正式 run `32812166154` 全绿并公开 18 资产 Latest Release；Mac Developer ID、公证/staple、universal updater、packaged health 与 Intel ABI 均通过，公开 `latest-mac.yml` 只指向 0.67.7 universal ZIP。Phase 5 因此更新为 `Shipped`；完整三模型在线请求仍是已接受风险，不回写成 Smoke passed。
