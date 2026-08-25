@@ -3,9 +3,9 @@ name: Build & Package
 # Stable tag-release workflow.
 #
 # Triggers on `v*` tags → builds macOS arm64/x64 bootstrap assets plus one
-# universal updater ZIP, then creates a real GitHub Release (NOT a prerelease)
-# whose body is RELEASE_NOTES.md. Windows/Linux remain manual artifact jobs and
-# are deliberately excluded from tag releases until their trust model is armed.
+# universal updater ZIP, and Windows/Linux manual installers, then creates a real
+# GitHub Release (NOT a prerelease) whose body is RELEASE_NOTES.md. Only macOS
+# receives updater metadata/provenance; Windows/Linux remain manual downloads.
 # The internal tester channel lives in `preview-build.yml` / `preview-release.yml`
 # (artifacts-only / prerelease) and has its own signed `preview*.yml` feed.
 #
@@ -22,7 +22,7 @@ on:
   workflow_dispatch:
     inputs:
       platform:
-        description: "Target platform (Windows requires configured signer secrets/variable)"
+        description: "Target platform (Windows signs when all signer settings exist; otherwise manual unsigned)"
         required: true
         default: "macos"
         type: choice
@@ -360,7 +360,7 @@ jobs:
 
   build-windows:
     needs: verify-source
-    if: ${{ github.event_name == 'workflow_dispatch' && (inputs.platform == 'all' || inputs.platform == 'windows') }}
+    if: ${{ github.event_name == 'push' || inputs.platform == 'all' || inputs.platform == 'windows' }}
     # Pinned to windows-2022 (VS 2022 / MSVC v17). `windows-latest` rolled to a
     # VS 18 image whose toolchain the bundled node-gyp can't detect ("unknown
     # version undefined"), breaking native builds (zlib-sync / better-sqlite3)
@@ -396,7 +396,8 @@ jobs:
           SENTRY_PROJECT: ${{ secrets.SENTRY_PROJECT }}
         run: npm run sentry:sourcemaps:upload
 
-      - name: Configure fail-closed Windows signing credentials
+      - name: Resolve Windows manual-package signing mode
+        id: windows-signing
         shell: pwsh
         env:
           WINDOWS_CERT_PFX_BASE64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
@@ -404,19 +405,38 @@ jobs:
           WINDOWS_PUBLISHER_SUBJECT: ${{ vars.WINDOWS_PUBLISHER_SUBJECT }}
         run: |
           $ErrorActionPreference = 'Stop'
-          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_CERT_PFX_BASE64)) { throw 'WINDOWS_CERT_PFX_BASE64 is required' }
-          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_CERT_PASSWORD)) { throw 'WINDOWS_CERT_PASSWORD is required' }
-          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_PUBLISHER_SUBJECT)) { throw 'WINDOWS_PUBLISHER_SUBJECT repository variable is required' }
+          $configuredCount = 0
+          foreach ($value in @($env:WINDOWS_CERT_PFX_BASE64, $env:WINDOWS_CERT_PASSWORD, $env:WINDOWS_PUBLISHER_SUBJECT)) {
+            if (-not [string]::IsNullOrWhiteSpace($value)) { $configuredCount += 1 }
+          }
+          if ($configuredCount -eq 0) {
+            'mode=unsigned' | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+            Write-Host 'Windows signer is not configured; producing a manual-only unsigned installer with native updater provenance disabled.'
+            exit 0
+          }
+          if ($configuredCount -ne 3) {
+            throw 'Windows signer is partially configured; provide WINDOWS_CERT_PFX_BASE64, WINDOWS_CERT_PASSWORD, and WINDOWS_PUBLISHER_SUBJECT together or remove all three'
+          }
           $certificatePath = Join-Path $env:RUNNER_TEMP 'codepilot-windows-signing.pfx'
           [IO.File]::WriteAllBytes($certificatePath, [Convert]::FromBase64String($env:WINDOWS_CERT_PFX_BASE64))
           "WIN_CSC_LINK=$certificatePath" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "CODEPILOT_WINDOWS_PUBLISHER_SUBJECT=$($env:WINDOWS_PUBLISHER_SUBJECT)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          'mode=signed' | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
       - name: Package Windows x64
         timeout-minutes: 35
+        shell: pwsh
         env:
           WIN_CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
-        run: npx electron-builder --win --x64 --config electron-builder.yml --publish never
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $builderArgs = @('electron-builder', '--win', '--x64', '--config', 'electron-builder.yml', '--publish', 'never')
+          if ('${{ steps.windows-signing.outputs.mode }}' -eq 'unsigned') {
+            $env:CSC_IDENTITY_AUTO_DISCOVERY = 'false'
+            $builderArgs += '--config.win.forceCodeSigning=false'
+          }
+          & npx @builderArgs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Verify packaged version, native ABI, and server startup
         shell: bash
@@ -435,14 +455,31 @@ jobs:
           node scripts/verify-electron-main-health.mjs "$BIN"
 
       - name: Verify Authenticode publisher and RFC3161 timestamp
+        if: ${{ steps.windows-signing.outputs.mode == 'signed' }}
         shell: pwsh
         run: ./scripts/verify-windows-signing.ps1 -ReleaseRoot release -ExpectedSubject $env:CODEPILOT_WINDOWS_PUBLISHER_SUBJECT
+
+      - name: Verify unsigned manual package makes no Authenticode claim
+        if: ${{ steps.windows-signing.outputs.mode == 'unsigned' }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installers = @(Get-ChildItem release -Filter 'CodePilot.Setup.*.exe')
+          if ($installers.Count -ne 1) { throw "Expected one installer, found $($installers.Count)" }
+          $unpackedExe = Join-Path $PWD 'release/win-unpacked/CodePilot.exe'
+          if (-not (Test-Path $unpackedExe -PathType Leaf)) { throw 'Unpacked CodePilot.exe is missing' }
+          $targets = @($installers[0].FullName, $unpackedExe)
+          foreach ($target in $targets) {
+            $signature = Get-AuthenticodeSignature -FilePath $target
+            if ($signature.Status -ne 'NotSigned') { throw "$target unexpectedly reports Authenticode status $($signature.Status)" }
+          }
+          Write-Host 'Verified manual Windows installer is explicitly unsigned; native updater provenance remains disabled.'
 
       - name: Checksums
         shell: bash
         run: |
           cd release
-          find . -maxdepth 1 -type f \( -name 'CodePilot.Setup.*.exe' -o -name 'CodePilot.Setup.*.exe.blockmap' -o -name 'latest.yml' \) -print0 \
+          find . -maxdepth 1 -type f -name 'CodePilot.Setup.*.exe' -print0 \
             | sort -z | xargs -0 sha256sum | tee checksums-windows.sha256
 
       - uses: actions/upload-artifact@v4
@@ -450,14 +487,12 @@ jobs:
           name: release-windows
           path: |
             release/CodePilot.Setup.*.exe
-            release/CodePilot.Setup.*.exe.blockmap
-            release/latest.yml
             release/checksums-windows.sha256
           retention-days: 7
 
   build-linux:
     needs: verify-source
-    if: ${{ github.event_name == 'workflow_dispatch' && (inputs.platform == 'all' || inputs.platform == 'linux') }}
+    if: ${{ github.event_name == 'push' || inputs.platform == 'all' || inputs.platform == 'linux' }}
     strategy:
       fail-fast: false
       matrix:
@@ -554,9 +589,7 @@ jobs:
       - name: Checksums
         run: |
           cd release
-          METADATA="latest-linux.yml"
-          [ "${{ matrix.arch }}" = "arm64" ] && METADATA="latest-linux-arm64.yml"
-          find . -maxdepth 1 -type f \( -name 'CodePilot-*.AppImage' -o -name 'CodePilot-*.deb' -o -name 'CodePilot-*.rpm' -o -name "$METADATA" \) -print0 \
+          find . -maxdepth 1 -type f \( -name 'CodePilot-*.AppImage' -o -name 'CodePilot-*.deb' -o -name 'CodePilot-*.rpm' \) -print0 \
             | sort -z | xargs -0 sha256sum | tee "checksums-linux-${{ matrix.arch }}.sha256"
 
       - uses: actions/upload-artifact@v4
@@ -566,7 +599,6 @@ jobs:
             release/CodePilot-*.AppImage
             release/CodePilot-*.deb
             release/CodePilot-*.rpm
-            release/latest-linux*.yml
             release/checksums-linux-${{ matrix.arch }}.sha256
           retention-days: 7
 
@@ -605,10 +637,10 @@ jobs:
           node scripts/verify-electron-main-health.mjs "$APP/Contents/MacOS/CodePilot"
 
   release:
-    # Only on a `v*` tag push, and only after both macOS architecture gates
-    # succeed. Windows/Linux are manual artifact jobs and cannot enter Release.
+    # Only on a `v*` tag push, after macOS updater assets and every manual
+    # Windows/Linux installer pass their platform gates.
     if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
-    needs: [build-macos, verify-macos-intel-abi]
+    needs: [build-macos, verify-macos-intel-abi, build-windows, build-linux]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -657,13 +689,14 @@ jobs:
 
           # Builder metadata, referenced assets, hashes, sizes and blockmaps
           # must all come from this one downloaded build graph.
-          node scripts/verify-update-assets.mjs artifacts "$VERSION" stable macos
+          node scripts/verify-update-assets.mjs artifacts "$VERSION" stable distribution
 
       - name: Attest every release asset
         uses: actions/attest@v4
         with:
           subject-path: |
             artifacts/CodePilot-*
+            artifacts/CodePilot.Setup.*.exe
             artifacts/latest-mac.yml
             artifacts/SHA256SUMS.txt
 
@@ -678,7 +711,7 @@ jobs:
           FILES=()
           while IFS= read -r f; do
             FILES+=("$f")
-          done < <(find artifacts -type f \( -name "*.dmg" -o -name "*.zip" -o -name "*.blockmap" -o -name "latest-mac.yml" \) | sort)
+          done < <(find artifacts -type f \( -name "*.dmg" -o -name "*.zip" -o -name "*.blockmap" -o -name "latest-mac.yml" -o -name "CodePilot.Setup.*.exe" -o -name "*.AppImage" -o -name "*.deb" -o -name "*.rpm" \) | sort)
           FILES+=("artifacts/SHA256SUMS.txt")
           echo "=== Release assets ==="
           printf '%s\n' "${FILES[@]}"
