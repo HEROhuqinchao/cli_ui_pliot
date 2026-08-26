@@ -48,6 +48,12 @@ export interface SdkSubprocessSetup {
  * `toClaudeCodeEnv()`.
  */
 export function prepareSdkSubprocessEnv(resolved: ResolvedProvider): SdkSubprocessSetup {
+  // Fail before creating a shadow directory. Besides avoiding a temp-dir leak,
+  // this ensures a selected DB provider with an unreadable/missing key cannot
+  // inherit Claude OAuth or ANTHROPIC_* values from the host environment.
+  if (resolved.provider && !resolved.hasCredentials) {
+    throw new Error('provider_credentials_unavailable');
+  }
   const sdkEnv: Record<string, string> = { ...process.env as Record<string, string> };
 
   // Provider-group ownership: only build a shadow when an explicit DB

@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server';
 import { streamClaude } from '@/lib/claude-client';
 import { resolveInTreeAttachmentPath } from '@/lib/in-tree-attachment';
-import { addMessage, getMessages, getSession, getSessionSummary, updateSessionTitle, updateSdkSessionId, updateSessionModel, updateSessionProvider, updateSessionProviderId, updateSessionRuntime, getSetting, acquireSessionLock, renewSessionLock, releaseSessionLock, setSessionRuntimeStatus, isLockOwner } from '@/lib/db';
+import { addMessage, getActiveProvider, getDefaultProviderId, getMessages, getProvider, getSession, getSessionSummary, updateSessionTitle, updateSdkSessionId, updateSessionModel, updateSessionProvider, updateSessionProviderId, updateSessionRuntime, getSetting, acquireSessionLock, renewSessionLock, releaseSessionLock, setSessionRuntimeStatus, isLockOwner } from '@/lib/db';
 import { deriveConversationTitle } from '@/lib/conversation-title';
 import { resolveProviderForSession } from '@/lib/provider-resolver';
 import { resolveRuntimeForSession } from '@/lib/chat-runtime';
@@ -75,10 +75,31 @@ export async function POST(request: NextRequest) {
     console.log('[chat API] content length:', content.length, 'first 200 chars:', content.slice(0, 200));
     console.log('[chat API] systemPromptAppend:', systemPromptAppend ? `${systemPromptAppend.length} chars` : 'none');
 
-    // Precondition: CodePilot must have a provider configured. ~/.claude/settings.json
-    // (cc-switch, CLI login) is intentionally NOT counted — users with only that source
-    // are redirected to the setup flow to add a proper CodePilot provider.
-    if (!hasCodePilotProvider()) {
+    const session = getSession(session_id);
+    if (!session) {
+      return new Response(JSON.stringify({ error: 'Session not found' }), {
+        status: 404,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    // Precondition: CodePilot must have a provider configured. A selected DB
+    // row with a missing/unreadable key is deliberately allowed through this
+    // coarse global gate so the session-aware resolver below can return the
+    // precise recovery response. Otherwise an install whose only provider lost
+    // Safe Storage access would be misreported as "no provider configured".
+    const intendedProviderId = provider_id || session.provider_id || '';
+    const hasDbProviderIntent = !!(
+      intendedProviderId
+      && intendedProviderId !== 'env'
+      && intendedProviderId !== 'openai-oauth'
+      && intendedProviderId !== 'xai-oauth'
+      && intendedProviderId !== 'codex_account'
+    );
+    const fallbackDbProvider = !intendedProviderId
+      ? (getProvider(getDefaultProviderId() || '') || getActiveProvider())
+      : undefined;
+    if (!hasCodePilotProvider() && !hasDbProviderIntent && !fallbackDbProvider) {
       return new Response(
         JSON.stringify({
           error: 'No provider configured in CodePilot.',
@@ -88,14 +109,6 @@ export async function POST(request: NextRequest) {
         }),
         { status: 412, headers: { 'Content-Type': 'application/json' } },
       );
-    }
-
-    const session = getSession(session_id);
-    if (!session) {
-      return new Response(JSON.stringify({ error: 'Session not found' }), {
-        status: 404,
-        headers: { 'Content-Type': 'application/json' },
-      });
     }
 
     // Acquire exclusive lock for this session to prevent concurrent requests
@@ -147,13 +160,17 @@ export async function POST(request: NextRequest) {
       setSessionRuntimeStatus(session_id, 'idle');
       return new Response(
         JSON.stringify({
-          error: 'Session points at a provider that no longer exists.',
+          error: resolved.invalidReason === 'credentials-unreadable'
+            ? 'The saved provider credential can no longer be decrypted after the update. The API key may still be valid. In Settings → Providers, delete the old provider and add it again using the same API key.'
+            : resolved.invalidReason === 'credentials-missing'
+              ? 'The selected provider credential is missing. Enter its API key in Settings → Providers.'
+            : 'Session points at a provider that no longer exists.',
           code: 'INVALID_SESSION_PROVIDER',
           reason: resolved.invalidReason,
           // Frontend can use this to render "your saved provider was
           // deleted — pick another or revert to default" without
           // having to refetch session state.
-          sessionProviderId: session.provider_id || '',
+          sessionProviderId: provider_id || session.provider_id || '',
         }),
         { status: 409, headers: { 'Content-Type': 'application/json' } },
       );

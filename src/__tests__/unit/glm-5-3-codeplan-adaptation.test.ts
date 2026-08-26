@@ -60,7 +60,12 @@ function resolvedGlm(
     modelDisplayName: model.displayName,
     headers: {},
     envOverrides: preset.defaultEnvOverrides,
-    roleModels: preset.defaultRoleModels ?? {},
+    roleModels: {
+      ...(preset.defaultRoleModels ?? {}),
+      // Mirrors buildResolution's explicit model override: the exact picker
+      // choice becomes ANTHROPIC_MODEL for this request.
+      default: model.upstreamModelId ?? model.modelId,
+    },
     hasCredentials: true,
     availableModels: preset.defaultModels,
     settingSources: ['user'],
@@ -214,13 +219,32 @@ describe('GLM-5.3 transport identity', () => {
     assert.equal(small.useResponsesApi, undefined);
   });
 
-  it('injects current Claude role mappings and the official 1M compact window', () => {
-    const env = toClaudeCodeEnv({ CLAUDE_CODE_AUTO_COMPACT_WINDOW: 'stale' }, resolvedGlm('glm-cn'));
-    assert.equal(env.ANTHROPIC_MODEL, FLAGSHIP);
-    assert.equal(env.ANTHROPIC_DEFAULT_SONNET_MODEL, FLAGSHIP);
-    assert.equal(env.ANTHROPIC_DEFAULT_OPUS_MODEL, FLAGSHIP);
-    assert.equal(env.ANTHROPIC_DEFAULT_HAIKU_MODEL, 'glm-4.7');
-    assert.equal(env.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '1000000');
+  it('injects auth, endpoint, and exact upstream model for every current GLM picker entry', () => {
+    const expected = new Map([
+      ['sonnet', FLAGSHIP],
+      ['glm-5-turbo', 'glm-5-turbo'],
+      ['haiku', 'glm-4.7'],
+    ]);
+
+    for (const [modelId, upstreamModelId] of expected) {
+      const env = toClaudeCodeEnv(
+        {
+          ANTHROPIC_API_KEY: 'stale-other-provider',
+          ANTHROPIC_AUTH_TOKEN: 'stale-other-provider',
+          ANTHROPIC_BASE_URL: 'https://api.anthropic.com',
+          CLAUDE_CODE_AUTO_COMPACT_WINDOW: 'stale',
+        },
+        resolvedGlm('glm-cn', modelId),
+      );
+      assert.equal(env.ANTHROPIC_AUTH_TOKEN, FAKE_KEY);
+      assert.equal(env.ANTHROPIC_API_KEY, '');
+      assert.equal(env.ANTHROPIC_BASE_URL, CN_ANTHROPIC_BASE);
+      assert.equal(env.ANTHROPIC_MODEL, upstreamModelId);
+      assert.equal(env.ANTHROPIC_DEFAULT_SONNET_MODEL, FLAGSHIP);
+      assert.equal(env.ANTHROPIC_DEFAULT_OPUS_MODEL, FLAGSHIP);
+      assert.equal(env.ANTHROPIC_DEFAULT_HAIKU_MODEL, 'glm-4.7');
+      assert.equal(env.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '1000000');
+    }
   });
 });
 

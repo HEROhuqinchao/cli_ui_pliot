@@ -50,9 +50,12 @@ import {
   getSetting,
   setSetting,
   createProvider,
+  updateProvider,
   deleteProvider,
   activateProvider,
   getActiveProvider,
+  getDb,
+  getProviderSecretErrorCode,
 } from '../../lib/db';
 
 // ────────────────────────────────────────────────────────────────
@@ -266,6 +269,120 @@ describe('YELLOW — provider deletion + existing session: must not silently fal
       assert.equal(r.model, 'sonnet');
     } finally {
       deleteProvider(provider.id);
+      if (previousActive) activateProvider(previousActive.id);
+      teardown();
+    }
+  });
+
+  it('fails closed when the selected provider secret cannot be decrypted', () => {
+    setup();
+    const previousActive = getActiveProvider();
+    const id = `__unreadable_provider_secret_${Date.now()}__`;
+    const now = new Date().toISOString();
+    getDb().prepare(`
+      INSERT INTO api_providers
+        (id, name, provider_type, preset_key, protocol, base_url, api_key,
+         api_key_ciphertext, api_key_storage, is_active, sort_order, extra_env,
+         headers_json, env_overrides_json, role_models_json, options_json, notes,
+         created_at, updated_at)
+      VALUES (?, 'Unreadable GLM', 'anthropic', 'glm-cn', 'anthropic',
+              'https://open.bigmodel.cn/api/anthropic', '',
+              'cpsec:v1:not-a-valid-envelope', 'safe_storage:macos_keychain',
+              1, 0, '{}', '{}', '{}', '{}', '{}', '', ?, ?)
+    `).run(id, now, now);
+
+    try {
+      const resolved = resolveProviderForSession({
+        provider_id: id,
+        model: 'sonnet',
+        requestProviderId: id,
+        requestModel: 'sonnet',
+      });
+      assert.equal(resolved.provider?.id, id);
+      assert.equal(resolved.hasCredentials, false);
+      assert.equal(
+        resolved.invalidReason,
+        'credentials-unreadable',
+        'an inaccessible selected secret must stop before any ambient Claude OAuth/env fallback',
+      );
+
+      // Legacy sessions can carry provider_id='' before lazy seeding. Their
+      // final destination comes from the global default/active provider and
+      // must hit the same pre-persistence credential gate.
+      setSetting('global_default_model_provider', id);
+      const fallbackResolved = resolveProviderForSession({
+        provider_id: '',
+        model: 'sonnet',
+      });
+      assert.equal(fallbackResolved.provider?.id, id);
+      assert.equal(
+        fallbackResolved.invalidReason,
+        'credentials-unreadable',
+        'an unreadable default/active provider must be rejected before the chat route records the message',
+      );
+    } finally {
+      deleteProvider(id);
+      if (previousActive) activateProvider(previousActive.id);
+      teardown();
+    }
+  });
+
+  it('classifies an empty selected provider as credentials-missing', () => {
+    setup();
+    const previousActive = getActiveProvider();
+    const provider = createProvider({
+      name: '__missing_provider_secret__',
+      provider_type: 'anthropic',
+      base_url: 'https://open.bigmodel.cn/api/anthropic',
+      api_key: '',
+    });
+    activateProvider(provider.id);
+    try {
+      const resolved = resolveProviderForSession({
+        provider_id: provider.id,
+        model: 'sonnet',
+        requestProviderId: provider.id,
+        requestModel: 'sonnet',
+      });
+      assert.equal(resolved.provider?.id, provider.id);
+      assert.equal(resolved.hasCredentials, false);
+      assert.equal(resolved.invalidReason, 'credentials-missing');
+    } finally {
+      deleteProvider(provider.id);
+      if (previousActive) activateProvider(previousActive.id);
+      teardown();
+    }
+  });
+
+  it('clears a stale decrypt error after the user explicitly clears the key', () => {
+    setup();
+    const previousActive = getActiveProvider();
+    const id = `__cleared_provider_secret_${Date.now()}__`;
+    const now = new Date().toISOString();
+    getDb().prepare(`
+      INSERT INTO api_providers
+        (id, name, provider_type, preset_key, protocol, base_url, api_key,
+         api_key_ciphertext, api_key_storage, is_active, sort_order, extra_env,
+         headers_json, env_overrides_json, role_models_json, options_json, notes,
+         created_at, updated_at)
+      VALUES (?, 'Cleared GLM', 'anthropic', 'glm-cn', 'anthropic',
+              'https://open.bigmodel.cn/api/anthropic', '',
+              'cpsec:v1:not-a-valid-envelope', 'safe_storage:macos_keychain',
+              1, 0, '{}', '{}', '{}', '{}', '{}', '', ?, ?)
+    `).run(id, now, now);
+
+    try {
+      const before = resolveProviderForSession({ provider_id: id, model: 'sonnet' });
+      assert.equal(before.invalidReason, 'credentials-unreadable');
+      assert.ok(getProviderSecretErrorCode(id));
+
+      updateProvider(id, { api_key: '' });
+
+      assert.equal(getProviderSecretErrorCode(id), null);
+      const after = resolveProviderForSession({ provider_id: id, model: 'sonnet' });
+      assert.equal(after.invalidReason, 'credentials-missing');
+    } finally {
+      deleteProvider(id);
       if (previousActive) activateProvider(previousActive.id);
       teardown();
     }
@@ -685,6 +802,30 @@ describe('RED — known global-runtime hazard sites Phase 2 Step 2 must replace'
       /setInvalidSessionProvider\(\s*null\s*\)/,
       'ChatView must clear the banner state — likely when the user picks a new provider',
     );
+  });
+
+  it('credential failures expose a localized provider-settings recovery path', () => {
+    const route = fs.readFileSync(path.join(repoRoot, 'app/api/chat/route.ts'), 'utf8');
+    const chatView = fs.readFileSync(path.join(repoRoot, 'components/chat/ChatView.tsx'), 'utf8');
+    const newChat = fs.readFileSync(path.join(repoRoot, 'app/chat/page.tsx'), 'utf8');
+    const en = fs.readFileSync(path.join(repoRoot, 'i18n/en.ts'), 'utf8');
+    const zh = fs.readFileSync(path.join(repoRoot, 'i18n/zh.ts'), 'utf8');
+
+    assert.match(route, /credentials-unreadable[\s\S]{0,300}credentials-missing/);
+    assert.match(route, /sessionProviderId:\s*provider_id\s*\|\|\s*session\.provider_id/);
+    for (const source of [chatView, newChat]) {
+      assert.match(source, /chat\.providerCredentialsUnavailable\.message/);
+      assert.match(source, /chat\.providerCredentialsUnreadable\.message/);
+      assert.match(source, /\/settings\/providers/);
+    }
+    assert.match(newChat, /providerRecovery[\s\S]{0,160}error\.providerCredentialUnavailable/);
+    assert.match(route, /credentials-unreadable[\s\S]{0,400}delete the old provider[\s\S]{0,200}same API key/);
+    assert.match(en, /chat\.providerCredentialsUnavailable\.action/);
+    assert.match(zh, /chat\.providerCredentialsUnavailable\.action/);
+    assert.match(en, /providerCredentialsUnreadable[\s\S]{0,400}API key itself may still be valid[\s\S]{0,300}delete the old provider[\s\S]{0,200}same API key/);
+    assert.match(zh, /providerCredentialsUnreadable[\s\S]{0,300}API Key 本身可能仍然有效[\s\S]{0,300}删除原来的服务商[\s\S]{0,200}同一个 API Key 重新添加/);
+    assert.match(en, /providerCredentialsUnreadable[\s\S]{0,700}custom model settings/);
+    assert.match(zh, /providerCredentialsUnreadable[\s\S]{0,700}自定义模型设置/);
   });
 
   it('stream-session-manager takes a silent error path for INVALID_SESSION_PROVIDER (Step 4b round 2)', () => {

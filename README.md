@@ -29,6 +29,8 @@
 | Windows | [Installer (.exe)](https://github.com/op7418/CodePilot/releases/latest) | x64 |
 | Linux | [AppImage / deb / rpm](https://github.com/op7418/CodePilot/releases/latest) | x64 / arm64 |
 
+Official macOS stable builds can check, download, and install signed updates in the app. Windows and Linux releases are manual downloads.
+
 Or visit the [Releases](https://github.com/op7418/CodePilot/releases) page for all versions.
 
 ---
@@ -153,19 +155,15 @@ npm run electron:dev     # full desktop app
 
 ## Platform & Installation Notes
 
-macOS builds are code-signed with a Developer ID certificate but not notarized, so Gatekeeper may still prompt on first launch. Windows and Linux builds are unsigned.
+macOS stable builds are signed with Developer ID, notarized, stapled, and verified by Gatekeeper. If macOS reports that the developer cannot be verified or the file is damaged, stop and report it instead of bypassing the warning. Windows builds are currently unsigned and may show SmartScreen; Windows and Linux updates are installed manually.
 
 <details>
-<summary>macOS: Gatekeeper warning on first launch</summary>
+<summary>macOS: Gatekeeper rejects the download</summary>
 
-**Option 1** -- Right-click `CodePilot.app` in Finder > Open > confirm.
+1. Delete the rejected copy and download it again from the official GitHub Release.
+2. Verify the file against `SHA256SUMS.txt` from the same Release.
+3. If Gatekeeper still rejects it, do not remove quarantine attributes or bypass the warning; report the macOS version, download URL, and checksum on GitHub Issues.
 
-**Option 2** -- System Settings > Privacy & Security > scroll to Security > click Open Anyway.
-
-**Option 3** -- Run in Terminal:
-```bash
-xattr -cr /Applications/CodePilot.app
-```
 </details>
 
 <details>
@@ -269,7 +267,7 @@ npm run electron:pack:win      # Windows NSIS installer
 npm run electron:pack:linux    # Linux AppImage, deb, rpm
 ```
 
-**CI/CD:** Pushing a `v*` tag builds macOS arm64/x64, Windows x64, and Linux arm64/x64 packages, then creates a GitHub Release automatically. A failure in any target blocks the Release.
+**CI/CD:** Pushing a stable `vX.Y.Z` tag builds signed/notarized macOS arm64, x64, and universal packages plus the `latest-mac.yml` automatic-update feed; it also builds Windows x64 and Linux arm64/x64 manual installers. The Release is made public only after signing, notarization, packaged health, checksum, attestation, Intel ABI, and complete asset-graph checks pass. Windows/Linux updater metadata is intentionally not published.
 
 **Notes:**
 - Electron forks a Next.js standalone server on `127.0.0.1` with a random free port

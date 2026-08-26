@@ -125,7 +125,11 @@ function NewChatPageInner() {
   const [statusText, setStatusText] = useState<string | undefined>();
   const [workingDir, setWorkingDir] = useState('');
   const [folderPickerOpen, setFolderPickerOpen] = useState(false);
-  const [errorBanner, setErrorBanner] = useState<{ message: string; description?: string } | null>(null);
+  const [errorBanner, setErrorBanner] = useState<{
+    message: string;
+    description?: string;
+    providerRecovery?: boolean;
+  } | null>(null);
   const [hasProvider, setHasProvider] = useState(true); // assume true until checked
   // True when the runtime-filtered /api/providers/models call succeeded
   // but returned an empty list — i.e. user has providers configured but
@@ -972,7 +976,15 @@ function NewChatPageInner() {
               detail: { initialCard: err.initialCard ?? 'provider' },
             }));
           }
-          throw new Error(err?.error || 'Failed to send message');
+          const requestError = new Error(err?.error || 'Failed to send message') as Error & {
+            code?: string;
+            reason?: string;
+            sessionProviderId?: string;
+          };
+          requestError.code = err?.code;
+          requestError.reason = err?.reason;
+          requestError.sessionProviderId = err?.sessionProviderId;
+          throw requestError;
         }
         // Backend accepted the message + files (POST /api/chat is 2xx and the
         // stream is opening) — from here the screenshot is committed
@@ -1281,8 +1293,27 @@ function NewChatPageInner() {
             navGuardRef.current?.navigate(() => router.push(`/chat/${sessionId}`));
           }
         } else {
-          const errMsg = error instanceof Error ? error.message : 'Unknown error';
-          setErrorBanner({ message: t('error.sessionCreateFailed'), description: errMsg });
+          const typedError = error as Error & { reason?: string; sessionProviderId?: string };
+          const providerRecovery =
+            typedError.reason === 'credentials-unreadable'
+            || typedError.reason === 'credentials-missing';
+          const errMsg = providerRecovery
+            ? t(
+                typedError.reason === 'credentials-unreadable'
+                  ? 'chat.providerCredentialsUnreadable.message'
+                  : 'chat.providerCredentialsUnavailable.message',
+                {
+                  providerId: typedError.sessionProviderId || currentProviderId || '',
+                },
+            )
+            : error instanceof Error ? error.message : 'Unknown error';
+          setErrorBanner({
+            message: providerRecovery
+              ? t('error.providerCredentialUnavailable')
+              : t('error.sessionCreateFailed'),
+            description: errMsg,
+            providerRecovery,
+          });
         }
         // #615: a failure BEFORE the message was accepted for delivery (session
         // creation or POST /api/chat rejected) must preserve the composer so the
@@ -1399,6 +1430,12 @@ function NewChatPageInner() {
           className="mx-4 mb-2"
           onDismiss={() => setErrorBanner(null)}
           actions={[
+            ...(errorBanner.providerRecovery
+              ? [{
+                  label: t('chat.providerCredentialsUnavailable.action'),
+                  onClick: () => router.push('/settings/providers'),
+                }]
+              : []),
             { label: t('error.retry'), onClick: () => setErrorBanner(null) },
           ]}
         />

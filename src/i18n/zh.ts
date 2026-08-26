@@ -113,6 +113,9 @@ const zh: Record<TranslationKey, string> = {
   // 「保存的服务商不在了，请在下方挑一个新的」，picker 已经只显示
   // 真实存在的 provider，所以挑完再发就会走新 provider。
   'chat.invalidSessionProvider.message': '本会话保存的服务商「{providerId}」已经被删除，无法继续发送。请在下方挑选其它服务商或返回设置重新连接。',
+  'chat.providerCredentialsUnavailable.message': '服务商「{providerId}」缺少凭据，本条消息没有发送给任何服务商。请前往“设置 → 服务商设置”填写 API Key，然后重试。',
+  'chat.providerCredentialsUnreadable.message': '升级后，CodePilot 已无法解密服务商「{providerId}」原来保存的凭据；API Key 本身可能仍然有效，本条消息也没有发送给任何服务商。请前往“设置 → 服务商设置”，删除原来的服务商，再使用同一个 API Key 重新添加；返回当前对话后重新选择该服务商并重试。删除服务商也会移除其自定义模型设置，如有需要请先记录。',
+  'chat.providerCredentialsUnavailable.action': '前往服务商设置',
   'chat.codexRecoverySafeMode': 'CodePilot 已用安全模式恢复本地服务。Codex Runtime 和自动后台任务已暂停；重启应用后可恢复正常模式。',
 
   // ── Settings: General ───────────────────────────────────────
@@ -1816,6 +1819,7 @@ const zh: Record<TranslationKey, string> = {
   'error.pushFailed': '推送失败',
   'error.directoryInvalid': '目录已不存在',
   'error.providerUnavailable': '无可用的 API 服务商',
+  'error.providerCredentialUnavailable': '保存的服务商凭据不可用',
   'error.invalidDefault': '默认模型在当前执行引擎下不可用',
   'error.invalidDefaultDesc': '你固定的默认模型（{pinned}）在当前执行引擎下无法执行。可切换执行引擎 / 启用该模型 / 选择其他默认 / 改回 Auto。',
   'error.invalidDefaultGoRuntime': '前往执行引擎',

@@ -1,53 +1,45 @@
-## CodePilot v0.67.6
+## CodePilot v0.67.7
 
-> 保留 macOS 签名、公证与应用内自动更新，同时恢复 Windows 和 Linux 的手动安装包下载。
-
-### 新增功能
-
-- **macOS 自动更新** — CodePilot 可以在后台检查并下载受签名保护的更新，下载完成后由你决定何时重启安装；检测到仍有对话、Bridge 或定时任务运行时不会强制退出。
-- **数据库启动恢复** — 数据库损坏、暂时被占用或迁移失败时会展示对应的恢复说明和脱敏诊断；只有确认损坏时才提供新建空数据库，并在操作前保留可验证备份。
+> 修复升级后智谱 GLM 原有 API Key 无法读取时的错误路由，并给出明确、安全的恢复步骤。
 
 ### 修复问题
 
-- **修复 GLM-5.3 显示已添加但模型列表中找不到** — 完整识别多个历史版本留下的 GLM-4.7、GLM-4.5-Air、GLM-5.2 与 GLM-5-Turbo 目录，将可确认的旧模型安全迁移到当前目录，同时保留手动编辑和隐藏状态。
-- **修复安装更新时可能中断正在输出的会话** — 流式输出、等待授权和运行中的会话都会阻止安装退出，安装交接失败后旧版本会恢复可用状态。
-- **修复取消流式任务后的重复关闭错误** — Marketplace、CLI 工具和媒体任务在取消或超时后只结束一次响应，不再继续写入已经关闭的流。
-- **修复数据库恢复可能误报损坏或重新载入旧库** — 迁移和运行期故障不再被描述为数据损坏，“新建空数据库”也不会被旧路径数据库覆盖。
-- **恢复 Windows 与 Linux 下载** — Windows 和 Linux 用户检查更新时会获得对应平台的真实安装包链接，不再遇到新版本只有 macOS 下载的死端。
+- **修复新版 GLM 模型全部请求失败** — 部分 Mac 升级后无法解密旧服务商凭据，CodePilot 过去可能错误继承 Claude 登录状态并显示无关的 401。现在会在发送前阻断，不再把 GLM-5.3、GLM-5-Turbo 或 GLM-4.7 请求发往其它服务商。
+- **区分 Key 失效与本机凭据不可读** — 提示会明确说明原 API Key 本身可能仍然有效，并引导前往“设置 → 服务商设置”，删除原服务商后使用同一个 Key 重新添加，再回到会话重新选择。
+- **修复旧会话使用默认服务商时的晚失败** — 即使旧会话尚未保存服务商 ID，只要最终选择的默认服务商缺少可用凭据，也会在消息写入前停止，不再留下未实际发送的用户消息。
+- **修复重新保存 Key 后仍显示旧错误** — 用户清空或重新填写服务商 Key 后，旧的解密失败状态会同步清除，提示与当前真实状态保持一致。
 
 ### 优化改进
 
-- macOS 安装包经过 Developer ID 签名、公证、staple 与 Gatekeeper 验证；自动更新 metadata、blockmap、checksum 和安装包由同一次不可变构建生成并校验。
-- Windows 与 Linux 本版只提供手动下载安装，不启用应用内原生自动安装，也不发布对应平台的 updater metadata。
-- 崩溃统计默认不上传 native minidump，进一步收窄可能包含本机路径或内存内容的遥测范围。
-- 数据库恢复备份增加一致性校验、内容去重与保留策略，降低重复损坏备份挤占磁盘的风险。
+- 删除服务商会同时移除其自定义模型设置；恢复提示现在会提前说明，方便用户先记录需要保留的配置。
+- macOS 正式版继续使用 Developer ID 签名、公证和 `latest-mac.yml` 原生自动更新；Windows 与 Linux 继续提供手动安装包，不发布对应平台的自动更新 metadata。
 
 ## 下载地址
 
-> macOS v0.67.5 可在应用内检查并升级到本版本。v0.67.1 及更早版本需要先手动安装。Windows/Linux 本版均为手动下载安装。
+> macOS v0.67.5 及更高正式版可在应用内检查并升级到本版本。v0.67.1 及更早版本需要先手动安装。Windows/Linux 本版均为手动下载安装。
 
 ### macOS
 
-- [Apple Silicon (M1/M2/M3/M4)](https://github.com/op7418/CodePilot/releases/download/v0.67.6/CodePilot-0.67.6-arm64.dmg)
-- [Intel](https://github.com/op7418/CodePilot/releases/download/v0.67.6/CodePilot-0.67.6-x64.dmg)
+- [Apple Silicon (M1/M2/M3/M4)](https://github.com/op7418/CodePilot/releases/download/v0.67.7/CodePilot-0.67.7-arm64.dmg)
+- [Intel](https://github.com/op7418/CodePilot/releases/download/v0.67.7/CodePilot-0.67.7-x64.dmg)
 
 ### Windows
 
-- [Windows x64 安装包](https://github.com/op7418/CodePilot/releases/download/v0.67.6/CodePilot.Setup.0.67.6.exe)
+- [Windows x64 安装包](https://github.com/op7418/CodePilot/releases/download/v0.67.7/CodePilot.Setup.0.67.7.exe)
 - 本版 Windows 安装包未配置 Authenticode 证书，可能出现 SmartScreen 提示；仅从本 Release 下载并用下方 SHA-256 校验，不要从第三方镜像获取。
 
 ### Linux
 
-- [x64 AppImage](https://github.com/op7418/CodePilot/releases/download/v0.67.6/CodePilot-0.67.6-x86_64.AppImage)
-- [arm64 AppImage](https://github.com/op7418/CodePilot/releases/download/v0.67.6/CodePilot-0.67.6-arm64.AppImage)
-- [amd64 DEB](https://github.com/op7418/CodePilot/releases/download/v0.67.6/CodePilot-0.67.6-amd64.deb)
-- [arm64 DEB](https://github.com/op7418/CodePilot/releases/download/v0.67.6/CodePilot-0.67.6-arm64.deb)
-- [x86_64 RPM](https://github.com/op7418/CodePilot/releases/download/v0.67.6/CodePilot-0.67.6-x86_64.rpm)
-- [aarch64 RPM](https://github.com/op7418/CodePilot/releases/download/v0.67.6/CodePilot-0.67.6-aarch64.rpm)
+- [x64 AppImage](https://github.com/op7418/CodePilot/releases/download/v0.67.7/CodePilot-0.67.7-x86_64.AppImage)
+- [arm64 AppImage](https://github.com/op7418/CodePilot/releases/download/v0.67.7/CodePilot-0.67.7-arm64.AppImage)
+- [amd64 DEB](https://github.com/op7418/CodePilot/releases/download/v0.67.7/CodePilot-0.67.7-amd64.deb)
+- [arm64 DEB](https://github.com/op7418/CodePilot/releases/download/v0.67.7/CodePilot-0.67.7-arm64.deb)
+- [x86_64 RPM](https://github.com/op7418/CodePilot/releases/download/v0.67.7/CodePilot-0.67.7-x86_64.rpm)
+- [aarch64 RPM](https://github.com/op7418/CodePilot/releases/download/v0.67.7/CodePilot-0.67.7-aarch64.rpm)
 
 ### 完整性验证
 
-- [SHA-256 Checksums](https://github.com/op7418/CodePilot/releases/download/v0.67.6/SHA256SUMS.txt)
+- [SHA-256 Checksums](https://github.com/op7418/CodePilot/releases/download/v0.67.7/SHA256SUMS.txt)
 - GitHub Release 页面可验证每个安装包的 build-provenance attestation；`latest-mac.yml` 与 blockmap 是自动更新器资产，不需要手工下载。
 
 ## 安装说明
