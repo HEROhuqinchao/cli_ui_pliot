@@ -451,8 +451,13 @@ describe('U3 — CodePlan add-model is not held hostage by an optional upstream 
     assert.deepEqual(persistedCapabilities.supportedEffortLevels, ['low', 'high', 'max']);
     assert.equal(persistedCapabilities.defaultEffortLevel, 'max');
     assert.equal(persistedCapabilities.effortNoteKey, 'messageInput.effort.note.glmCodePlan');
-    assert.equal(byId.get('glm-5-turbo')?.display_name, 'GLM-5-Turbo', 'new catalog ids must materialize');
-    assert.equal(byId.get('haiku')?.display_name, 'GLM-4.7');
+    assert.equal(byId.get('haiku')?.display_name, 'GLM-5.3-Flash');
+    assert.equal(byId.get('haiku')?.upstream_model_id, 'glm-5.3-flash[1m]');
+    const flashCapabilities = JSON.parse(
+      getAllModelsForProvider(provider.id).find(model => model.model_id === 'haiku')!.capabilities_json,
+    );
+    assert.equal(flashCapabilities.vision, true);
+    assert.deepEqual(flashCapabilities.supportedEffortLevels, ['low', 'high', 'max']);
     assert.equal(byId.get('user/custom-model')?.display_name, 'My custom GLM');
     assert.equal(byId.get('user/custom-model')?.enabled, 0, 'manual hidden choice must survive catalog merge');
     assert.equal(byId.get('user/custom-model')?.user_edited, 1);
@@ -565,7 +570,10 @@ describe('U3 — CodePlan add-model is not held hostage by an optional upstream 
     const settingsFlagship = settingsBody.models.find(model => model.model_id === 'sonnet')!;
     assert.equal(settingsFlagship.upstream_model_id, 'glm-5.3[1m]');
     assert.equal(settingsFlagship.display_name, 'GLM-5.3');
-    assert.ok(settingsBody.models.some(model => model.model_id === 'glm-5-turbo'));
+    assert.ok(settingsBody.models.some(model =>
+      model.model_id === 'haiku'
+      && model.upstream_model_id === 'glm-5.3-flash[1m]'
+      && model.display_name === 'GLM-5.3-Flash'));
 
     const groups = await getGroups();
     const composerGroup = groups.find(group => group.provider_id === provider.id)!;
@@ -687,7 +695,7 @@ describe('U3 — CodePlan add-model is not held hostage by an optional upstream 
     assert.equal(restored.enable_source, 'catalog');
     assert.equal(restored.upstream_model_id, 'glm-5.3[1m]');
     const caps = JSON.parse(restored.capabilities_json);
-    assert.equal(caps.contextWindow, 1_048_576);
+    assert.equal(caps.contextWindow, 1_000_000);
     assert.equal(caps.supportsEffort, true);
     assert.deepEqual(caps.supportedEffortLevels, ['low', 'high', 'max']);
   });

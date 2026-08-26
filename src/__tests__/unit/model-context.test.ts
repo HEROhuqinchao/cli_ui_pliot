@@ -73,6 +73,11 @@ describe('getContextWindow — alias disambiguation', () => {
     assert.equal(getContextWindow('nonexistent-model'), null);
   });
 
+  it('GLM-5.3-Flash resolves its official 1M window for both wire IDs', () => {
+    assert.equal(getContextWindow('glm-5.3-flash'), 1_000_000);
+    assert.equal(getContextWindow('haiku', { upstream: 'glm-5.3-flash[1m]' }), 1_000_000);
+  });
+
   it('MODEL_CONTEXT_WINDOWS still carries explicit entries expected by route code', () => {
     // Guardrail for future refactors that might accidentally rename keys
     // out from under /api/providers/models and claude-client.
