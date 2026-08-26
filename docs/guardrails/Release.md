@@ -29,7 +29,7 @@
 | 11 | 私钥只存在于 secret/signing service；轮换/丢失按 `docs/rules/release.md` runbook，publisher/Team ID 变化不得直接自动更新 | 人 + CI |
 | 12 | stable tag 发布三平台安装包；macOS official updater 消费 `latest-mac.yml`/universal ZIP，Windows official updater 消费 unsigned `latest.yml`/NSIS installer，Linux provenance 必须为 `0` 且不得发布 `latest-linux*.yml`。preview Release 仍为 macOS-only | workflow + verifier |
 | 13 | Windows stable updater 的 signer 三件套必须 all-or-none：全有则签名并校验，全无则显式关闭 `forceCodeSigning` 与 publisher verification、校验 `NotSigned` 并启用 GitHub-single-root updater，部分配置 fail closed。UI 的 publisher 状态必须读取 packaged `app-update.yml`，无 key/有效 key/缺失畸形分别映射 none/authenticode/unknown，unknown 关闭 native updater；不得用 `nsis` 常量冒充真实签名状态 | workflow + docs + UI |
-| 14 | workflow 顶层只有 `contents: read`；`contents`/OIDC/attestation 写权限只授予 stable/preview 发布 job，所有 Action `uses:` 固定 40 位 commit SHA。unsigned Windows feed 还要求当天或前一 UTC 日的 Immutable Releases 管理员确认；active `main` 与 `v*` tag ruleset 必须各恰好一个、无 bypass/exclude，并分别禁止删除/非快进与删除/更新。发布 job 先把完整资产图上传到可恢复 draft，全部成功后才一次切为公开 stable/prerelease | workflow + source-contract test |
+| 14 | workflow 顶层只有 `contents: read`；`contents`/OIDC/attestation 写权限只授予 stable/preview 发布 job，所有 Action `uses:` 固定 40 位 commit SHA。unsigned Windows feed 还要求当天或前一 UTC 日的 Immutable Releases 管理员确认；active `main` 与 `v*` tag ruleset 必须各恰好一个、无 bypass/exclude，并分别禁止删除/非快进与删除/更新。管理员生成的 `CODEPILOT_RULESETS_CONFIRMED_STATE` 必须与 live ruleset `id` / `updated_at` 一致；Actions token 看不到 `bypass_actors` 时禁止把缺失当空。发布 job 先把完整资产图上传到可恢复 draft，全部成功后才一次切为公开 stable/prerelease | workflow + source-contract test |
 | 15 | universal 合并时，按目录选型的 SDK/Sharp Darwin 预编译文件与 already-universal Trash helper 只能由精确 `x64ArchFiles` glob 保留；`better-sqlite3` / `zlib-sync` 必须先逐架构替换再由 universal 合并，合并后的 `afterPack`（Arch=4）必须 no-op，不得把 fat binary 覆盖回单架构 | builder config + hooks + source-contract test + universal package probe |
 | 16 | 分发 DMG 容器必须在 package step 的临时 keychain 仍可用时由同一 Developer ID Application identity 签名；提交公证前先校验配置 Team，公证/staple 后再用 `codesign`、`stapler` 与 DMG 专用 Gatekeeper `open/context:primary-signature` 三重验收 | builder config + notarizer + final verifier |
 
@@ -45,7 +45,7 @@
 | `scripts/notarize-macos-dmgs.mjs` / `verify-macos-notarization.mjs` | DMG 公证/staple 与 app/DMG/ZIP Gatekeeper 门禁 |
 | `scripts/verify-windows-signing.ps1` | CodePilot installer + 顶层 app EXE publisher/timestamp 门禁；禁止递归要求第三方 EXE 同 publisher |
 | `scripts/verify-update-assets.mjs` | stable/preview metadata/hash/blockmap 原子图 |
-| `scripts/verify-github-update-rulesets.mjs` / `verify-immutable-release-ack.mjs` | 无 bypass/exclude/重名的实时 ruleset 与短时管理员确认门禁 |
+| `scripts/verify-github-update-rulesets.mjs` / `verify-immutable-release-ack.mjs` | 管理员 no-bypass 状态、live ruleset 防漂移与短时 Immutable 确认门禁 |
 
 ## 改动检查表
 
@@ -60,7 +60,7 @@
 - [ ] `dmg.sign=true` 是否保持；DMG 是否在提交 Apple 前已验证为配置 Team 的 Developer ID，而不是只有 notarization ticket 的未签名容器
 - [ ] Windows signer 全配置时 installer 与顶层 CodePilot.exe 的 Authenticode subject、SHA-256 与 RFC3161 timestamp 全通过；全未配置时两者为 `NotSigned`、`app-update.yml` 无 `publisherName` 且 UI/Release Notes 明示；签名密码只注入 package step，不写 `GITHUB_ENV`
 - [ ] preview 使用 `preview-mac.yml` + prerelease；stable 同时含 `latest-mac.yml` 与 `latest.yml`，不包含 `stagingPercentage` 或 Linux metadata；central distribution asset audit 全通过
-- [ ] `CODEPILOT_IMMUTABLE_RELEASES_CONFIRMED_AT` 是否为当天/前一 UTC 日；`main` 与 `stable-release-tags` ruleset 是否各恰好一个、active、无 bypass/exclude；所有 workflow Action 仍为 40-hex SHA
+- [ ] `CODEPILOT_IMMUTABLE_RELEASES_CONFIRMED_AT` 是否为当天/前一 UTC 日；管理员是否用完整响应确认 `main` 与 `stable-release-tags` 各恰好一个、active、无 bypass/exclude，并刷新 `CODEPILOT_RULESETS_CONFIRMED_STATE`；CI live `id` / `updated_at` 是否仍一致；所有 workflow Action 是否仍为 40-hex SHA
 - [ ] metadata 是否恰好一条 universal ZIP；stable/preview 是否先完整上传 draft，再一次切换可见性；失败 draft 是否可由同 tag workflow rerun 恢复
 - [ ] universal package 是否实际合并成功；双架构 Sharp 是否在 `next build` 前按 lockfile integrity 准备；`x64ArchFiles` 是否仍为逐路径 allow-list；最终 SQLite/zlib 与主程序是否保留 arm64+x86_64 双 slice，并由 Intel universal health gate 验证？
 - [ ] signer 到期/轮换窗口已检查；identity 变化或 key loss 已按 release runbook 处理
@@ -112,3 +112,4 @@
 - 2026-08-24 — `v0.67.2` 首次正式 CI 在 universal 合并处发现同 app tree 预编译文件。真实本地探针完整枚举并分型：SDK/Sharp 按目录选型、Trash 已是 universal，逐路径 allow-list；zlib 与 SQLite 则逐架构重编、真实 lipo。探针还发现 universal 后置 `afterPack` 会用 Arch=4 覆盖 fat binary，因此明确 no-op。旧 tag 保留且未创建 Release，修复后递增 `v0.67.3`。
 - 2026-08-24 — `v0.67.3` 正式 CI 的 app/原生/universal 签名与公证均通过，但最终 DMG Gatekeeper 验证发现容器只有 notarization ticket、没有可用 Developer ID signature。保留失败 tag；启用 `dmg.sign=true`，并把 DMG Team/signature 检查前移到 notary submission 之前，修复后递增 `v0.67.4`。
 - 2026-08-26 — 用户接受 Windows 无 Authenticode 自动更新并明确不申请 Microsoft/Azure/PFX 签名；Linux 延后。stable Windows official provenance 改为 `1`，发布 `latest.yml` + EXE blockmap并在 UI 明示 GitHub 单一信任根。作为补偿门禁，workflow Action 全部 pin 40-hex SHA，发布前要求管理员确认 Immutable Releases，并实时校验 active main no-delete/no-force 与 `v*` tag no-delete/no-update rulesets；`v0.67.7` 以前客户端仍需手动 bootstrap。
+- 2026-08-26 — `v0.67.8` final release job 证明 GitHub Actions 内置 token 会按官方权限模型隐藏 `bypass_actors`；保留失败 tag，不把缺字段降级成空。管理员完整响应验证 no-bypass 后生成 `CODEPILOT_RULESETS_CONFIRMED_STATE`，低权限 CI 以 live shape + `id` / `updated_at` 防漂移；不把管理员 PAT 长期放入 Actions。

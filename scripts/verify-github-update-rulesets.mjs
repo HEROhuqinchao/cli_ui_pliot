@@ -2,13 +2,29 @@
 
 import fs from 'node:fs';
 
-const [mainPath, tagPath] = process.argv.slice(2);
+const [mainPath, tagPath, confirmedStateInput] = process.argv.slice(2);
 if (!mainPath || !tagPath) {
-  throw new Error('Usage: node scripts/verify-github-update-rulesets.mjs <main-ruleset.json> <tag-ruleset.json>');
+  throw new Error(
+    'Usage: node scripts/verify-github-update-rulesets.mjs <main-ruleset.json> <tag-ruleset.json> [confirmed-state-json|--emit-confirmed-state]',
+  );
 }
 
 function readJson(file) {
   return JSON.parse(fs.readFileSync(file, 'utf8'));
+}
+
+function normalizeUpdatedAt(ruleset, label) {
+  if (!Number.isInteger(ruleset.id) || ruleset.id <= 0) {
+    throw new Error(`${label} ruleset response does not expose a valid id`);
+  }
+  if (typeof ruleset.updated_at !== 'string') {
+    throw new Error(`${label} ruleset response does not expose updated_at`);
+  }
+  const updatedAt = new Date(ruleset.updated_at);
+  if (Number.isNaN(updatedAt.getTime())) {
+    throw new Error(`${label} ruleset updated_at is invalid`);
+  }
+  return updatedAt.toISOString();
 }
 
 function verifyRuleset(ruleset, expected) {
@@ -34,25 +50,69 @@ function verifyRuleset(ruleset, expected) {
   for (const required of expected.requiredRules) {
     if (!ruleTypes.has(required)) throw new Error(`${expected.label} ruleset is missing ${required}`);
   }
-  if (!Array.isArray(ruleset.bypass_actors)) {
-    throw new Error(`${expected.label} ruleset response does not expose bypass actors`);
+  const exposesBypassActors = Object.hasOwn(ruleset, 'bypass_actors');
+  if (exposesBypassActors && !Array.isArray(ruleset.bypass_actors)) {
+    throw new Error(`${expected.label} ruleset bypass actors must be an array`);
   }
-  if (ruleset.bypass_actors.length > 0) {
+  if (exposesBypassActors && ruleset.bypass_actors.length > 0) {
     throw new Error(`${expected.label} ruleset must not define bypass actors`);
   }
+  return {
+    exposesBypassActors,
+    id: ruleset.id,
+    updatedAt: normalizeUpdatedAt(ruleset, expected.label),
+  };
 }
 
-verifyRuleset(readJson(mainPath), {
+const mainRuleset = readJson(mainPath);
+const tagRuleset = readJson(tagPath);
+const main = verifyRuleset(mainRuleset, {
   label: 'default branch',
   target: 'branch',
   refPatterns: ['~DEFAULT_BRANCH', 'refs/heads/main'],
   requiredRules: ['deletion', 'non_fast_forward'],
 });
-verifyRuleset(readJson(tagPath), {
+const stableTags = verifyRuleset(tagRuleset, {
   label: 'stable release tag',
   target: 'tag',
   refPatterns: ['refs/tags/v*'],
   requiredRules: ['deletion', 'update'],
 });
 
-console.log('GitHub unsigned-updater rulesets OK: default branch blocks deletion/force-push and v* tags block update/deletion');
+const confirmedState = {
+  version: 1,
+  noBypass: true,
+  main: { id: main.id, updatedAt: main.updatedAt },
+  stableTags: { id: stableTags.id, updatedAt: stableTags.updatedAt },
+};
+
+if (confirmedStateInput === '--emit-confirmed-state') {
+  if (!main.exposesBypassActors || !stableTags.exposesBypassActors) {
+    throw new Error('administrator ruleset responses must expose bypass actors before emitting confirmed state');
+  }
+  process.stdout.write(`${JSON.stringify(confirmedState)}\n`);
+  process.exit(0);
+}
+
+if (!main.exposesBypassActors || !stableTags.exposesBypassActors) {
+  if (!confirmedStateInput) {
+    throw new Error(
+      'ruleset response does not expose bypass actors; CODEPILOT_RULESETS_CONFIRMED_STATE is required',
+    );
+  }
+  let suppliedState;
+  try {
+    suppliedState = JSON.parse(confirmedStateInput);
+  } catch {
+    throw new Error('CODEPILOT_RULESETS_CONFIRMED_STATE must be valid JSON');
+  }
+  if (JSON.stringify(suppliedState) !== JSON.stringify(confirmedState)) {
+    throw new Error(
+      'CODEPILOT_RULESETS_CONFIRMED_STATE does not match live ruleset ids/updated_at; administrator reconfirmation is required',
+    );
+  }
+}
+
+console.log(
+  'GitHub unsigned-updater rulesets OK: default branch blocks deletion/force-push and v* tags block update/deletion with no bypass/exclude',
+);

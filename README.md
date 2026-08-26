@@ -265,7 +265,7 @@ npm run electron:pack:win      # Windows NSIS installer
 npm run electron:pack:linux    # Linux AppImage, deb, rpm
 ```
 
-**CI/CD:** Pushing a stable `vX.Y.Z` tag builds signed/notarized macOS arm64, x64, and universal packages plus `latest-mac.yml`; an unsigned Windows x64 NSIS updater plus `latest.yml`; and Linux arm64/x64 manual packages. The Release is made public only after signing/notarization where applicable, packaged health, checksum, attestation, Intel ABI, GitHub single-trust-root safeguards, and complete asset-graph checks pass. Windows publishes an EXE blockmap for opportunistic differential updates with full-installer fallback; Linux updater metadata is intentionally not published.
+**CI/CD:** Pushing a stable `vX.Y.Z` tag builds signed/notarized macOS arm64, x64, and universal packages plus `latest-mac.yml`; an unsigned Windows x64 NSIS updater plus `latest.yml`; and Linux arm64/x64 manual packages. The Release is made public only after signing/notarization where applicable, packaged health, checksum, attestation, Intel ABI, GitHub single-trust-root safeguards, and complete asset-graph checks pass. The unsigned Windows trust gate requires a fresh administrator audit of immutable Releases and no-bypass branch/tag rulesets; Actions compares the live ruleset IDs and update timestamps with that audit and fails closed on drift. Windows publishes an EXE blockmap for opportunistic differential updates with full-installer fallback; Linux updater metadata is intentionally not published.
 
 **Notes:**
 - Electron forks a Next.js standalone server on `127.0.0.1` with a random free port

@@ -101,7 +101,7 @@
 
 | 文件 | 主题 | 状态 |
 |------|------|------|
-| [active/windows-unsigned-native-auto-update-2026-08-26.md](active/windows-unsigned-native-auto-update-2026-08-26.md) | **Windows 无签名原生自动更新与差分下载**：不申请 Microsoft/Azure/PFX 签名，固定 GitHub 单一信任根；stable 发布 `latest.yml` + NSIS blockmap，Linux 保持手动 | 🚧 本地实现与测试完成；Immutable Releases、main/tag ruleset 和 Windows RC-A→RC-B 尚未完成，Release fail-closed |
+| [active/windows-unsigned-native-auto-update-2026-08-26.md](active/windows-unsigned-native-auto-update-2026-08-26.md) | **Windows 无签名原生自动更新与差分下载**：不申请 Microsoft/Azure/PFX 签名，固定 GitHub 单一信任根；stable 发布 `latest.yml` + NSIS blockmap，Linux 保持手动 | 🚧 `v0.67.8` 在公开前因 Actions ruleset 敏感字段不可见而 fail-closed；tag 已保留，管理员 no-bypass 确认状态 + live 防漂移修复进入 `v0.67.9`，Windows RC-A→RC-B 待执行 |
 | [active/composer-model-route-permission-consolidation.md](active/composer-model-route-permission-consolidation.md) | **Composer 模型路线、能力参数与权限入口收口**：Favorites 精确组合 + Runtime 左栏、Provider 分组模型右栏、能力描述符、上下文/Send 末端布局与权限档位双向映射 | 🟡 本轮 UI/定向 unit/scoped E2E 通过；三 Runtime 真实 effective-wire smoke 待执行（Tier 2） |
 | [active/workspace-surface-sidebar-pin-and-inspector.md](active/workspace-surface-sidebar-pin-and-inspector.md) | **Workspace Surface Sidebar**：Files/Git/Browser 等模块统一注册、项目级 pin、瞬时“+”与 tab own close、Primary + Inspector 双 lane、`canonicalWorkspaceKey` 与 v13 可逆迁移 | 🟡 Add/Pin/Unpin/own-close/reload scoped E2E 通过；Diff/Artifact → Inspector 人工验收仍待执行 |
 | [active/browser-webcontentsview-poc.md](active/browser-webcontentsview-poc.md) | **Browser WebContentsView 技术 POC**：验证三平台 bounds/IME/overlay/shortcut/zoom/crash/session/permission/download；只交付 Smoke Ledger、风险矩阵与 go/no-go，不合入产品代码 | 🧭 BLOCKED / INCONCLUSIVE，已被 `<webview>` MVP 路线取代；Windows/Linux 未跑，不伪造 GO |

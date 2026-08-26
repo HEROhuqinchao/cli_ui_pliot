@@ -689,6 +689,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           IMMUTABLE_RELEASES_CONFIRMED_AT: ${{ vars.CODEPILOT_IMMUTABLE_RELEASES_CONFIRMED_AT }}
+          RULESETS_CONFIRMED_STATE: ${{ vars.CODEPILOT_RULESETS_CONFIRMED_STATE }}
         run: |
           set -euo pipefail
           node scripts/verify-immutable-release-ack.mjs "$IMMUTABLE_RELEASES_CONFIRMED_AT"
@@ -705,7 +706,8 @@ jobs:
           gh api "repos/${GITHUB_REPOSITORY}/rulesets/${TAG_ID}" > "$RUNNER_TEMP/codepilot-tag-ruleset.json"
           node scripts/verify-github-update-rulesets.mjs \
             "$RUNNER_TEMP/codepilot-main-ruleset.json" \
-            "$RUNNER_TEMP/codepilot-tag-ruleset.json"
+            "$RUNNER_TEMP/codepilot-tag-ruleset.json" \
+            "$RULESETS_CONFIRMED_STATE"
 
       - name: List artifacts
         run: find artifacts -type f | sort

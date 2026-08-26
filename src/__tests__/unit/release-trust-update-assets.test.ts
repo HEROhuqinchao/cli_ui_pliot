@@ -195,6 +195,7 @@ describe('release signing and update asset contracts', () => {
     assert.match(stable, /app-update\.yml[\s\S]*?publisherName/);
     assert.match(stable, /Signed Windows app-update\.yml must expose publisherName/);
     assert.match(stable, /CODEPILOT_IMMUTABLE_RELEASES_CONFIRMED_AT/);
+    assert.match(stable, /CODEPILOT_RULESETS_CONFIRMED_STATE/);
     assert.match(stable, /gh api --paginate --slurp/);
     assert.match(stable, /expected exactly one active main branch ruleset/);
     assert.match(stable, /expected exactly one active stable-release-tags ruleset/);
@@ -252,6 +253,8 @@ describe('release signing and update asset contracts', () => {
   it('requires active no-bypass default-branch and stable-tag rulesets', () => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'codepilot-update-rulesets-'));
     const branchBase = {
+      id: 101,
+      updated_at: '2026-08-26T16:14:47.620Z',
       enforcement: 'active',
       bypass_actors: [],
       rules: [{ type: 'deletion' }, { type: 'non_fast_forward' }],
@@ -266,12 +269,66 @@ describe('release signing and update asset contracts', () => {
       }));
       fs.writeFileSync(tagPath, JSON.stringify({
         ...branchBase,
+        id: 202,
+        updated_at: '2026-08-26T16:14:59.152Z',
         target: 'tag',
         rules: [{ type: 'deletion' }, { type: 'update' }],
         conditions: { ref_name: { include: ['refs/tags/v*'], exclude: [] } },
       }));
       const valid = spawnSync(process.execPath, [rulesetVerifier, mainPath, tagPath], { encoding: 'utf8' });
       assert.equal(valid.status, 0, valid.stderr);
+
+      const emitted = spawnSync(
+        process.execPath,
+        [rulesetVerifier, mainPath, tagPath, '--emit-confirmed-state'],
+        { encoding: 'utf8' },
+      );
+      assert.equal(emitted.status, 0, emitted.stderr);
+      const confirmedState = emitted.stdout.trim();
+      assert.deepEqual(JSON.parse(confirmedState), {
+        version: 1,
+        noBypass: true,
+        main: { id: 101, updatedAt: '2026-08-26T16:14:47.620Z' },
+        stableTags: { id: 202, updatedAt: '2026-08-26T16:14:59.152Z' },
+      });
+
+      const hiddenMain = JSON.parse(fs.readFileSync(mainPath, 'utf8'));
+      const hiddenTag = JSON.parse(fs.readFileSync(tagPath, 'utf8'));
+      delete hiddenMain.bypass_actors;
+      delete hiddenTag.bypass_actors;
+      fs.writeFileSync(mainPath, JSON.stringify(hiddenMain));
+      fs.writeFileSync(tagPath, JSON.stringify(hiddenTag));
+      const hiddenWithoutConfirmation = spawnSync(
+        process.execPath,
+        [rulesetVerifier, mainPath, tagPath],
+        { encoding: 'utf8' },
+      );
+      assert.notEqual(hiddenWithoutConfirmation.status, 0);
+      assert.match(hiddenWithoutConfirmation.stderr, /CODEPILOT_RULESETS_CONFIRMED_STATE is required/);
+
+      const hiddenConfirmed = spawnSync(
+        process.execPath,
+        [rulesetVerifier, mainPath, tagPath, confirmedState],
+        { encoding: 'utf8' },
+      );
+      assert.equal(hiddenConfirmed.status, 0, hiddenConfirmed.stderr);
+
+      hiddenTag.updated_at = '2026-08-26T16:15:00.000Z';
+      fs.writeFileSync(tagPath, JSON.stringify(hiddenTag));
+      const drifted = spawnSync(
+        process.execPath,
+        [rulesetVerifier, mainPath, tagPath, confirmedState],
+        { encoding: 'utf8' },
+      );
+      assert.notEqual(drifted.status, 0);
+      assert.match(drifted.stderr, /administrator reconfirmation is required/);
+
+      fs.writeFileSync(mainPath, JSON.stringify({ ...hiddenMain, bypass_actors: [] }));
+      fs.writeFileSync(tagPath, JSON.stringify({
+        ...hiddenTag,
+        updated_at: '2026-08-26T16:14:59.152Z',
+        bypass_actors: [],
+      }));
 
       const invalidTag = JSON.parse(fs.readFileSync(tagPath, 'utf8'));
       invalidTag.enforcement = 'disabled';
@@ -286,6 +343,13 @@ describe('release signing and update asset contracts', () => {
       const excluded = spawnSync(process.execPath, [rulesetVerifier, mainPath, tagPath], { encoding: 'utf8' });
       assert.notEqual(excluded.status, 0);
       assert.match(excluded.stderr, /must not exclude protected refs/);
+
+      invalidTag.conditions.ref_name.exclude = [];
+      invalidTag.bypass_actors = [{ actor_id: 5, actor_type: 'RepositoryRole', bypass_mode: 'always' }];
+      fs.writeFileSync(tagPath, JSON.stringify(invalidTag));
+      const bypassed = spawnSync(process.execPath, [rulesetVerifier, mainPath, tagPath], { encoding: 'utf8' });
+      assert.notEqual(bypassed.status, 0);
+      assert.match(bypassed.stderr, /must not define bypass actors/);
     } finally {
       fs.rmSync(fixture, { recursive: true, force: true });
     }

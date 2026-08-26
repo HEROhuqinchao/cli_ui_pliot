@@ -26,12 +26,13 @@ Renderer 只能通过 preload 的窄 IPC 获取状态、请求检查/重试下�
 Windows 当前没有独立 publisher identity。installer 与 metadata 的 SHA-512 一致性由 `electron-updater` 校验，但若 GitHub 仓库权限、workflow 与首次发布同时失守，攻击者可一起替换两者。因此以下发布保护属于功能合同，而不是可选加固：
 
 - GitHub Immutable Releases 由管理员启用；仓库变量 `CODEPILOT_IMMUTABLE_RELEASES_CONFIRMED_AT=YYYY-MM-DD` 只在完成该次 UTC 日核对后设置，发布门禁只接受当天或前一 UTC 日的确认。
-- `main` branch ruleset 必须 active、无 bypass、无 exclude，并包含 deletion/non-fast-forward；`stable-release-tags` tag ruleset 必须 active、无 bypass、无 exclude，并包含 deletion/update，阻止 tag 被删除或移动；同名 active ruleset 必须恰好一个。
+- `main` branch ruleset 必须 active、无 bypass、无 exclude，并包含 deletion/non-fast-forward；`stable-release-tags` tag ruleset 必须 active、无 bypass、无 exclude，并包含 deletion/update，阻止 tag 被删除或移动；同名 active ruleset 必须恰好一个。管理员用完整 API 响应运行 `verify-github-update-rulesets.mjs --emit-confirmed-state`，把输出写入 `CODEPILOT_RULESETS_CONFIRMED_STATE`。
+- GitHub 按权限隐藏敏感的 `bypass_actors` 字段；Actions 的内置 token 不能把缺失字段当成空数组。发布 job 会实时验证非敏感 ruleset shape，并把 live `id` / `updated_at` 与管理员确认状态精确匹配；规则变更后不重新确认就会 fail closed。
 - 所有 `.github/workflows/*` 的外部 `uses:` 固定完整 40 位 commit SHA。
 - workflow 顶层 token 为 `contents: read`；只有最终 release job 获得发布/attestation 写权限。
 - installer、metadata、blockmap、checksum 和 attestation 从同一 build graph 进入 draft，central audit 完成后一次公开。
 
-GitHub 的 Immutable Releases 查询需要 repository Administration(read)，普通 Actions token不能替代管理员核对；规则与权限要求见 [GitHub REST repository docs](https://docs.github.com/en/rest/repos/repos#check-if-immutable-releases-are-enabled-for-a-repository) 与 [ruleset docs](https://docs.github.com/en/rest/repos/rules#get-all-repository-rulesets)。
+GitHub 的 Immutable Releases 查询需要 repository Administration(read)，普通 Actions token不能替代管理员核对；GitHub 也明确说明只有具备 ruleset write access 的调用者才会收到 `bypass_actors`。规则与权限要求见 [GitHub REST repository docs](https://docs.github.com/en/rest/repos/repos#check-if-immutable-releases-are-enabled-for-a-repository) 与 [ruleset docs](https://docs.github.com/en/rest/repos/rules#get-a-repository-ruleset)。
 
 ## 3. unsigned 配置
 
@@ -64,7 +65,7 @@ builder 显式配置 `nsis.differentialPackage=true`，客户端显式设置 `di
 | `electron-builder.yml` | NSIS、可选 signer 基线、differential package |
 | `.github/workflows/build.yml` | Windows official build、unsigned verifier、资产上传、trust prerequisites、draft→public |
 | `scripts/verify-update-assets.mjs` | Mac+Windows updater / Linux manual distribution graph 审计 |
-| `scripts/verify-github-update-rulesets.mjs` | default branch 与 `v*` tag ruleset shape 审计 |
+| `scripts/verify-github-update-rulesets.mjs` | 管理员 no-bypass 确认状态生成；Actions live shape 与 `id` / `updated_at` 防漂移审计 |
 | `scripts/verify-immutable-release-ack.mjs` | 管理员 Immutable Releases 确认日期的新鲜度门禁 |
 
 ## 6. 资产合同
@@ -99,6 +100,6 @@ stable Release 必须包含：
 ## 8. 剩余风险
 
 - GitHub 是单一信任根；attestation 目前不由客户端强制验证。
-- `CODEPILOT_IMMUTABLE_RELEASES_CONFIRMED_AT` 是最长跨一个 UTC 日的管理员 acknowledgement，不是动态 admin API proof；它缩短但不能消除“确认后、发布前设置被关闭”的窗口。
+- `CODEPILOT_IMMUTABLE_RELEASES_CONFIRMED_AT` 与 `CODEPILOT_RULESETS_CONFIRMED_STATE` 是短时管理员 acknowledgement，不是 Actions 持有管理员凭据；live `id` / `updated_at` 防漂移会拦截确认后的 ruleset 修改，但管理员仍需在每次规则调整后重新核对。
 - 首次 unsigned installer 与后续 unsigned updater 都可能被 SmartScreen/企业策略拦截。
 - Windows 实机 RC 通过前，代码完成不等于功能已交付。
