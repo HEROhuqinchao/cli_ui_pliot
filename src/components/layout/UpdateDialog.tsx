@@ -95,6 +95,14 @@ export function UpdateDialog() {
           </p>
         )}
 
+        {isNativeUpdate
+          && updateInfo.nativePackageType === 'nsis'
+          && updateInfo.nativePublisherVerification === 'none' && (
+            <p className="rounded-md border border-status-warning-border bg-status-warning-muted px-2 py-1 text-xs text-status-warning-foreground">
+              {t('update.windowsUnsignedTrustNotice')}
+            </p>
+          )}
+
         {updateInfo.platformAssetMissing && (
           <p className="rounded-md border border-status-warning-border bg-status-warning-muted px-2 py-1 text-xs text-status-warning-foreground">
             {t('update.platformAssetMissing', {

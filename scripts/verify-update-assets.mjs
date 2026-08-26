@@ -101,15 +101,41 @@ if (target === 'macos') {
 }
 
 if (target === 'distribution') {
-  const forbidden = /^(?:latest\.yml|latest-linux(?:-arm64)?\.yml|CodePilot\.Setup\..*\.exe\.blockmap)$/i;
+  const forbidden = /^(?:latest-linux(?:-arm64)?\.yml|preview(?:-linux(?:-arm64)?)?\.yml)$/i;
   const unexpected = matching(forbidden);
   if (unexpected.length > 0) {
-    throw new Error(`manual Windows/Linux distribution contains non-macOS updater assets: ${unexpected.join(', ')}`);
+    throw new Error(`Windows-updater/Linux-manual distribution contains Linux or preview updater metadata: ${unexpected.join(', ')}`);
   }
 }
 
-const metadataNames = target === 'macos' || target === 'distribution'
+const allowedReleasePayloads = [
+  new RegExp(`^CodePilot-${escapedVersion}-(?:arm64|x64|universal)\\.(?:dmg|zip)$`),
+  new RegExp(`^CodePilot-${escapedVersion}-(?:arm64|x64|universal)\\.zip\\.blockmap$`),
+];
+if (target === 'all' || target === 'distribution') {
+  allowedReleasePayloads.push(
+    new RegExp(`^CodePilot\\.Setup\\.${escapedVersion}\\.exe(?:\\.blockmap)?$`),
+  );
+}
+if ((target === 'all' || target === 'distribution') && channel === 'stable') {
+  allowedReleasePayloads.push(
+    new RegExp(`^CodePilot-${escapedVersion}-(?:x86_64|arm64)\\.AppImage$`, 'i'),
+    new RegExp(`^CodePilot-${escapedVersion}-(?:amd64|arm64)\\.deb$`, 'i'),
+    new RegExp(`^CodePilot-${escapedVersion}-(?:x86_64|aarch64)\\.rpm$`, 'i'),
+  );
+}
+const releasePayloads = matching(/\.(?:dmg|zip|blockmap|exe|AppImage|deb|rpm)$/i);
+const unexpectedReleasePayloads = releasePayloads.filter(
+  (name) => !allowedReleasePayloads.some((pattern) => pattern.test(name)),
+);
+if (unexpectedReleasePayloads.length > 0) {
+  throw new Error(`Release graph contains unexpected or wrong-version payloads: ${unexpectedReleasePayloads.join(', ')}`);
+}
+
+const metadataNames = target === 'macos'
   ? [channel === 'stable' ? 'latest-mac.yml' : 'preview-mac.yml']
+  : target === 'distribution'
+    ? ['latest-mac.yml', 'latest.yml']
   : channel === 'stable'
     ? ['latest.yml', 'latest-mac.yml', 'latest-linux.yml', 'latest-linux-arm64.yml']
     : ['preview.yml', 'preview-mac.yml'];
@@ -132,16 +158,25 @@ for (const metadataName of metadataNames) {
       throw new Error(`${metadataName} has malformed file entry`);
     }
     const assetName = path.basename(item.url);
+    if (item.url !== assetName) {
+      throw new Error(`${metadataName} must use a release-asset basename, found ${item.url}`);
+    }
     const assetPath = one(assetName);
     if (sha512Base64(assetPath) !== item.sha512) {
       throw new Error(`${metadataName} sha512 mismatch for ${assetName}`);
     }
-    if (Number.isFinite(item.size) && fs.statSync(assetPath).size !== item.size) {
+    if (!Number.isFinite(item.size) || Number(item.size) <= 0) {
+      throw new Error(`${metadataName} must declare a positive size for ${assetName}`);
+    }
+    if (fs.statSync(assetPath).size !== item.size) {
       throw new Error(`${metadataName} size mismatch for ${assetName}`);
     }
     if (/\.(zip|exe)$/i.test(assetName)) {
       const blockmapPath = one(`${assetName}.blockmap`);
-      if (Number.isFinite(item.blockMapSize) && fs.statSync(blockmapPath).size !== item.blockMapSize) {
+      if (!Number.isFinite(item.blockMapSize) || Number(item.blockMapSize) <= 0) {
+        throw new Error(`${metadataName} must declare a positive blockMapSize for ${assetName}`);
+      }
+      if (fs.statSync(blockmapPath).size !== item.blockMapSize) {
         throw new Error(`${metadataName} blockMapSize mismatch for ${assetName}`);
       }
     }
@@ -156,26 +191,33 @@ const macMetadata = yaml.load(fs.readFileSync(one(macMetadataName), 'utf8'));
 if (!macMetadata.files.every((item) => /\.zip$/i.test(String(item.url)))) {
   throw new Error(`${macMetadataName} must contain ZIP entries only; stapled DMGs are manual assets`);
 }
-if (macMetadata.files.length !== 1 || !/-universal\.zip$/i.test(String(macMetadata.files[0]?.url))) {
-  throw new Error(`${macMetadataName} must contain exactly one universal ZIP entry so arm64 and x64 share one trusted feed`);
+const expectedMacUpdaterName = `CodePilot-${expectedVersion}-universal.zip`;
+if (macMetadata.files.length !== 1 || String(macMetadata.files[0]?.url) !== expectedMacUpdaterName) {
+  throw new Error(`${macMetadataName} must contain exactly the current-version universal ZIP ${expectedMacUpdaterName}`);
 }
-if (target === 'all') {
+if (target === 'all' || target === 'distribution') {
   const windowsMetadataName = channel === 'stable' ? 'latest.yml' : 'preview.yml';
   const windowsMetadata = yaml.load(fs.readFileSync(one(windowsMetadataName), 'utf8'));
-  if (!windowsMetadata.files.every((item) => /CodePilot\.Setup\..*\.exe$/i.test(String(item.url)))) {
-    throw new Error(`${windowsMetadataName} must target the full NSIS installer`);
+  const expectedWindowsUpdaterName = `CodePilot.Setup.${expectedVersion}.exe`;
+  if (windowsMetadata.files.length !== 1 || String(windowsMetadata.files[0]?.url) !== expectedWindowsUpdaterName) {
+    throw new Error(`${windowsMetadataName} must target exactly the current-version full NSIS installer ${expectedWindowsUpdaterName}`);
   }
 }
 
-const checksumText = allFiles
-  .filter((file) => /^checksums-.*\.sha256$/.test(path.basename(file)))
-  .map((file) => fs.readFileSync(file, 'utf8'))
-  .join('\n');
+const checksumNames = new Set();
+for (const checksumFile of allFiles.filter((file) => /^checksums-.*\.sha256$/.test(path.basename(file)))) {
+  for (const line of fs.readFileSync(checksumFile, 'utf8').split(/\r?\n/)) {
+    const match = /^\S+\s+(.+?)\s*$/.exec(line);
+    if (!match) continue;
+    const recorded = match[1].replace(/^\*/, '').replace(/^\.\//, '');
+    if (recorded && path.basename(recorded) === recorded) checksumNames.add(recorded);
+  }
+}
 for (const name of metadataNames) {
-  if (!checksumText.includes(name)) throw new Error(`${name} missing from platform checksums`);
+  if (!checksumNames.has(name)) throw new Error(`${name} missing from platform checksums`);
 }
 for (const [name] of byBasename) {
-  if ((/\.blockmap$/i.test(name) || /\.(dmg|zip|exe|AppImage|deb|rpm)$/i.test(name)) && !checksumText.includes(name)) {
+  if ((/\.blockmap$/i.test(name) || /\.(dmg|zip|exe|AppImage|deb|rpm)$/i.test(name)) && !checksumNames.has(name)) {
     throw new Error(`${name} missing from platform checksums`);
   }
 }

@@ -8,6 +8,8 @@ import { describe, it } from 'node:test';
 
 const repoRoot = path.resolve(__dirname, '../../..');
 const assetVerifier = path.join(repoRoot, 'scripts/verify-update-assets.mjs');
+const rulesetVerifier = path.join(repoRoot, 'scripts/verify-github-update-rulesets.mjs');
+const immutableAckVerifier = path.join(repoRoot, 'scripts/verify-immutable-release-ack.mjs');
 
 function read(relative: string): string {
   return fs.readFileSync(path.join(repoRoot, relative), 'utf8');
@@ -88,8 +90,6 @@ function makeMacOnlyFixture(version: string, channel: 'stable' | 'preview'): str
 function makeDistributionFixture(version: string): string {
   const root = makeStableFixture(version);
   for (const name of [
-    `CodePilot.Setup.${version}.exe.blockmap`,
-    'latest.yml',
     'latest-linux.yml',
     'latest-linux-arm64.yml',
     'checksums-fixture.sha256',
@@ -141,6 +141,7 @@ describe('release signing and update asset contracts', () => {
     assert.match(builder, /win:[\s\S]*?forceCodeSigning:\s*true/);
     assert.match(builder, /verifyUpdateCodeSignature:\s*true/);
     assert.match(builder, /rfc3161TimeStampServer:/);
+    assert.match(builder, /nsis:[\s\S]*?differentialPackage:\s*true/);
     assert.equal(packageJson.dependencies['electron-updater'], '6.8.3');
     assert.equal(packageJson.devDependencies['electron-builder'], '26.8.1');
 
@@ -158,17 +159,20 @@ describe('release signing and update asset contracts', () => {
 
     for (const expected of [
       'release/latest-mac.yml',
+      'release/latest.yml',
       'release/CodePilot-*.blockmap',
       'release/CodePilot.Setup.*.exe',
+      'release/CodePilot.Setup.*.exe.blockmap',
       'release/CodePilot-*.AppImage',
       'release/CodePilot-*.deb',
       'release/CodePilot-*.rpm',
     ]) assert.ok(stable.includes(expected), `stable artifact allow-list must contain ${expected}`);
-    assert.doesNotMatch(stable, /release\/latest\.yml|release\/latest-linux\*\.yml|release\/CodePilot\.Setup\.\*\.exe\.blockmap/);
+    assert.doesNotMatch(stable, /release\/latest-linux\*\.yml/);
     assert.match(stable, /verify-update-assets\.mjs artifacts "\$VERSION" stable distribution/);
     assert.match(stable, /-name "\*\.blockmap"/);
     assert.match(stable, /-name "latest-mac\.yml"/);
-    assert.match(stable, /uses:\s*actions\/attest@v4/);
+    assert.match(stable, /-name "latest\.yml"/);
+    assert.match(stable, /uses:\s*actions\/attest@[0-9a-f]{40}/);
     assert.match(stable, /permissions:\s*\n\s*contents:\s*read/);
     assert.match(stable, /runs-on:\s*macos-15-intel/);
     assert.match(stable, /CodePilot-\*-universal\.zip/);
@@ -178,14 +182,24 @@ describe('release signing and update asset contracts', () => {
     assert.match(stableRelease, /needs:\s*\[build-macos, verify-macos-intel-abi, build-windows, build-linux\]/);
     assert.match(stableRelease, /CodePilot\.Setup\.\*\.exe/);
     for (const extension of ['AppImage', 'deb', 'rpm']) assert.match(stableRelease, new RegExp(`-name "\\*\\.${extension}"`));
-    assert.doesNotMatch(stableRelease, /latest-linux|latest\.yml|CodePilot\.Setup\.\*\.exe\.blockmap/);
+    assert.doesNotMatch(stableRelease, /latest-linux/);
+    assert.match(stableRelease, /latest\.yml/);
+    assert.match(stableRelease, /CodePilot\.Setup\.\*\.exe\.blockmap|"\*\.blockmap"/);
     assert.match(stable, /build-windows:[\s\S]*?if:\s*\$\{\{ github\.event_name == 'push'/);
     assert.match(stable, /build-linux:[\s\S]*?if:\s*\$\{\{ github\.event_name == 'push'/);
-    assert.match(stable, /build-windows:[\s\S]*?CODEPILOT_OFFICIAL_UPDATE_BUILD:\s*"0"/);
+    assert.match(stable, /build-windows:[\s\S]*?CODEPILOT_OFFICIAL_UPDATE_BUILD:\s*"1"/);
     assert.match(stable, /build-linux:[\s\S]*?CODEPILOT_OFFICIAL_UPDATE_BUILD:\s*"0"/);
-    assert.match(stable, /mode=unsigned[\s\S]*?--config\.win\.forceCodeSigning=false/);
+    assert.match(stable, /mode=unsigned[\s\S]*?--config\.win\.forceCodeSigning=false[\s\S]*?--config\.win\.verifyUpdateCodeSignature=false/);
     assert.match(stable, /partially configured/);
     assert.match(stable, /Get-AuthenticodeSignature[\s\S]*?NotSigned/);
+    assert.match(stable, /app-update\.yml[\s\S]*?publisherName/);
+    assert.match(stable, /Signed Windows app-update\.yml must expose publisherName/);
+    assert.match(stable, /CODEPILOT_IMMUTABLE_RELEASES_CONFIRMED_AT/);
+    assert.match(stable, /gh api --paginate --slurp/);
+    assert.match(stable, /expected exactly one active main branch ruleset/);
+    assert.match(stable, /expected exactly one active stable-release-tags ruleset/);
+    assert.match(stable, /verify-immutable-release-ack\.mjs/);
+    assert.match(stable, /verify-github-update-rulesets\.mjs/);
     assert.match(previewBuild, /build-windows-x64:[\s\S]*?CODEPILOT_OFFICIAL_UPDATE_BUILD:\s*"0"/);
 
     for (const preview of [previewBuild, previewRelease]) {
@@ -221,6 +235,87 @@ describe('release signing and update asset contracts', () => {
     assert.doesNotMatch(windowsVerifier, /-Filter '\*\.exe'/);
   });
 
+  it('pins every GitHub Action to a full commit SHA', () => {
+    const workflowRoot = path.join(repoRoot, '.github/workflows');
+    const workflows = fs.readdirSync(workflowRoot).filter((name) => /\.ya?ml$/i.test(name));
+    assert.ok(workflows.length > 0);
+    for (const workflow of workflows) {
+      const source = fs.readFileSync(path.join(workflowRoot, workflow), 'utf8');
+      for (const match of source.matchAll(/uses:\s*([^\s@]+)@([^\s#]+)/g)) {
+        const [, action, ref] = match;
+        if (action.startsWith('./')) continue;
+        assert.match(ref, /^[0-9a-f]{40}$/, `${workflow}: ${action} must use a full commit SHA`);
+      }
+    }
+  });
+
+  it('requires active no-bypass default-branch and stable-tag rulesets', () => {
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'codepilot-update-rulesets-'));
+    const branchBase = {
+      enforcement: 'active',
+      bypass_actors: [],
+      rules: [{ type: 'deletion' }, { type: 'non_fast_forward' }],
+    };
+    const mainPath = path.join(fixture, 'main.json');
+    const tagPath = path.join(fixture, 'tag.json');
+    try {
+      fs.writeFileSync(mainPath, JSON.stringify({
+        ...branchBase,
+        target: 'branch',
+        conditions: { ref_name: { include: ['~DEFAULT_BRANCH'], exclude: [] } },
+      }));
+      fs.writeFileSync(tagPath, JSON.stringify({
+        ...branchBase,
+        target: 'tag',
+        rules: [{ type: 'deletion' }, { type: 'update' }],
+        conditions: { ref_name: { include: ['refs/tags/v*'], exclude: [] } },
+      }));
+      const valid = spawnSync(process.execPath, [rulesetVerifier, mainPath, tagPath], { encoding: 'utf8' });
+      assert.equal(valid.status, 0, valid.stderr);
+
+      const invalidTag = JSON.parse(fs.readFileSync(tagPath, 'utf8'));
+      invalidTag.enforcement = 'disabled';
+      fs.writeFileSync(tagPath, JSON.stringify(invalidTag));
+      const invalid = spawnSync(process.execPath, [rulesetVerifier, mainPath, tagPath], { encoding: 'utf8' });
+      assert.notEqual(invalid.status, 0);
+      assert.match(invalid.stderr, /must be active/);
+
+      invalidTag.enforcement = 'active';
+      invalidTag.conditions.ref_name.exclude = ['refs/tags/v0.*'];
+      fs.writeFileSync(tagPath, JSON.stringify(invalidTag));
+      const excluded = spawnSync(process.execPath, [rulesetVerifier, mainPath, tagPath], { encoding: 'utf8' });
+      assert.notEqual(excluded.status, 0);
+      assert.match(excluded.stderr, /must not exclude protected refs/);
+    } finally {
+      fs.rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
+  it('requires a release-day Immutable Releases administrator acknowledgement', () => {
+    const current = spawnSync(
+      process.execPath,
+      [immutableAckVerifier, '2026-08-26', '2026-08-27T23:59:59Z'],
+      { encoding: 'utf8' },
+    );
+    assert.equal(current.status, 0, current.stderr);
+
+    const stale = spawnSync(
+      process.execPath,
+      [immutableAckVerifier, '2026-08-25', '2026-08-27T00:00:00Z'],
+      { encoding: 'utf8' },
+    );
+    assert.notEqual(stale.status, 0);
+    assert.match(stale.stderr, /is stale/);
+
+    const future = spawnSync(
+      process.execPath,
+      [immutableAckVerifier, '2026-08-28', '2026-08-27T00:00:00Z'],
+      { encoding: 'utf8' },
+    );
+    assert.notEqual(future.status, 0);
+    assert.match(future.stderr, /in the future/);
+  });
+
   it('accepts a macOS-only stable graph and rejects non-macOS update assets', () => {
     const version = '1.2.5';
     const fixture = makeMacOnlyFixture(version, 'stable');
@@ -246,7 +341,7 @@ describe('release signing and update asset contracts', () => {
     }
   });
 
-  it('accepts Mac updater assets with manual Windows/Linux installers and rejects non-Mac updater metadata', () => {
+  it('accepts Mac and Windows updater assets with manual Linux packages and rejects Linux metadata', () => {
     const version = '1.2.6';
     const fixture = makeDistributionFixture(version);
     try {
@@ -258,16 +353,73 @@ describe('release signing and update asset contracts', () => {
       assert.equal(valid.status, 0, valid.stderr);
       assert.match(valid.stdout, /channel=stable target=distribution/);
 
-      const windows = path.join(fixture, `CodePilot.Setup.${version}.exe`);
-      writeFile(fixture, `${path.basename(windows)}.blockmap`);
-      writeMetadata(fixture, 'latest.yml', version, path.basename(windows));
-      const leakedWindowsFeed = spawnSync(
+      const windowsMetadataPath = path.join(fixture, 'latest.yml');
+      const windowsMetadata = JSON.parse(fs.readFileSync(windowsMetadataPath, 'utf8'));
+      delete windowsMetadata.files[0].blockMapSize;
+      fs.writeFileSync(windowsMetadataPath, JSON.stringify(windowsMetadata));
+      const missingBlockMapSize = spawnSync(
         process.execPath,
         [assetVerifier, fixture, version, 'stable', 'distribution'],
         { encoding: 'utf8' },
       );
-      assert.notEqual(leakedWindowsFeed.status, 0);
-      assert.match(leakedWindowsFeed.stderr, /non-macOS updater assets/);
+      assert.notEqual(missingBlockMapSize.status, 0);
+      assert.match(missingBlockMapSize.stderr, /positive blockMapSize/);
+      writeMetadata(fixture, 'latest.yml', version, `CodePilot.Setup.${version}.exe`);
+
+      const oldVersion = '0.60.0';
+      const oldInstallerName = `CodePilot.Setup.${oldVersion}.exe`;
+      const oldInstaller = writeFile(fixture, oldInstallerName);
+      writeFile(fixture, `${oldInstallerName}.blockmap`);
+      writeMetadata(fixture, 'latest.yml', version, oldInstallerName);
+      const wrongVersionPayload = spawnSync(
+        process.execPath,
+        [assetVerifier, fixture, version, 'stable', 'distribution'],
+        { encoding: 'utf8' },
+      );
+      assert.notEqual(wrongVersionPayload.status, 0);
+      assert.match(wrongVersionPayload.stderr, /unexpected or wrong-version payloads/);
+      fs.unlinkSync(oldInstaller);
+      fs.unlinkSync(path.join(fixture, `${oldInstallerName}.blockmap`));
+      writeMetadata(fixture, 'latest.yml', version, `CodePilot.Setup.${version}.exe`);
+
+      const externalUrlMetadata = JSON.parse(fs.readFileSync(windowsMetadataPath, 'utf8'));
+      externalUrlMetadata.files[0].url = `https://mirror.example/CodePilot.Setup.${version}.exe`;
+      fs.writeFileSync(windowsMetadataPath, JSON.stringify(externalUrlMetadata));
+      const externalUrl = spawnSync(
+        process.execPath,
+        [assetVerifier, fixture, version, 'stable', 'distribution'],
+        { encoding: 'utf8' },
+      );
+      assert.notEqual(externalUrl.status, 0);
+      assert.match(externalUrl.stderr, /release-asset basename/);
+      writeMetadata(fixture, 'latest.yml', version, `CodePilot.Setup.${version}.exe`);
+
+      const checksumPath = path.join(fixture, 'checksums-distribution.sha256');
+      const completeChecksums = fs.readFileSync(checksumPath, 'utf8');
+      fs.writeFileSync(
+        checksumPath,
+        completeChecksums
+          .split('\n')
+          .filter((line) => !line.endsWith(`  CodePilot.Setup.${version}.exe`))
+          .join('\n'),
+      );
+      const missingInstallerChecksum = spawnSync(
+        process.execPath,
+        [assetVerifier, fixture, version, 'stable', 'distribution'],
+        { encoding: 'utf8' },
+      );
+      assert.notEqual(missingInstallerChecksum.status, 0);
+      assert.match(missingInstallerChecksum.stderr, /installer|\.exe missing from platform checksums/i);
+      fs.writeFileSync(checksumPath, completeChecksums);
+
+      writeMetadata(fixture, 'latest-linux.yml', version, `CodePilot-${version}-x86_64.AppImage`);
+      const leakedLinuxFeed = spawnSync(
+        process.execPath,
+        [assetVerifier, fixture, version, 'stable', 'distribution'],
+        { encoding: 'utf8' },
+      );
+      assert.notEqual(leakedLinuxFeed.status, 0);
+      assert.match(leakedLinuxFeed.stderr, /Linux or preview updater metadata/);
     } finally {
       fs.rmSync(fixture, { recursive: true, force: true });
     }
@@ -361,7 +513,7 @@ describe('release signing and update asset contracts', () => {
         { encoding: 'utf8' },
       );
       assert.notEqual(duplicateFeedEntry.status, 0);
-      assert.match(duplicateFeedEntry.stderr, /exactly one universal ZIP entry/);
+      assert.match(duplicateFeedEntry.stderr, /exactly the current-version universal ZIP/);
     } finally {
       fs.rmSync(fixture, { recursive: true, force: true });
     }

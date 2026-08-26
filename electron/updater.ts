@@ -1,8 +1,12 @@
 import { ipcMain, type BrowserWindow, type IpcMainInvokeEvent } from 'electron';
 import { autoUpdater, type ProgressInfo, type UpdateInfo } from 'electron-updater';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import yaml from 'js-yaml';
 import {
   boundedUpdateText,
   classifyUpdaterError,
+  resolveUpdaterPublisherVerification,
   resolveUpdaterSupport,
   resolveUpdaterFeedChannel,
   updaterInitialDelay,
@@ -50,6 +54,7 @@ let snapshot: UpdaterSnapshot = {
   targetVersion: null,
   channel: 'unknown',
   packageType: 'unknown',
+  publisherVerification: 'unknown',
   progressPercent: null,
   transferredBytes: null,
   totalBytes: null,
@@ -59,6 +64,17 @@ let snapshot: UpdaterSnapshot = {
   errorCode: null,
   checkedAt: null,
 };
+
+function readPackagedUpdateConfig(platform: NodeJS.Platform): unknown {
+  if (platform !== 'win32') return null;
+  try {
+    return yaml.load(readFileSync(path.join(process.resourcesPath, 'app-update.yml'), 'utf8'));
+  } catch {
+    // A packaged Windows updater without readable provenance must fall back to
+    // the browser path instead of inventing an unsigned/signed UI claim.
+    return null;
+  }
+}
 
 function publicSnapshot(): UpdaterSnapshot {
   return { ...snapshot };
@@ -281,11 +297,23 @@ export function initAutoUpdater(options: AutoUpdaterOptions): UpdaterSnapshot {
     platform: options.platform,
     appImagePath: options.appImagePath,
   });
+  const publisherVerification = resolveUpdaterPublisherVerification(
+    options.platform,
+    readPackagedUpdateConfig(options.platform),
+  );
+  const publisherVerificationUnavailable = support.supported
+    && support.packageType === 'nsis'
+    && publisherVerification === 'unknown';
   snapshot = {
     ...snapshot,
     ...support,
+    supported: publisherVerificationUnavailable ? false : support.supported,
+    unsupportedReason: publisherVerificationUnavailable
+      ? 'publisher_verification_unknown'
+      : support.unsupportedReason,
     currentVersion: options.currentVersion,
     channel: options.channel,
+    publisherVerification,
   };
   registerIpc();
   if (!snapshot.supported) {
@@ -304,6 +332,13 @@ export function initAutoUpdater(options: AutoUpdaterOptions): UpdaterSnapshot {
   autoUpdater.channel = feedChannel;
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
+  // NSIS releases publish an external installer blockmap. Keep differential
+  // download explicit so a dependency-default change cannot silently turn
+  // Windows updates back into full-installer downloads. electron-updater
+  // falls back to the full installer when the old installer/blockmap/range
+  // request is unavailable.
+  autoUpdater.disableDifferentialDownload = false;
+  autoUpdater.disableWebInstaller = true;
   autoUpdater.allowPrerelease = options.channel === 'preview';
   // Setting AppUpdater.channel toggles this to true internally; restore the
   // fail-closed policy after channel selection.

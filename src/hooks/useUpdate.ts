@@ -1,7 +1,12 @@
 "use client";
 
 import { createContext, useContext } from "react";
-import type { UpdaterErrorCode, UpdaterPhase, UpdaterUnsupportedReason } from '@/lib/updater-contract';
+import type {
+  UpdaterErrorCode,
+  UpdaterPhase,
+  UpdaterSnapshot,
+  UpdaterUnsupportedReason,
+} from '@/lib/updater-contract';
 
 export interface UpdateInfo {
   updateAvailable: boolean;
@@ -23,6 +28,8 @@ export interface UpdateInfo {
   nativeSupported?: boolean;
   nativeUnsupportedReason?: UpdaterUnsupportedReason;
   nativePhase?: UpdaterPhase;
+  nativePackageType?: UpdaterSnapshot['packageType'];
+  nativePublisherVerification?: UpdaterSnapshot['publisherVerification'];
   detectedPlatform?: string;
   detectedArch?: string;
   hostArch?: string;

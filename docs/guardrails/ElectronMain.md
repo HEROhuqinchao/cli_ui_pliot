@@ -26,7 +26,7 @@
 | 2 | 构建前只清理 `release/` + `.next/` + `dist-electron/`，且先验证当前目录确为 CodePilot 项目 | `scripts/clean-electron-build.mjs` |
 | 3 | standalone 根目录只允许 `.next`、`node_modules`、`server.js`、`package.json`、`cache-handler.js`；本地 DB、uploads、Git/agent/worktree 状态不得入包 | build scripts |
 | 4 | `extraResources` 中 standalone root、`node_modules`、`.next` 的目标互斥；禁止 `**/*` 再叠加子目录 FileSet | `electron-builder.yml` + tests |
-| 5 | stable Release 的 macOS、Windows、Linux 产物都必须校验版本、native ABI 与 packaged server health 后才能上传；Windows/Linux 只作手工分发，official updater provenance 必须关闭且不得携带 updater metadata | build workflow |
+| 5 | stable Release 的 macOS、Windows、Linux 产物都必须校验版本、native ABI 与 packaged server health 后才能上传；macOS 使用 signed/notarized updater，Windows 使用明确无 Authenticode 的 GitHub-single-root updater，Linux 只作手工分发且 official updater provenance 必须关闭 | build workflow |
 | 6 | 主窗口外部导航必须经过 `classifyNavigation`；非 http/https 协议不得交给系统 shell | `electron/main.ts` + tests |
 | 7 | Renderer 的 input / textarea / contenteditable 使用 Electron role 菜单；密码框不得启用复制、剪切 | `attachRendererEditingContextMenu` |
 | 8 | Grok Build browser OAuth callback 只绑定 `127.0.0.1`，生产由 OS 分配动态端口；authorize/token exchange 必须复用同一 redirect URI | OAuth manager |
@@ -190,5 +190,6 @@
 - 2026-08-24 — `/api/health` 的 DB marker 改为立即失败；恢复路径与 utility 统一使用 `CLAUDE_GUI_DATA_DIR` resolver。fresh-start 后出现 DB 时 Main 不自动删除，而以 trusted、无路径参数的 IPC 提供“保留当前库 / 校验旧备份后继续空库”。
 - 2026-08-24 — 本轮 tag/prerelease 发布范围收窄为 macOS。Windows/Linux 原生构建 job 保留作手工 artifact 验证，但 `CODEPILOT_OFFICIAL_UPDATE_BUILD=0` 且 central Release 明确排除其资产。
 - 2026-08-24 — 用户随后澄清 stable 仍需全平台分发：tag 恢复 Windows/Linux 手动安装包，保持 `CODEPILOT_OFFICIAL_UPDATE_BUILD=0`；preview 与原生 updater 仍只有 macOS。
+- 2026-08-26 — 用户明确 Windows 自动更新不申请 Microsoft/Azure/PFX 签名。stable Windows 构建启用 official provenance并发布 unsigned NSIS metadata/blockmap；Linux 继续 provenance=0。Windows 必须以 UI 明示、GitHub immutable/ruleset/Action SHA 发布门禁和真实 RC 升级 smoke 补偿缺失的 publisher identity。
 - 2026-08-26 — 内置 Browser 明确采用 T3 同类的 renderer-owned `<webview>`，但不复制其 `contextIsolation:false`、宽权限或 CDP。Main 只签发 workspace partition 并在 attach 时二次 harden；权限默认拒绝、下载默认阻断、URL 只放行 HTTPS/loopback。WebContentsView POC 保留为 inconclusive research，不冒充 GO。
 - 2026-08-26 — Browser tab 身份上移到统一 Workspace Sidebar：一个顶层 tab 对应一个 guest，BrowserPanel 不再嵌套第二层 tab。loading 由真实 navigation request/start 到 stop/fail/block 的生命周期驱动，不展示伪造百分比。

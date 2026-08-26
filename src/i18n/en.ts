@@ -706,6 +706,7 @@ const en = {
   'update.installUpdate': 'Download & Install',
   'update.later': 'Later',
   'update.rosettaWarning': 'CodePilot is running through Rosetta on this Apple Silicon Mac. Install the arm64 build for better responsiveness.',
+  'update.windowsUnsignedTrustNotice': 'This Windows update has no independent publisher signature. CodePilot trusts only the official op7418/CodePilot GitHub Release and verifies the SHA-512 from its update metadata; this is not Authenticode publisher verification, and Windows may still show SmartScreen.',
   'update.recommendedAsset': 'Recommended download: {asset}',
   'update.getRecommendedBuild': 'Get Recommended Build',
   'update.platformAssetMissing': 'CodePilot v{version} does not provide a {platform} installer. You can view the release details, but there is no compatible package to download.',

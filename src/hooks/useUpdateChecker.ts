@@ -35,6 +35,8 @@ function fromNativeSnapshot(snapshot: UpdaterSnapshot): UpdateInfo {
     nativeSupported: snapshot.supported,
     nativeUnsupportedReason: snapshot.unsupportedReason,
     nativePhase: snapshot.phase,
+    nativePackageType: snapshot.packageType,
+    nativePublisherVerification: snapshot.publisherVerification,
   };
 }
 

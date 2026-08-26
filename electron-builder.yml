@@ -110,6 +110,10 @@ win:
 nsis:
   oneClick: false
   perMachine: false
+  # Produce the external installer blockmap consumed by electron-updater.
+  # Differential download remains opportunistic and falls back to the full
+  # NSIS installer when the previous installer or either blockmap is missing.
+  differentialPackage: true
   # Let users pick the install location — Windows feedback: the installer
   # offered no path choice. Requires oneClick:false (kept above).
   allowToChangeInstallationDirectory: true

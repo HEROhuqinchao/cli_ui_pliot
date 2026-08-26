@@ -693,6 +693,7 @@ const zh: Record<TranslationKey, string> = {
   'update.installUpdate': '下载并安装',
   'update.later': '稍后',
   'update.rosettaWarning': 'CodePilot 当前正通过 Rosetta 在这台 Apple Silicon Mac 上运行。安装 arm64 版本可获得更好的响应速度。',
+  'update.windowsUnsignedTrustNotice': '此 Windows 更新没有独立发布者签名。CodePilot 仅信任官方 op7418/CodePilot GitHub Release，并按更新元数据校验 SHA-512；这不等同于 Authenticode 发布者验证，Windows 仍可能显示 SmartScreen。',
   'update.recommendedAsset': '推荐下载：{asset}',
   'update.getRecommendedBuild': '下载推荐版本',
   'update.platformAssetMissing': 'CodePilot v{version} 未提供 {platform} 安装包。你可以查看发布详情，但当前没有可下载的兼容版本。',

@@ -457,7 +457,7 @@ GitHub milestone `v0.56.x Stability / Trust`（#1）+ P0/P1 label 体系已建�
 | [#459](https://github.com/op7418/CodePilot/issues/459) | 左侧 UI 采用 Codex 文案风格 | 📋 待评估 | |
 | [#458](https://github.com/op7418/CodePilot/issues/458) | 多 OpenAI OAuth 账号 | 📋 待评估 | |
 | [#463](https://github.com/op7418/CodePilot/issues/463) | 代码界面可编辑 + 语法高亮 | 🔵 设计如此 | Claude Code 理念：AI 写 100% 代码 |
-| [#246](https://github.com/op7418/CodePilot/issues/246) | 应用内自动更新 | 🟡 本地实现/二轮 blocker 修复完成，待正式凭据/RC 升级 | [执行计划](v0.67.1-production-feedback-signing-auto-update-2026-08-23.md)；Main/preload/types/UI、official-build gate、stable/preview metadata、mac ZIP-only updater graph、签名/公证 fail-closed workflow 与全安装包 attestation 已落地；mac close-to-hide 假安装已修。未发布，Apple/Windows 正式 CI 与 RC-A → RC-B 仍待 human gate |
+| [#246](https://github.com/op7418/CodePilot/issues/246) | 应用内自动更新 | 🚧 Mac 已发布；Windows unsigned updater 本地完成、待仓库保护/RC；Linux 延期 | [`v0.67.7` 发布证据](v0.67.1-production-feedback-signing-auto-update-2026-08-23.md) + [Windows 后续计划](windows-unsigned-native-auto-update-2026-08-26.md)。Mac signed updater 已 Shipped；Windows 按用户选择不申请 Microsoft/PFX 签名，GitHub single-trust-root、`latest.yml`/EXE blockmap、差分回退与发布门禁代码已通过本地测试；首版仍需手动 bootstrap，且必须先完成仓库保护和真实 RC-A→RC-B；Linux 保持手动 |
 | FR-auto-permission | 自动权限系统：Claude Code / Codex 已支持自动权限；后续 CodePilot 也应支持根据请求内容自动分析并完成审批 | 📋 待设计 | 用户要求记录：自动权限会自动分析内容并完成审批；需定义安全边界、可审计日志、可关闭开关 |
 | FR-edit-user-message | 对话编辑：用户停止对话后，可点击自己发出的消息，在“复制”旁增加笔形编辑按钮；编辑后直接再次发送 | 📋 待设计 | 目标是避免复制、粘贴到输入框再发送；需考虑消息重放、后续 assistant 消息处理、队列/停止状态 |
 | [#254](https://github.com/op7418/CodePilot/issues/254) | 会话列表待确认状态指示 | 📋 待实现 | |
