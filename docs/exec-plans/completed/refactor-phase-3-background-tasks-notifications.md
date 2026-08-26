@@ -4,6 +4,7 @@
 > Step 1-3 完成时间：2026-05-09（Step 1 现状审计 ✅；Step 2 菜单栏常驻 + 本机通知 ✅；Step 3 通知与任务触发闭环 ✅，含 v6 5 件功能修复 + v7 SQLite/Map/类型清理）
 > Step 4 / Step 5 完成时间：2026-05-10（v9 = Settings → Assistant 任务列表搬走轻入口；v10 = 心跳文案诚实化"打开新对话时触发，不是后台定时任务"）
 > 当前总控板：[active/refactor-closeout.md](refactor-closeout.md)
+> **Superseded breadcrumb（2026-08-25）**：本文 v11/v13 的双右栏决策链已由 Active index 中的 `workspace-surface-sidebar-pin-and-inspector.md` 收口为单一 shell 的 Primary + Inspector；Files 与 preview 仍可同时可见，但不再依赖两个独立右栏。
 
 ## Phase 3 用户结果（最终交付）
 

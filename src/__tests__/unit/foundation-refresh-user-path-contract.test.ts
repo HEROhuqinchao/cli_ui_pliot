@@ -858,10 +858,10 @@ describe('U2b — untouched catalog rows follow current Kimi capability', () => 
   });
 });
 
-describe('U4 — effort selector uses the model selector visual contract', () => {
-  it('shares optical typography, item spacing, popover radius and motion', () => {
-    const effortSource = fs.readFileSync(
-      path.join(SRC, 'components/chat/EffortSelectorDropdown.tsx'),
+describe('U4 — consolidated model controls share the compact composer contract', () => {
+  it('keeps route and capability selectors compact, collision-aware, and sans-serif', () => {
+    const capabilitySource = fs.readFileSync(
+      path.join(SRC, 'components/chat/ModelCapabilityDropdown.tsx'),
       'utf8',
     );
     const modelSource = fs.readFileSync(
@@ -870,51 +870,41 @@ describe('U4 — effort selector uses the model selector visual contract', () =>
     );
 
     assert.match(
-      effortSource,
+      capabilitySource,
       /<span className="text-xs font-normal">/,
-      'effort trigger must use the shared compact toolbar typography',
+      'the combined effort/context trigger must use compact toolbar typography',
     );
     assert.match(
       modelSource,
-      /<span className="text-xs font-normal">\{currentModelOption\?\.label\}<\/span>/,
+      /<span className="[^"]*text-xs font-normal">\{currentModelOption\?\.label\}<\/span>/,
       'selected model must not use an oversized system-monospace fallback',
-    );
-    assert.match(
-      modelSource,
-      /<span className="text-xs font-normal truncate">\{option\.label\}<\/span>/,
-      'recent model rows must use the same compact sans typography as the trigger',
-    );
-    assert.match(
-      modelSource,
-      /<span className="text-xs font-normal truncate">\{opt\.label\}<\/span>/,
-      'provider model rows must use the same compact sans typography as the trigger',
     );
     assert.doesNotMatch(
       modelSource,
-      /font-mono text-xs truncate">\{(?:option|opt)\.label\}/,
+      /font-mono[^\n]*\{(?:currentModelOption\?\.label|route\.modelName)\}/,
       'human-readable model names must never inherit the offline monospace fallback',
     );
     assert.match(
-      effortSource,
+      capabilitySource,
       /\bCommandListItems\b/,
-      'effort rows must use the same shared p-1 item container as the model menu',
+      'capability rows must use the shared command-list item container',
     );
-    assert.doesNotMatch(
-      effortSource,
-      /rounded-lg/,
-      'CommandList already owns the model menu rounded-2xl radius; effort must not override it',
+    assert.match(
+      modelSource,
+      /w-\[42rem\] max-w-\[calc\(100vw-2rem\)\]/,
+      'the provider/model route menu must preserve the two-lane layout while shrinking in narrow windows',
     );
-    for (const [name, source] of [['effort', effortSource], ['model', modelSource]] as const) {
+    for (const [name, source] of [['capability', capabilitySource], ['model', modelSource]] as const) {
       assert.match(
         source,
-        /w-80 max-w-\[calc\(100vw-2rem\)\]/,
+        /max-w-\[calc\(100vw-2rem\)\]/,
         `${name} popover must shrink inside a narrow window instead of overflowing`,
       );
       assert.match(source, /<PopoverContent[\s\S]{0,220}collisionPadding=\{16\}/,
         `${name} popover must use collision-aware viewport placement, not only a max-width`);
-      assert.match(source, /<CommandList positioning="inline"/,
-        `${name} command list must let the Radix popover own placement`);
     }
+    assert.match(capabilitySource, /<CommandList positioning="inline"/,
+      'the combined capability list must let the Radix popover own placement');
   });
 
   it('keeps auto-review in the same muted toolbar tier as mode and runtime', () => {

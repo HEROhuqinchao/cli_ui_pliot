@@ -121,7 +121,7 @@ describe('Provider Catalog', () => {
         }
       });
 
-      it('the effort menu explains the documented Max default in both locales', () => {
+      it('the effort menu explains the documented Max default concisely in both locales', () => {
         const flagship = glmPresets[0].defaultModels.find(m => m.displayName === 'GLM-5.3');
         const key = flagship?.capabilities?.effortNoteKey;
         assert.ok(key, 'GLM-5.3 must explain Auto/default behavior in the menu');
@@ -129,8 +129,14 @@ describe('Provider Catalog', () => {
         const zhNote = zh[key as keyof typeof zh] as string;
         assert.ok(enNote, `missing en string for ${key}`);
         assert.ok(zhNote, `missing zh string for ${key}`);
-        assert.match(enNote, /Low.*High.*Max.*default.*Max/i);
-        assert.match(zhNote, /低.*高.*最大.*自动.*最大/);
+        // The selectable levels are rendered immediately above this note from
+        // supportedEffortLevels; repeating the whole list here made the compact
+        // Composer menu unnecessarily wide. The note only needs to explain the
+        // otherwise non-obvious Default → Max behavior.
+        assert.match(enNote, /default.*max/i);
+        assert.match(zhNote, /默认.*最大/);
+        assert.ok(enNote.length <= 24);
+        assert.ok(zhNote.length <= 12);
       });
 
       it('menu resolves to Auto + Low/High/Max', () => {

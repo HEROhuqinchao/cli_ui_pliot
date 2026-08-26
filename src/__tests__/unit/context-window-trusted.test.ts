@@ -183,8 +183,12 @@ describe('context-window trusted — existing-session provider gate (#632 item 1
       /providerFetchState === 'loaded'\s*\?\s*\(activeProviderGroup\?\.reportedContextWindowTrusted \?\? true\)\s*:\s*false/,
       'ChatView must fail-closed (untrusted) while providerFetchState !== "loaded"',
     );
-    const passes = chatViewSrc.match(/reportedContextWindowTrusted=\{activeProviderReportsTrustedWindow\}/g) || [];
-    assert.ok(passes.length >= 2, `both RunCockpit render sites must pass the resolved flag; found ${passes.length}`);
+    const cockpitPasses = chatViewSrc.match(/reportedContextWindowTrusted=\{activeProviderReportsTrustedWindow\}/g) || [];
+    assert.equal(cockpitPasses.length, 1,
+      'the shared RunCockpit control must receive the resolved flag exactly once');
+    const composerSlots = chatViewSrc.match(/runStatusControl=\{composerRunStatusControl\}/g) || [];
+    assert.ok(composerSlots.length >= 2,
+      `both composer layouts must reuse the trusted shared control; found ${composerSlots.length}`);
   });
 
   it('the providers/models route sets reportedContextWindowTrusted with the first-party gate (Codex stays trusted)', () => {

@@ -129,6 +129,17 @@ CodePilot Provider 会话把 Codex app-server 的 Responses endpoint 指向
 - 后续新增的 app-server spawn 路径或后台 worker 必须复用
   `prepareCodePilotCodexHome()`；只设置两个 home 变量中的一个属于契约违规。
 
+### 2.7 Composer capability descriptor
+
+Composer 参数菜单不得从模型名字猜能力。`buildComposerModelCapabilityDescriptor()` 只适配 `/api/providers/models` 当前 route 已返回的 model capability，并把事实钉在 Runtime + protocol + modelIds 三个维度：
+
+- `selectable`：存在真实可变 wire 与已验证值列表，UI 才能交互；
+- `fixed`：模型容量/行为已由 route 固定（例如默认 1M），UI 可只读展示但不能发 no-op toggle；
+- `unsupported`：该 Runtime/protocol 明确没有这条 wire；
+- `unknown`：能力事实缺失，UI 不渲染为可操作控件。
+
+Provider 或模型切换后，descriptor 必须从同一 runtime-filtered group 重新生成。收藏 snapshot、模型名启发式和 catalog 全集均不能把 `unknown/unsupported` 提升为 selectable。
+
 ## 3. 关键文件 + 不变量
 
 | 模块 | 文件 | 不变量 |
@@ -156,6 +167,7 @@ CodePilot Provider 会话把 Codex app-server 的 Responses endpoint 指向
 | Runtime-specific provider transport | `src/lib/provider-catalog.ts` wire capabilities → `provider-resolver.ts:toAiSdkConfig()` → `ai-provider.ts` | 只在 preset identity + exact model + runtime 都命中时换协议；Anthropic / Responses 模型 ID 不同时由声明式 override 改写；effort compatibility alias 也必须由该 first-party preset 显式声明，不得用 hostname/品牌特判；unsupported 回原协议 |
 | Anthropic-compatible effort | `agent-loop-anthropic-wire.ts` + `claude-code-compat/request-builder.ts` | 未验证第三方继续省略 effort；verified model×tier 才生成 `output_config.effort` |
 | Codex provider Responses effort | `codex/proxy/unified-adapter.ts:buildProviderOptions()` | preset-verified third-party Responses 才可 `forceReasoning`；档位按 transport allowlist，未知档位省略 |
+| Composer option descriptor | `model-option-support.ts` + `ModelCapabilityDropdown.tsx` | Runtime+protocol+model 四态；fixed/unknown 不得生成假开关或假 wire |
 
 ## 4. 加 / 改新功能时必须检查
 
@@ -179,6 +191,7 @@ CodePilot Provider 会话把 Codex app-server 的 Responses endpoint 指向
   - send 路径前必须 gate `noCompatibleProvider` + `fetchState`
 - 改 Codex model discovery / transport：覆盖 frame chunk/CRLF/multibyte/exact-cap/oversize/no-newline、RPC deadline、10 caller single-flight、cooldown/force 与 unhealthy-idle recycle；日志 fixture 中不得出现 frame/prompt/path/token 内容。
 - 新增任何 Codex app-server 直达入口时必须复用 `getCodexAppServer()` 的 recovery-safe-mode gate，不得自行 spawn 绕过 Main owner。
+- 新增 Composer 模型参数时必须先有 request wire + source breadcrumb，再进入 descriptor；UI 截图、模型容量或名字匹配不能作为 selectable 证据。
 - 新增 sub-agent adapter：必须定义 model allowlist / alias canonicalization / effective provenance，并消费共同 workflow/task/dependency compiler；未证明的能力 fail closed，不得实现第四套 queued/依赖等待语义
 
 ## 5. 常见坑

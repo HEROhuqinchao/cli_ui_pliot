@@ -20,7 +20,7 @@
  */
 
 import { test } from "node:test";
-import { strictEqual, ok, match } from "node:assert";
+import { ok, match } from "node:assert";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -39,7 +39,7 @@ test("ResizeGutter renders a justify-center container so the 2px line lands on i
   // turn lands on the gap's geometric mid-line in flex layout.
   match(
     SOURCE,
-    /className="relative z-10 flex h-full shrink-0 cursor-col-resize items-stretch justify-center touch-none"/,
+    /"relative z-10 flex h-full shrink-0 cursor-col-resize items-stretch justify-center touch-none[^\"]*"/,
   );
 });
 
@@ -57,6 +57,13 @@ test("ResizeGutter width is driven by the RESIZE_GUTTER_WIDTH_PX constant", () =
 
 test("ResizeGutter is marked with data-resize-gutter for DOM identification", () => {
   match(SOURCE, /data-resize-gutter/);
+});
+
+test("ResizeGutter is keyboard accessible and exposes a separator name", () => {
+  match(SOURCE, /role="separator"/);
+  match(SOURCE, /aria-label=\{ariaLabel\}/);
+  match(SOURCE, /tabIndex=\{0\}/);
+  match(SOURCE, /e\.key === "ArrowLeft" \? -16 : 16/);
 });
 
 test("CardFrame emits data-platform-card-frame with kind value", () => {
@@ -89,7 +96,6 @@ test("CardSurface emits the correct data-platform-* attribute per kind", () => {
   match(SOURCE, /sidebar: "data-platform-sidebar",/);
   match(SOURCE, /main: "data-platform-main-content",/);
   match(SOURCE, /workspace: "data-workspace-sidebar",/);
-  match(SOURCE, /fileTree: "data-platform-file-tree",/);
   match(SOURCE, /assistant: "data-platform-assistant",/);
 });
 
@@ -124,7 +130,7 @@ test("CardSurface does NOT set box-shadow inline (shadow is the frame's job)", (
 });
 
 test("Only `kind=\"main\"` gets flex-1 + min-w-0 so it absorbs remaining row space", () => {
-  // Sidebar / workspace / fileTree are all shrink-0 with a fixed width
+  // Sidebar / workspace are shrink-0 with a fixed width
   // owned by the consumer panel. Only main fills the leftover space.
   // If any other kind ever gets flex-1 the row layout breaks.
   match(SOURCE, /const isMain = kind === "main";/);

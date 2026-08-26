@@ -1,7 +1,7 @@
 # Issue Tracker — 统一问题跟踪
 
 > 创建时间：2026-04-13
-> 最后更新：2026-08-24（GLM gen-0 legacy identity 与 DB recovery 收口完成；正式凭据/真实升级尚未发布验证）
+> 最后更新：2026-08-26（新增 B-032：Composer 权限收口的三 Runtime 真实 effective-wire smoke 仍是合并/发布门禁）
 > 合并自：`open-issues-2026-03-12.md` + `v0.48-post-release-issues.md` + GitHub Issues 最新盘点
 
 **AI 须知：**
@@ -221,6 +221,14 @@ GitHub milestone `v0.56.x Stability / Trust`（#1）+ P0/P1 label 体系已建�
 - **重新关闭门禁:** 必须增加受影响/历史真实 row shape 的 failing-then-passing fixture，Models/Search/Runtime/Composer 四面一致，并由至少一名受影响 0.67.1 用户完成候选版本升级 smoke；isolated pristine fixture 不再足以关闭。
 - **当前验证:** gen-0 与后续两组完整三行 published-history fixture 验证 sonnet/haiku 原位升级、各世代非目标 opus 保留；五态/conflict recovery、真实 `identity_conflict` fail-closed 断言与四面合同通过。2026-08-24 收口定向 49/49；标准全量与 build 数字见关联计划最新 Smoke Ledger。真实用户 DB 未写入，最后一条 production smoke 仍待跑。
 
+#### B-032 Composer 权限收口缺三 Runtime 真实 effective-wire smoke
+- **状态:** ⚪ Code / unit / UI E2E 已通过；Tier 2 真实 wire 未验，合并/发布门禁保持打开
+- **计划:** [Composer 模型路线、能力参数与权限入口收口](composer-model-route-permission-consolidation.md)
+- **风险:** 新 UI 已把 legacy `mode + permission_profile` 收成四档，但自动化合同不能替代 Claude Code / CodePilot Native / Codex 三条真实发送路径的 effective wire。若 resolver 或 Runtime adapter 与测试 fixture 漂移，可能出现“只读规划”实际可写，或“请求批准”实际绕过确认。
+- **已验证:** 双向映射表、round-trip/no-touch、API 校验、Runtime-first picker、权限文案与 scoped E2E；本轮复审修复失效收藏管理、sidebar hydration、`context_1m` shared-option 污染及 picker 硬编码文案。最终 `npm run test` 5363 pass + 1 skip、scoped Playwright 14/14、smoke 23/23，production build 137 pages；这些自动化结果不替代下述真实 wire 门禁。
+- **关闭门禁:** Claude Code、CodePilot Native、Codex 各跑至少一条 `read_only/plan` 与一条 `default` turn，记录 session id、Runtime、resolved provider/model、effective permission/sandbox/tool surface source；逐条证明 plan 只读、default 不比迁移前更少询问。任何一条不一致均保持 blocker。
+- **边界:** 在六条真实记录写入计划 Smoke Ledger 前，不得把 Composer 计划标为 `Smoke passed` / `Review passed` / 完成，也不得用 unit mock、源码形状或单一 Runtime 成功代替。
+
 ---
 
 ### P2 — 体验问题
@@ -327,15 +335,20 @@ GitHub milestone `v0.56.x Stability / Trust`（#1）+ P0/P1 label 体系已建�
 
 #### B-024 Codex Runtime 终止后无法拉起新任务
 - **计划:** [codex-stop-recovery.md](codex-stop-recovery.md)
-- **状态:** 🔴 未修复（2026-06-06 用户反馈；Codex 已调研，待 Claude Code 修）
+- **状态:** 🔴 下版发布前阻断 / 需复现与修复（P1-P3 代码和单测已完成，但真实 Stop smoke 一直未完成；2026-08-25 新 Signal 使发布门禁重新打开）
 - **现象:** Codex Runtime 正在执行任务时点击 Stop / 终止后，同一会话后续无法发送新指令，像是进程或 session 挂死；用户需要新建会话、重启或等待未知时间才能继续。
-- **本地核实:** 三因素根因：#578 的 `stream-session-manager.ts` force-abort 兜底只保证前端 stream 离开 active；`src/app/api/chat/interrupt/route.ts` 只调用 native 和 SDK conversation interrupt，未调用 `getRuntime('codex_runtime')?.interrupt(sessionId)`；`chat/route.ts` 已把 abortController 传到 Codex Runtime，但 `src/lib/codex/runtime.ts` 当前不读 `options.abortController?.signal`。而 Codex Runtime 已有 `turn/interrupt` 实现，说明中断能力存在但两条入口都没接上。
-- **影响:** Stop 后后台 Codex turn 可能继续运行，`chat/route.ts` 的后台 `collectStreamResponse` 不结束，session lock 的 60s renew interval 不会 clear，会持续续租 600s lock，下一条同会话 send 可能被无限期 `SESSION_BUSY` 或 runtime running 状态阻塞。
+- **2026-08-25 新 Signal（用户原始路径）:** 在“Codex 渠道 → Codex 连接 → GPT-5.6”跑任务时点击一次“终止”，随后整个页面崩溃，刷新也不能恢复。用户紧接着重试未能复现，因此目前只有一次真实用户观察；App 版本、任务所处阶段、session id、`render-process-gone` / `child-process-gone` / utility exit 与错误栈尚未取得。**不得把单次未复现写成已修复，也不得在无日志时断言仍是旧 session lock 根因。**
+- **影响升级:** 旧症状主要是同会话无法继续发送；新症状可能跨到 Renderer 崩溃、Next utility 退出/本地端口失活、恢复页失效或 Stop 终态数据触发渲染异常。`刷新无效` 只说明单纯 Renderer reload 没有恢复，不能单独证明是哪一层死亡。
+- **修复前本地核实（2026-06-06）:** 三因素根因：#578 的 `stream-session-manager.ts` force-abort 兜底只保证前端 stream 离开 active；当时 `src/app/api/chat/interrupt/route.ts` 只调用 native 和 SDK conversation interrupt，未调用 `getRuntime('codex_runtime')?.interrupt(sessionId)`；`chat/route.ts` 已把 abortController 传到 Codex Runtime，但当时 `src/lib/codex/runtime.ts` 不读 `options.abortController?.signal`。而 Codex Runtime 已有 `turn/interrupt` 实现，说明中断能力存在但两条入口没接上。
+- **已落地但未完成真实验收:** route fan-out、Codex abort/turnId race 与精确 lockId watchdog 已实现并通过单测；真实 Codex Stop smoke 没有完成，所以不能证明这些修复覆盖 2026-08-25 的新 crash Signal。
+- **原机制影响:** Stop 后后台 Codex turn 可能继续运行，`chat/route.ts` 的后台 `collectStreamResponse` 不结束，session lock 的 60s renew interval 不会 clear，会持续续租 600s lock，下一条同会话 send 可能被无限期 `SESSION_BUSY` 或 runtime running 状态阻塞。
 - **需核查:**
   - `/api/chat/interrupt` 是否对 `native` / `codex_runtime` / SDK conversation 都做 best-effort fan-out。
   - 用户很快点 Stop 时，`turn/start` 尚未返回 turnId，`activeCodexTurns` 还没 set，Codex Runtime interrupt 是否会 no-op 并丢失中断。
   - Stop 后 `collectStreamResponse`、session lock、runtime status 是否在 terminal/interrupted 路径完成收口；即使上游没有 terminal event，也要有精确 lockId 的 bounded cleanup。
-- **下一步:** Claude Code 按计划 P1-P3 修复并补 guardrail：route fan-out、Codex abort signal/race、精确 lockId watchdog；P5/P6 只在 P1-P3 smoke 后仍有状态分裂/no-output 时展开。
+  - 新 Signal 必须区分 Main/Renderer/Next utility/Codex app-server 四层存活状态，并核对 Stop 前后最后事件、interrupt route 结果、turn id、utility health、本地端口和 crash breadcrumb。
+- **发布前门禁:** 用拟发布 packaged build 按“刚发送后 / reasoning 中 / tool 执行中 / permission 等待中”重复 Stop；每次都断言页面不崩、刷新可恢复、同会话能继续发送、无 renderer/utility crash、session lock 与 runtime status 收口。命中一次即保留日志并进入 `Signal → Triage → Fix → Verify → Guardrail`；未复现也必须补齐针对性诊断并留下真实重复 smoke 证据，不能靠这次手工重试关闭。
+- **下一步:** 先对当前 P1-P3 实现跑 GPT-5.6 的真实 packaged Stop 矩阵并收集四层日志；依据证据修复实际 crash plane，再补 failing-then-passing 回归。P5/P6 是否展开由本次证据决定，不再默认后置。
 
 #### B-025 主日志 12G 暴涨与 Codex Runtime 闪退
 - **计划:** [log-bloat-codex-runtime-crash.md](log-bloat-codex-runtime-crash.md)

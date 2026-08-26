@@ -40,15 +40,10 @@ export function UnifiedTopBar() {
     workingDirectory,
     chatListOpen,
     setChatListOpen,
-    fileTreeOpen,
-    setFileTreeOpen,
-    isAssistantWorkspace,
     currentBranch,
     gitDirtyCount,
   } = usePanel();
-  // The new Workspace Sidebar replaces the old Git / Widget toggles.
-  // FileTree keeps its independent toggle (lightweight entry); the
-  // sidebar is for the unified Tab shell only.
+  // Files, Git, Widget, previews, and artifacts share one Workspace Sidebar.
   const ws = useWorkspaceSidebarOptional();
   const { addToSplit, isInSplit } = useSplit();
   const router = useRouter();
@@ -56,9 +51,10 @@ export function UnifiedTopBar() {
   const { isWindows } = useClientPlatform();
   const pathname = usePathname();
 
-  // Only show Git/terminal/panel controls on chat detail routes (/chat/[id]),
-  // not on the empty /chat page where panels aren't mounted.
-  const isChatRoute = pathname.startsWith("/chat/") && pathname !== "/chat";
+  // Workspace surfaces are project-scoped, so New Chat and existing sessions
+  // share the same entry point. Session-only actions remain guarded by
+  // `sessionId` below.
+  const isChatRoute = pathname === "/chat" || pathname.startsWith("/chat/");
 
   // Session actions menu (mirrors the chat list's row "..." menu so users
   // get the same set of actions on the active chat from inside the chat
@@ -134,8 +130,8 @@ export function UnifiedTopBar() {
   // to be a "reopen only" button that lived in the topbar; the
   // matching collapse button lived inside ChatListPanel. Round 20
   // moves all topbar chrome — traffic-light safe area, sidebar
-  // toggle — into the UnifiedTopBar so the four floating cards
-  // (sidebar, main, workspace, file tree) all share the same
+  // toggle — into the UnifiedTopBar so the floating cards
+  // (sidebar, main, workspace) all share the same
   // y-origin underneath the topbar.
   const sidebarToggleButton = mounted ? (
     <Tooltip>
@@ -358,46 +354,7 @@ export function UnifiedTopBar() {
             </Tooltip>
           )}
 
-          {/* File tree toggle — independent topbar entry per the
-              revised Phase 2 boundary (2026-04-30):
-                1. File tree is a high-frequency deterministic tool, so
-                   it gets its own button.
-                2. Workspace Sidebar handles work surfaces (Git / Widget
-                   / preview); the file tree is NOT folded into it by
-                   default. Files Tab only appears when the user
-                   explicitly pins.
-                3. v13: File Tree 与 Workspace Sidebar 可同时打开，
-                   各自独立 toggle —— 两个按钮不再自动关闭对方，用户
-                   可以一边浏览 file tree 一边在 Workspace Sidebar 上
-                   钉一个 markdown / artifact preview Tab，聊天区随之
-                   收窄。完整 rationale 见 Phase 3 archive 的 v13 条目。 */}
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant={fileTreeOpen ? 'secondary' : 'ghost'}
-                size="icon-sm"
-                className={
-                  fileTreeOpen ? '' : 'text-muted-foreground hover:text-foreground'
-                }
-                onClick={() => {
-                  // v13: file-tree and Workspace Sidebar are additive,
-                  // not mutex. Each toggle flips its own panel only;
-                  // user can have both open simultaneously and chat
-                  // area shrinks to fit.
-                  setFileTreeOpen(!fileTreeOpen);
-                }}
-              >
-                <CodePilotIcon name="file_tree" size="md" className="text-inherit" aria-hidden />
-                <span className="sr-only">{t('topBar.fileTree')}</span>
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom">{t('topBar.fileTree')}</TooltipContent>
-          </Tooltip>
-
-          {/* Single Workspace Sidebar toggle — replaces the previous
-              Git + Widget + Dashboard cluster. The new sidebar hosts
-              fixed Git / Widget Tabs plus dynamic Markdown / Artifact /
-              File preview Tabs (April 2026 Phase 1). */}
+          {/* The single Workspace Sidebar owns Files, Git, Widget and inspectors. */}
           {ws && (
             <Tooltip>
               <TooltipTrigger asChild>
@@ -405,11 +362,7 @@ export function UnifiedTopBar() {
                   variant={ws.state.open ? "secondary" : "ghost"}
                   size="icon-sm"
                   className={ws.state.open ? "" : "text-muted-foreground hover:text-foreground"}
-                  onClick={() => {
-                    // v13: see file-tree button above — additive, not
-                    // mutex. Each toggle is independent.
-                    ws.setOpen(!ws.state.open);
-                  }}
+                  onClick={() => ws.setOpen(!ws.state.open)}
                   aria-label={t('workspaceSidebar.toggle' as TranslationKey)}
                 >
                   <CodePilotIcon name="panel_right" size="md" strokeWidth={ws.state.open ? 2 : undefined} className="text-inherit" aria-hidden />

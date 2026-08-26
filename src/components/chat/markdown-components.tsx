@@ -27,12 +27,17 @@
  */
 
 import type { ComponentProps } from "react";
-import { useCallback, useRef } from "react";
+import { useCallback, useContext, useRef } from "react";
 import type { BundledLanguage } from "shiki";
 import { cn } from "@/lib/utils";
 import { CodePilotIcon } from "@/components/ui/semantic-icon";
 import { showToast } from "@/hooks/useToast";
-import { CodeBlockContent } from "@/components/ai-elements/code-block";
+import {
+  CodeBlockContent,
+  previewSourceForCodeFence,
+} from "@/components/ai-elements/code-block";
+import { PanelContext } from "@/hooks/usePanel";
+import { useTranslation } from "@/hooks/useTranslation";
 import {
   BASE_MARKDOWN_COMPONENTS,
   MarkdownInlineCode,
@@ -160,6 +165,9 @@ export function isChatFenceBlock(args: {
  * (with main-thread fallback) and surfaces `data-language` for the block.
  */
 function ChatCodeFenceBlock({ code, language }: { code: string; language: string }) {
+  const panel = useContext(PanelContext);
+  const { t } = useTranslation();
+  const previewSource = previewSourceForCodeFence(language, code);
   const handleCopy = useCallback(async () => {
     try {
       await navigator.clipboard.writeText(code);
@@ -179,15 +187,29 @@ function ChatCodeFenceBlock({ code, language }: { code: string; language: string
         <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground/70">
           {language || "code"}
         </span>
-        <button
-          type="button"
-          onClick={handleCopy}
-          className={cn(cardActionBtn, "h-7 w-7 px-0")}
-          aria-label="Copy code"
-          title="复制代码"
-        >
-          <CodePilotIcon name="copy" size="sm" aria-hidden />
-        </button>
+        <div className="flex items-center gap-1">
+          {panel && previewSource && (
+            <button
+              type="button"
+              onClick={() => panel.setPreviewSource(previewSource)}
+              className={cn(cardActionBtn, "h-7 w-7 px-0")}
+              aria-label={t('common.preview')}
+              title={t('common.preview')}
+              data-codepilot-codefence-preview={language}
+            >
+              <CodePilotIcon name="preview" size="sm" aria-hidden />
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={handleCopy}
+            className={cn(cardActionBtn, "h-7 w-7 px-0")}
+            aria-label="Copy code"
+            title="复制代码"
+          >
+            <CodePilotIcon name="copy" size="sm" aria-hidden />
+          </button>
+        </div>
       </div>
       <CodeBlockContent code={code} language={(language || "text") as BundledLanguage} />
     </div>

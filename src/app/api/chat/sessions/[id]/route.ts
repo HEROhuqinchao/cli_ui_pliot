@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { deleteSession, getSession, updateSessionWorkingDirectory, updateSessionTitle, updateSessionMode, updateSessionModel, updateSessionProviderId, clearSessionMessages, updateSdkSessionId, updateSessionPermissionProfile, updateSessionRuntime } from '@/lib/db';
+import { deleteSession, getSession, updateSessionWorkingDirectory, updateSessionTitle, updateSessionMode, updateSessionAccessLevel, updateSessionModel, updateSessionProviderId, clearSessionMessages, updateSdkSessionId, updateSessionPermissionProfile, updateSessionRuntime } from '@/lib/db';
 import { sanitizeManualTitle } from '@/lib/conversation-title';
 import { autoApprovePendingForSession } from '@/lib/bridge/permission-broker';
 import { clearRuntimeSessionRef } from '@/lib/runtime/session-store';
@@ -38,6 +38,25 @@ export async function PATCH(
 
     const body = await request.json();
 
+    // Validate the consolidated access-level pair before performing ANY write.
+    // The composer sends mode + permission_profile in one PATCH; accepting the
+    // mode and only then rejecting a bad profile would leave a partially
+    // applied permission transition.
+    if (body.mode !== undefined && !['code', 'plan', 'ask'].includes(body.mode)) {
+      return Response.json(
+        { error: 'mode must be one of: code, plan, ask' },
+        { status: 400 },
+      );
+    }
+    if (body.permission_profile !== undefined && !isPermissionProfile(body.permission_profile)) {
+      return Response.json(
+        { error: `permission_profile must be one of: ${PERMISSION_PROFILES.join(', ')}` },
+        { status: 400 },
+      );
+    }
+    const hasConsolidatedAccessPair = body.mode !== undefined
+      && body.permission_profile !== undefined;
+
     if (body.working_directory) {
       const workingDirectory = typeof body.working_directory === 'string'
         ? body.working_directory.trim()
@@ -74,7 +93,11 @@ export async function PATCH(
       }
     }
     if (body.mode) {
-      updateSessionMode(id, body.mode);
+      if (hasConsolidatedAccessPair) {
+        updateSessionAccessLevel(id, body.mode, body.permission_profile);
+      } else {
+        updateSessionMode(id, body.mode);
+      }
     }
     // Track whether provider, model, or runtime_pin actually changed — if so,
     // the old sdk_session_id is stale and must be cleared to prevent resume
@@ -158,12 +181,6 @@ export async function PATCH(
       clearRuntimeSessionRef(id, 'claude_code');
     }
     if (body.permission_profile !== undefined) {
-      if (!isPermissionProfile(body.permission_profile)) {
-        return Response.json(
-          { error: `permission_profile must be one of: ${PERMISSION_PROFILES.join(', ')}` },
-          { status: 400 },
-        );
-      }
       // A profile change only governs requests made AFTER it lands — an
       // in-flight prompt keeps the semantics it was raised under. The one
       // exception is the deliberate full_access elevation below: the user
@@ -171,7 +188,9 @@ export async function PATCH(
       // the one they meant. Switching to/from auto_review resolves nothing —
       // the pending prompt stays a human decision.
       const previousProfile = normalizePermissionProfile(session.permission_profile);
-      updateSessionPermissionProfile(id, body.permission_profile);
+      if (!hasConsolidatedAccessPair) {
+        updateSessionPermissionProfile(id, body.permission_profile);
+      }
       if (previousProfile !== 'full_access' && body.permission_profile === 'full_access') {
         try {
           autoApprovePendingForSession(id);

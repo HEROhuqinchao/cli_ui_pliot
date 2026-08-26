@@ -9,9 +9,13 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  activatePrimaryInteractively,
   initialState,
+  hydrateWorkspaceSidebarState,
   openDynamicTab,
   closeTab,
+  closeInspector,
+  createBrowserSurfaceTab,
   setActiveTab,
   setOpen,
   setWidth,
@@ -20,6 +24,9 @@ import {
   storageKey,
   dynamicTabId,
   previewSourceFromTab,
+  renameBrowserSurfaceTab,
+  restoreThreadSurfaceState,
+  serializeThreadSurfaceState,
   tabFromPreviewSource,
   SIDEBAR_MIN_WIDTH,
   SIDEBAR_MAX_WIDTH,
@@ -75,6 +82,68 @@ describe('openDynamicTab', () => {
     s = openDynamicTab(s, fileTab('a.md'));
     // Different kinds → different ids → both Tabs coexist.
     assert.equal(s.tabs.length, 4);
+  });
+});
+
+describe('repeatable Browser Primary Tabs', () => {
+  it('uses one sidebar Tab per browser page with no nested tab identity', () => {
+    let s = openDynamicTab(initialState(), createBrowserSurfaceTab('one'));
+    s = openDynamicTab(s, createBrowserSurfaceTab('two', 'https://example.com/'));
+    const browserTabs = s.tabs.filter((tab) => tab.kind === 'browser');
+    assert.equal(browserTabs.length, 2);
+    assert.equal(s.activePrimaryId, 'browser');
+    assert.equal(s.activeBrowserTabId, 'browser:two');
+    assert.equal(s.activeTabId, 'browser:two');
+  });
+
+  it('keeps the selected Browser behind Inspector and returns to it on close', () => {
+    let s = openDynamicTab(initialState(), createBrowserSurfaceTab('one'));
+    s = openDynamicTab(s, createBrowserSurfaceTab('two'));
+    s = setActiveTab(s, 'browser:one');
+    s = openDynamicTab(s, markdownTab('docs/x.md'));
+    assert.equal(s.activePrimaryId, 'browser');
+    assert.equal(s.activeBrowserTabId, 'browser:one');
+    assert.equal(s.inspectorOpen, true);
+    s = closeInspector(s);
+    assert.equal(s.activeTabId, 'browser:one');
+    assert.equal(s.inspectorOpen, false);
+  });
+
+  it('renames from the actual page title and selects a sibling when closed', () => {
+    let s = openDynamicTab(initialState(), createBrowserSurfaceTab('one'));
+    s = openDynamicTab(s, createBrowserSurfaceTab('two'));
+    s = openDynamicTab(s, createBrowserSurfaceTab('three'));
+    s = closeTab(s, 'browser:three');
+    assert.equal(s.activeBrowserTabId, 'browser:two');
+    s = renameBrowserSurfaceTab(s, 'browser:two', ' Example Domain ');
+    const renamed = s.tabs.find((tab) => tab.id === 'browser:two');
+    assert.equal(renamed?.kind === 'browser' ? renamed.title : undefined, 'Example Domain');
+    s = closeTab(s, 'browser:two');
+    assert.equal(s.activeBrowserTabId, 'browser:one');
+    assert.equal(s.activeTabId, 'browser:one');
+    s = closeTab(s, 'browser:one');
+    assert.equal(s.activeBrowserTabId, undefined);
+    assert.equal(s.activePrimaryId, 'git');
+    assert.equal(s.activeTabId, 'git');
+  });
+
+  it('keeps Browser page state memory-only while restoring a blank Browser Primary', () => {
+    const open = openDynamicTab(
+      initialState(),
+      createBrowserSurfaceTab('one', 'https://example.com/private'),
+    );
+    const wire = serializeThreadSurfaceState(open, 'thread-a');
+    assert.equal(wire.activePrimary, 'browser');
+    assert.equal(wire.inspectorTabs.some((tab) => tab.kind === 'browser'), false);
+    const restored = restoreThreadSurfaceState(initialState(), wire);
+    assert.equal(restored.activePrimaryId, 'browser');
+    assert.equal(restored.tabs.filter((tab) => tab.kind === 'browser').length, 1);
+    const restoredBrowser = restored.tabs.find((tab) =>
+      tab.kind === 'browser' && tab.id === restored.activeBrowserTabId);
+    assert.equal(
+      restoredBrowser?.kind === 'browser' ? restoredBrowser.initialUrl : 'unexpected',
+      undefined,
+    );
   });
 });
 
@@ -143,6 +212,84 @@ describe('setActiveTab / setOpen / setWidth', () => {
     assert.equal(s.width, SIDEBAR_MIN_WIDTH);
     s = setWidth(initialState(), 99999);
     assert.equal(s.width, SIDEBAR_MAX_WIDTH);
+  });
+});
+
+describe('interactive Primary activation', () => {
+  it('reveals Widget over a standalone preview without closing the preview tab', () => {
+    let s = openDynamicTab(initialState(), {
+      id: 'artifact:demo',
+      kind: 'artifact',
+      key: 'demo',
+      title: 'demo.html',
+      source: { kind: 'inline-html', html: '<p>demo</p>', virtualName: 'demo.html' },
+    });
+
+    s = activatePrimaryInteractively(s, 'widget');
+
+    assert.equal(s.activePrimaryId, 'widget');
+    assert.equal(s.activeTabId, 'widget');
+    assert.equal(s.activeInspectorId, undefined);
+    assert.equal(s.inspectorOpen, false);
+    assert.ok(s.tabs.some((tab) => tab.id === 'artifact:demo'));
+
+    s = setActiveTab(s, 'artifact:demo');
+    assert.equal(s.activeInspectorId, 'artifact:demo');
+    assert.equal(s.inspectorOpen, true);
+  });
+
+  it('keeps hydration semantics separate so a restored Inspector remains open', () => {
+    const preview = openDynamicTab(initialState(), markdownTab('docs/restored.md'));
+    const hydrated = hydrateWorkspaceSidebarState(preview, {
+      open: true,
+      width: 480,
+      pinnedPrimaryIds: ['widget'],
+      defaultPrimaryId: 'widget',
+    });
+
+    assert.equal(hydrated.activePrimaryId, 'widget');
+    assert.equal(hydrated.activeInspectorId, 'markdown:docs/restored.md');
+    assert.equal(hydrated.inspectorOpen, true);
+  });
+});
+
+describe('workspace preference hydration', () => {
+  it('restores a thread-owned pinned Primary without reopening a collapsed shell', () => {
+    const threadState = restoreThreadSurfaceState(initialState(), {
+      version: 1,
+      sessionId: 'thread-a',
+      activePrimary: 'files',
+      inspectorTabs: [],
+    });
+    const hydrated = hydrateWorkspaceSidebarState(threadState, {
+      open: false,
+      width: 620,
+      pinnedPrimaryIds: ['files-pinned', 'git'],
+      defaultPrimaryId: 'git',
+    });
+
+    assert.equal(hydrated.open, false);
+    assert.equal(hydrated.width, 620);
+    assert.equal(hydrated.activePrimaryId, 'files-pinned');
+    assert.ok(hydrated.tabs.some((tab) => tab.id === 'files-pinned'));
+  });
+
+  it('falls back to the workspace default when the thread Primary is no longer pinned', () => {
+    const threadState = restoreThreadSurfaceState(initialState(), {
+      version: 1,
+      sessionId: 'thread-a',
+      activePrimary: 'files',
+      inspectorTabs: [],
+    });
+    const hydrated = hydrateWorkspaceSidebarState(threadState, {
+      open: true,
+      width: 480,
+      pinnedPrimaryIds: ['widget'],
+      defaultPrimaryId: 'widget',
+    });
+
+    assert.equal(hydrated.open, true);
+    assert.equal(hydrated.activePrimaryId, 'widget');
   });
 });
 
@@ -297,6 +444,27 @@ describe('serialize / parse round-trip', () => {
     });
     const s = parse(wire);
     assert.equal(s.activeTabId, 'git');
+  });
+
+  it('round-trips active Inspector state through the thread-owned envelope', () => {
+    let s = initialState({ open: true, width: 640 });
+    s = openDynamicTab(s, {
+      id: 'files-pinned',
+      kind: 'files-pinned',
+      key: 'files',
+      title: 'Files',
+    });
+    s = openDynamicTab(s, markdownTab('docs/persisted.md'));
+    const thread = serializeThreadSurfaceState(s, 'thread-a');
+    const restored = restoreThreadSurfaceState(initialState({ width: 640 }), thread);
+
+    assert.equal(thread.activePrimary, 'files');
+    assert.deepEqual(thread.inspectorTabs.map((tab) => tab.id), ['markdown:docs/persisted.md']);
+    assert.equal(restored.activePrimaryId, 'files-pinned');
+    assert.equal(restored.activeInspectorId, 'markdown:docs/persisted.md');
+    assert.equal(restored.inspectorOpen, true);
+    assert.equal(restored.activeTabId, 'markdown:docs/persisted.md');
+    assert.ok(restored.tabs.some((tab) => tab.id === 'files-pinned'));
   });
 });
 

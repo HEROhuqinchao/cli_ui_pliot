@@ -189,12 +189,12 @@ describe('PromptInput keeps text/files when an async submit rejects (real source
 });
 
 describe('ChatView RunCheckpoint context window source pins', () => {
-  it('checkpoint usage passes context1m + upstreamModelId like RunCockpit', () => {
+  it('checkpoint usage passes route-effective context1m + upstreamModelId like RunCockpit', () => {
     const src = read('components/chat/ChatView.tsx');
     assert.match(
       src,
-      /const usage = useContextUsage\(\s*messages,\s*currentModel,\s*\{\s*context1m,\s*upstreamModelId: currentModelUpstream,\s*\}\s*\)/,
-      'RunCheckpoint cost gating must use the same context-window inputs the status row uses',
+      /const usage = useContextUsage\(\s*messages,\s*currentModel,\s*\{\s*context1m: effectiveContext1m,\s*upstreamModelId: currentModelUpstream,\s*\}\s*\)/,
+      'RunCheckpoint cost gating must use the same route-effective context-window inputs the status row and send path use',
     );
   });
 });

@@ -2,7 +2,6 @@
 
 import { useState, useCallback, useEffect, useRef } from "react";
 import { useSearchParams } from "next/navigation";
-import { X } from "@/components/ui/icon";
 import { CodePilotIcon } from "@/components/ui/semantic-icon";
 import { Button } from "@/components/ui/button";
 import { PromptDialog } from "@/components/ui/prompt-dialog";
@@ -10,7 +9,6 @@ import { usePanel } from "@/hooks/usePanel";
 import { useTranslation } from "@/hooks/useTranslation";
 import type { TranslationKey } from "@/i18n";
 import { FileTree } from "@/components/project/FileTree";
-import { useWorkspaceSidebarOptional } from "@/hooks/useWorkspaceSidebar";
 import { useFileMutation } from "@/hooks/useFileMutation";
 import {
   FileMutationError,
@@ -36,25 +34,11 @@ import { showToast } from "@/hooks/useToast";
 
 type NewItemMode = "file" | "folder";
 
-/**
- * @param variant
- *   - `'legacy'` (default): the standalone right-rail panel with its
- *     own ResizeHandle, panel title, Pin-to-sidebar action, and Close
- *     button. This is what the topbar's File Tree toggle opens.
- *   - `'sidebar'`: rendered as the content of the Workspace Sidebar's
- *     `files-pinned` Tab. Skips the outer ResizeHandle / width chrome,
- *     and hides the Pin button (already pinned) + Close button (the
- *     Tab strip's X handles closing). Avoids the "half-migrated" look
- *     where the sidebar Tab body still showed the legacy chrome.
- */
-export function FileTreePanel({ variant = 'legacy' }: { variant?: 'legacy' | 'sidebar' } = {}) {
-  const { workingDirectory, previewFile, setPreviewFile, setFileTreeOpen } = usePanel();
+/** Files Primary content; WorkspaceSidebar owns resize, pin, and close chrome. */
+export function FileTreePanel() {
+  const { workingDirectory, previewFile, setPreviewFile } = usePanel();
   const { t } = useTranslation();
   const searchParams = useSearchParams();
-  // Pin to Workspace Sidebar — only available when the new sidebar
-  // provider is mounted (i.e. inside the chat detail route). Outside
-  // that context the button is hidden.
-  const ws = useWorkspaceSidebarOptional();
 
   // VS-Code-like "new item" flow. The mode gates a focused modal instead
   // of inserting a low-contrast row above the tree, so the create action
@@ -82,7 +66,7 @@ export function FileTreePanel({ variant = 'legacy' }: { variant?: 'legacy' | 'si
   useEffect(
     () =>
       registerParticipant({
-        id: `file-tree-selection-${variant}`,
+        id: 'file-tree-selection-workspace-sidebar',
         priority: 40,
         matches: () => true,
         commit: (transaction) => {
@@ -101,7 +85,7 @@ export function FileTreePanel({ variant = 'legacy' }: { variant?: 'legacy' | 'si
           });
         },
       }),
-    [registerParticipant, variant],
+    [registerParticipant],
   );
 
   const highlightPath = searchParams.get("file") || undefined;
@@ -459,62 +443,8 @@ export function FileTreePanel({ variant = 'legacy' }: { variant?: 'legacy' | 'si
     </>
   );
 
-  // sidebar variant: stripped chrome — Workspace Sidebar shell owns
-  // the resize, title, and close affordances. We deliberately also
-  // skip the Pin button because the Tab is *already pinned*.
-  if (variant === 'sidebar') {
-    return (
-      <div className="flex h-full w-full flex-col overflow-hidden">
-        {body}
-      </div>
-    );
-  }
-
-  // legacy variant: inner content only. Phase 7c-D moved the
-  // ResizeHandle + CardFrame + CardSurface to PanelZone, which now
-  // owns the file-tree card chrome geometry. This component is just
-  // the header (Files label + pin / close buttons) + body.
   return (
-    <div className="flex h-full w-full flex-col">
-      <div className="flex h-10 shrink-0 items-center justify-between px-3">
-        <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-          {t("panel.files")}
-        </span>
-        <div className="flex items-center gap-0.5">
-          {ws && (
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              onClick={() => {
-                // Close the lightweight panel and surface the same
-                // tree as a Files Tab inside the Workspace Sidebar.
-                // The Tab is closable; closing it doesn't bring the
-                // lightweight panel back.
-                ws.openTab({
-                  id: 'files-pinned',
-                  kind: 'files-pinned',
-                  key: 'files',
-                  title: t('panel.files' as TranslationKey),
-                });
-                setFileTreeOpen(false);
-              }}
-              title={t('workspaceSidebar.pinFiles' as TranslationKey)}
-              aria-label={t('workspaceSidebar.pinFiles' as TranslationKey)}
-            >
-              <CodePilotIcon name="pin" size="sm" aria-hidden />
-            </Button>
-          )}
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            onClick={() => setFileTreeOpen(false)}
-          >
-            <X size={14} />
-            <span className="sr-only">{t("panel.closePanel")}</span>
-          </Button>
-        </div>
-      </div>
+    <div className="flex h-full w-full flex-col overflow-hidden">
       {body}
     </div>
   );

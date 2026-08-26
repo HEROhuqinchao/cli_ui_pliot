@@ -9,9 +9,6 @@ import { NewChatWelcome } from './NewChatWelcome';
 import { TerminalReasonChip } from './TerminalReasonChip';
 import { RateLimitBanner } from './RateLimitBanner';
 import { MessageInput } from './MessageInput';
-import { ChatComposerActionBar } from './ChatComposerActionBar';
-import { ModeIndicator } from './ModeIndicator';
-import { RuntimeSelector } from './RuntimeSelector';
 import type { ChatRuntime } from '@/lib/chat-runtime-shared';
 import { ChatPermissionSelector } from './ChatPermissionSelector';
 import { RunCockpit } from './RunCockpit';
@@ -60,7 +57,7 @@ import { toWireEffort, resolveModelSwitchEffortEffect } from '@/lib/effort-level
 // 'async_hooks'". `chat-runtime-shared` only ships the pure helpers /
 // types and is safe for client components. See
 // `src/lib/chat-runtime-shared.ts` doc-block for the full rationale.
-import { agentRuntimeToChatRuntime, effectiveChatRuntime } from '@/lib/chat-runtime-shared';
+import { effectiveChatRuntime } from '@/lib/chat-runtime-shared';
 import { useContextUsage } from '@/hooks/useContextUsage';
 import {
   startStream,
@@ -83,13 +80,13 @@ interface ChatViewProps {
   providerId?: string;
   /**
    * Phase 2 Step 3b: session's stored `runtime_pin` (chat-runtime label
-   * form: '' / 'claude_code' / 'codepilot_runtime'). Drives the picker
+   * form: '' / 'claude_code' / 'codepilot_runtime' / 'codex_runtime'). Drives the picker
    * filter for THIS session — global `agent_runtime` flips no longer
    * cascade. Empty / undefined = "follow global" (today's behavior).
    */
   runtimePin?: string;
   initialPermissionProfile?: SessionPermissionProfile;
-  initialMode?: 'code' | 'plan';
+  initialMode?: 'code' | 'plan' | 'ask';
   initialHasSummary?: boolean;
 }
 
@@ -107,7 +104,7 @@ const CONFIRM_REQUIRED = new Set<import('./TerminalReasonChip').TerminalActionId
 ]);
 
 export function ChatView({ sessionId, initialMessages = [], initialHasMore = false, modelName, providerId, runtimePin: initialRuntimePin, initialPermissionProfile, initialMode, initialHasSummary }: ChatViewProps) {
-  const { setStreamingSessionId, workingDirectory, setPendingApprovalSessionId, setFileTreeOpen, setIsAssistantWorkspace } = usePanel();
+  const { setStreamingSessionId, workingDirectory, setPendingApprovalSessionId, setIsAssistantWorkspace } = usePanel();
   const { t } = useTranslation();
   const router = useRouter();
   const [messages, setMessages] = useState<Message[]>(initialMessages);
@@ -238,6 +235,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
   const [selectedEffort, setSelectedEffort] = useState<string | undefined>(undefined);
   const [thinkingMode, setThinkingMode] = useState<string>('adaptive');
   const [context1m, setContext1m] = useState(false);
+  const [effectiveContext1m, setEffectiveContext1m] = useState(false);
   const [hasSummary, setHasSummary] = useState(initialHasSummary || false);
 
   // Sync model/provider when session data loads. providerId='' is a
@@ -248,7 +246,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
   useEffect(() => { if (providerId !== undefined) setCurrentProviderId(providerId); }, [providerId]);
 
   // Phase 2 Step 4c — `runtime_pin` becomes local state so the composer
-  // toolbar's RuntimeSelector can write through to it without waiting
+  // unified Runtime/model picker can write through to it without waiting
   // for a parent reload. Initialised from the prop the page passed in
   // (loaded server-side from chat_sessions); the sync effect catches
   // session swaps. handleRuntimePinChange (declared with the other
@@ -402,7 +400,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
   // RunCockpit uses so the cost trigger reads the SAME used count the
   // user sees in the status row.
   const usage = useContextUsage(messages, currentModel, {
-    context1m,
+    context1m: effectiveContext1m,
     upstreamModelId: currentModelUpstream,
   });
   const usedContextTokens = usage.used;
@@ -441,6 +439,9 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
   useEffect(() => {
     const pid = currentProviderId || 'env';
     const controller = new AbortController();
+    // The provider option is shared across sessions, but route support is not.
+    // Fail closed locally until MessageInput resolves this model's descriptor.
+    setEffectiveContext1m(false);
     fetch(`/api/providers/options?providerId=${encodeURIComponent(pid)}`, { signal: controller.signal })
       .then(r => r.ok ? r.json() : null)
       .then(data => {
@@ -685,7 +686,24 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
     }).catch(() => {});
   }, [sessionId, providerGroups, selectedEffort, t]);
 
-  // Phase 2 Step 4c — RuntimeSelector callback. Optimistic local update
+  const handleContext1mChange = useCallback((enabled: boolean) => {
+    setContext1m(enabled);
+    setEffectiveContext1m(enabled);
+    const providerId = currentProviderId || 'env';
+    fetch('/api/providers/options', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        providerId,
+        options: { context_1m: enabled },
+      }),
+    }).catch(() => {
+      // Match the existing provider-option flow: the next provider options
+      // fetch reconciles a failed optimistic write.
+    });
+  }, [currentProviderId]);
+
+  // Phase 2 Step 4c — unified Runtime/model picker callback. Optimistic local update
   // (so the picker filter and other consumers see the new pin
   // immediately) then PATCH to persist. Errors are swallowed for parity
   // with handleProviderModelChange — the next page load would surface
@@ -714,7 +732,9 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
     const hasUserTurn = messages.some((m) => m.role === 'user' && !m.id.startsWith('temp-'));
     if (!hasUserTurn) return;
     const fromPart =
-      previousPin === 'claude_code' || previousPin === 'codepilot_runtime'
+      previousPin === 'claude_code'
+      || previousPin === 'codepilot_runtime'
+      || previousPin === 'codex_runtime'
         ? ` from=${previousPin}`
         : '';
     const markerContent = `[__RUNTIME_SWITCH__${fromPart} to=${pin}]`;
@@ -898,6 +918,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
       case 'enable_1m_and_retry':
         if (!lastUserMessage) return;
         setContext1m(true);
+        setEffectiveContext1m(true);
         // Persist per-provider so future sessions keep 1M until user opts out.
         fetch(`/api/providers/options?providerId=${encodeURIComponent(currentProviderId || 'env')}`, {
           method: 'PUT',
@@ -1180,7 +1201,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
         // applies its per-model default (Opus 4.7 → xhigh, etc.)
         effort: toWireEffort(selectedEffort),
         thinking: buildThinkingConfig(),
-        context1m,
+        context1m: effectiveContext1m,
         displayOverride,
         mentions,
         selectedSkills,
@@ -1198,7 +1219,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
       });
       return true;
     },
-    [sessionId, mode, currentModel, currentProviderId, selectedEffort, context1m, buildThinkingConfig, handleModeChange, noCompatibleProvider, providerFetchState, resolvedProviderId, resolvedModel, sessionProviderRuntimeIncompatible, codexRuntimeRecoveryBlocked]
+    [sessionId, mode, currentModel, currentProviderId, selectedEffort, effectiveContext1m, buildThinkingConfig, handleModeChange, noCompatibleProvider, providerFetchState, resolvedProviderId, resolvedModel, sessionProviderRuntimeIncompatible, codexRuntimeRecoveryBlocked]
   );
 
   const sendMessage = useCallback(
@@ -1459,6 +1480,33 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
   // "clicked + in the assistant workspace" — both create an empty
   // session and land here.
   const isNewChat = displayedMessages.length === 0 && !isStreaming;
+  const composerPermissionControl = (
+    <ChatPermissionSelector
+      sessionId={sessionId}
+      mode={mode}
+      onModeChange={setMode}
+      permissionProfile={permissionProfile}
+      onPermissionChange={setPermissionProfile}
+      runtime={sessionRuntimeParam}
+      disabled={isStreaming}
+    />
+  );
+  const composerRunStatusControl = (
+    <RunCockpit
+      providerId={currentProviderId}
+      messages={messages}
+      modelName={currentModel}
+      context1m={effectiveContext1m}
+      hasSummary={hasSummary}
+      upstreamModelId={currentModelUpstream}
+      contextUsageSnapshot={streamSnapshot?.contextUsageSnapshot}
+      permissionProfile={permissionProfile}
+      pendingContextTokens={pendingContextTokens}
+      pendingContextSubTotals={pendingContextSubTotals}
+      sessionRuntimePin={runtimePin}
+      reportedContextWindowTrusted={activeProviderReportsTrustedWindow}
+    />
+  );
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -1510,6 +1558,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
               onModelChange={setCurrentModel}
               providerId={currentProviderId}
               runtime={sessionRuntimeParam}
+              onRuntimeChange={handleRuntimePinChange}
               onProviderModelChange={handleProviderModelChange}
               workingDirectory={workingDirectory}
               onAssistantTrigger={checkAssistantTrigger}
@@ -1521,41 +1570,11 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
               onPendingContextTokensChange={setPendingContextTokens}
               onPendingContextSubTotalsChange={setPendingContextSubTotals}
               blockingReasonIds={blockingReasonIds}
-            />
-            <ChatComposerActionBar
-              left={
-                <>
-                  <ModeIndicator mode={mode} onModeChange={handleModeChange} disabled={isStreaming} />
-                  <RuntimeSelector
-                    runtimePin={runtimePin}
-                    effectiveRuntime={agentRuntimeToChatRuntime(globalRuntime.agentRuntime)}
-                    onRuntimePinChange={handleRuntimePinChange}
-                    disabled={isStreaming}
-                  />
-                  <ChatPermissionSelector
-                    sessionId={sessionId}
-                    permissionProfile={permissionProfile}
-                    onPermissionChange={setPermissionProfile}
-                    runtime={sessionRuntimeParam}
-                  />
-                </>
-              }
-              right={
-                <RunCockpit
-                  providerId={currentProviderId}
-                  messages={messages}
-                  modelName={currentModel}
-                  context1m={context1m}
-                  hasSummary={hasSummary}
-                  upstreamModelId={currentModelUpstream}
-                  contextUsageSnapshot={streamSnapshot?.contextUsageSnapshot}
-                  permissionProfile={permissionProfile}
-                  pendingContextTokens={pendingContextTokens}
-                  pendingContextSubTotals={pendingContextSubTotals}
-                  sessionRuntimePin={runtimePin}
-                  reportedContextWindowTrusted={activeProviderReportsTrustedWindow}
-                />
-              }
+              context1m={context1m}
+              onContext1mChange={handleContext1mChange}
+              onContext1mEffectiveChange={setEffectiveContext1m}
+              permissionControl={composerPermissionControl}
+              runStatusControl={composerRunStatusControl}
             />
           </div>
         </div>
@@ -1804,6 +1823,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
         onModelChange={setCurrentModel}
         providerId={currentProviderId}
         runtime={sessionRuntimeParam}
+        onRuntimeChange={handleRuntimePinChange}
         onProviderModelChange={handleProviderModelChange}
         workingDirectory={workingDirectory}
         onAssistantTrigger={checkAssistantTrigger}
@@ -1815,41 +1835,11 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
         onPendingContextTokensChange={setPendingContextTokens}
         onPendingContextSubTotalsChange={setPendingContextSubTotals}
         blockingReasonIds={blockingReasonIds}
-      />
-      <ChatComposerActionBar
-        left={
-          <>
-            <ModeIndicator mode={mode} onModeChange={handleModeChange} disabled={isStreaming} />
-            <RuntimeSelector
-              runtimePin={runtimePin}
-              effectiveRuntime={agentRuntimeToChatRuntime(globalRuntime.agentRuntime)}
-              onRuntimePinChange={handleRuntimePinChange}
-              disabled={isStreaming}
-            />
-            <ChatPermissionSelector
-              sessionId={sessionId}
-              permissionProfile={permissionProfile}
-              onPermissionChange={setPermissionProfile}
-              runtime={sessionRuntimeParam}
-            />
-          </>
-        }
-        right={
-          <RunCockpit
-            providerId={currentProviderId}
-            messages={messages}
-            modelName={currentModel}
-            context1m={context1m}
-            hasSummary={hasSummary}
-            upstreamModelId={currentModelUpstream}
-            contextUsageSnapshot={streamSnapshot?.contextUsageSnapshot}
-            permissionProfile={permissionProfile}
-            pendingContextTokens={pendingContextTokens}
-            pendingContextSubTotals={pendingContextSubTotals}
-            sessionRuntimePin={runtimePin}
-            reportedContextWindowTrusted={activeProviderReportsTrustedWindow}
-          />
-        }
+        context1m={context1m}
+        onContext1mChange={handleContext1mChange}
+        onContext1mEffectiveChange={setEffectiveContext1m}
+        permissionControl={composerPermissionControl}
+        runStatusControl={composerRunStatusControl}
       />
         </>
       )}

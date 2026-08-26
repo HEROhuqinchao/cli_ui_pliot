@@ -2249,6 +2249,24 @@ export function updateSessionMode(id: string, mode: string): void {
 }
 
 /**
+ * Persist the consolidated Composer access pair in one SQLite statement. The
+ * route validates both fields first; this single write also prevents a storage
+ * error from leaving a half-applied `mode` / `permission_profile` transition.
+ */
+export function updateSessionAccessLevel(
+  id: string,
+  mode: 'code' | 'plan' | 'ask',
+  profile: SessionPermissionProfile,
+): void {
+  if (!['code', 'plan', 'ask'].includes(mode)) {
+    throw new Error(`Invalid session mode: ${mode}`);
+  }
+  const db = getDb();
+  db.prepare('UPDATE chat_sessions SET mode = ?, permission_profile = ? WHERE id = ?')
+    .run(mode, normalizePermissionProfile(profile), id);
+}
+
+/**
  * Persist a session's permission profile. `normalizePermissionProfile` is the
  * fail-closed floor: a caller that somehow reaches here with an unvalidated
  * value writes 'default', never an elevated profile. API validation still

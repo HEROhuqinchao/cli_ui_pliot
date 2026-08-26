@@ -141,6 +141,13 @@ import {
   SERVER_HEALTH_DIAGNOSTIC_MARKER,
 } from '../src/lib/database-recovery';
 import { disposeAutoUpdaterTimers, initAutoUpdater, setUpdaterWindow } from './updater';
+import {
+  BROWSER_WEB_PREFERENCES,
+  deriveBrowserPartition,
+  isAllowedBrowserGuestUrl,
+  isCanonicalBrowserWorkspaceId,
+} from './browser-surface-security';
+import { classifyBrowserUrl, isSafeExternalBrowserUrl } from '../src/lib/browser-url-policy';
 
 // B-025: hard caps for the persistent main log + the in-memory server-output
 // ring. The 12.5 GB log a user hit came from an unbounded active file plus an
@@ -174,6 +181,8 @@ function sanitizedProcessEnv(): Record<string, string> {
 }
 
 let mainWindow: BrowserWindow | null = null;
+const issuedBrowserPartitions = new Set<string>();
+const configuredBrowserPartitions = new Set<string>();
 const notificationClickQueue = new NotificationClickQueue((action) => {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('notification:click', action);
@@ -250,6 +259,81 @@ function openExternalInSystemBrowser(targetUrl: string): void {
     },
   );
 }
+
+function isTrustedMainWindowSender(event: Electron.IpcMainInvokeEvent): boolean {
+  if (
+    !mainWindow
+    || mainWindow.isDestroyed()
+    || event.sender !== mainWindow.webContents
+    || event.senderFrame !== event.sender.mainFrame
+    || !serverPort
+  ) {
+    return false;
+  }
+  try {
+    const senderUrl = new URL(event.sender.getURL());
+    return senderUrl.protocol === 'http:'
+      && senderUrl.hostname === '127.0.0.1'
+      && senderUrl.port === String(serverPort);
+  } catch {
+    return false;
+  }
+}
+
+function browserGuestHost(contents: Electron.WebContents): Electron.WebContents | null {
+  const host = contents.hostWebContents;
+  return host && !host.isDestroyed() ? host : null;
+}
+
+function configureBrowserPartition(partition: string): void {
+  if (configuredBrowserPartitions.has(partition)) return;
+  const browserSession = session.fromPartition(partition);
+  const userAgent = browserSession.getUserAgent()
+    .replace(/\sElectron\/[\d.]+/g, '')
+    .replace(/\sCodePilot\/[\d.]+/gi, '');
+  browserSession.setUserAgent(userAgent);
+  browserSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
+  browserSession.setPermissionCheckHandler(() => false);
+  browserSession.on('will-download', (event, _item, contents) => {
+    event.preventDefault();
+    browserGuestHost(contents)?.send('browser:download-blocked', {
+      webContentsId: contents.id,
+    });
+  });
+  configuredBrowserPartitions.add(partition);
+}
+
+app.on('web-contents-created', (_event, contents) => {
+  if (contents.getType() !== 'webview') return;
+
+  const guardNavigation = (event: Electron.Event, targetUrl: string) => {
+    const decision = classifyBrowserUrl(targetUrl);
+    if (decision.allowed) return;
+    event.preventDefault();
+    browserGuestHost(contents)?.send('browser:navigation-blocked', {
+      webContentsId: contents.id,
+      reason: decision.reason,
+    });
+  };
+
+  contents.on('will-navigate', guardNavigation);
+  contents.on('will-redirect', guardNavigation);
+  contents.setWindowOpenHandler(({ url: targetUrl }) => {
+    if (isAllowedBrowserGuestUrl(targetUrl)) {
+      browserGuestHost(contents)?.send('browser:open-url-requested', {
+        webContentsId: contents.id,
+        url: targetUrl,
+      });
+    } else {
+      const decision = classifyBrowserUrl(targetUrl);
+      browserGuestHost(contents)?.send('browser:navigation-blocked', {
+        webContentsId: contents.id,
+        reason: decision.allowed ? 'invalid_url' : decision.reason,
+      });
+    }
+    return { action: 'deny' };
+  });
+});
 
 // --- Install orchestrator ---
 interface InstallStep {
@@ -1703,6 +1787,8 @@ function createWindow(url?: string) {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: true,
+      webviewTag: true,
     },
   };
 
@@ -1783,6 +1869,28 @@ function createWindow(url?: string) {
   mainWindow = new BrowserWindow(windowOptions);
   setUpdaterWindow(mainWindow);
   attachRendererEditingContextMenu(mainWindow);
+  mainWindow.webContents.on('will-attach-webview', (event, webPreferences, params) => {
+    const partition = typeof params.partition === 'string' ? params.partition : '';
+    if (
+      !issuedBrowserPartitions.has(partition)
+      || !isAllowedBrowserGuestUrl(params.src)
+    ) {
+      event.preventDefault();
+      return;
+    }
+
+    // Renderer controls presentation only. A guest never receives the host
+    // preload or any Node/IPC capability, even if host DOM is compromised.
+    delete webPreferences.preload;
+    webPreferences.sandbox = true;
+    webPreferences.contextIsolation = true;
+    webPreferences.nodeIntegration = false;
+    webPreferences.nodeIntegrationInSubFrames = false;
+    webPreferences.nodeIntegrationInWorker = false;
+    webPreferences.webviewTag = false;
+    webPreferences.webSecurity = true;
+    webPreferences.allowRunningInsecureContent = false;
+  });
   mainWindow.webContents.on('did-start-loading', () => {
     // A navigation replaces the renderer and its IPC listeners. Hold native
     // notification clicks until the new AppShell explicitly announces that
@@ -2298,6 +2406,33 @@ app.whenReady().then(async () => {
     const iconPath = getIconPath();
     app.dock.setIcon(nativeImage.createFromPath(iconPath));
   }
+
+  // The renderer receives only a partition token and fixed guest preferences.
+  // It cannot create arbitrary sessions, grant permissions or reach WebContents.
+  ipcMain.handle('browser:get-config', (event: Electron.IpcMainInvokeEvent, workspaceId: unknown) => {
+    if (!isTrustedMainWindowSender(event) || !isCanonicalBrowserWorkspaceId(workspaceId)) {
+      return null;
+    }
+    const partition = deriveBrowserPartition(workspaceId);
+    issuedBrowserPartitions.add(partition);
+    configureBrowserPartition(partition);
+    return {
+      partition,
+      webPreferences: BROWSER_WEB_PREFERENCES,
+    };
+  });
+
+  ipcMain.handle('browser:open-external', (event: Electron.IpcMainInvokeEvent, targetUrl: unknown) => {
+    if (
+      !isTrustedMainWindowSender(event)
+      || typeof targetUrl !== 'string'
+      || !isSafeExternalBrowserUrl(targetUrl)
+    ) {
+      return false;
+    }
+    openExternalInSystemBrowser(targetUrl);
+    return true;
+  });
 
   // --- Install wizard IPC handlers ---
 

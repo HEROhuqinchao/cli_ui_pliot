@@ -45,6 +45,8 @@
  * synthesized value carries `effortProvenance: compatibility-default`.
  */
 
+import { isContext1mBetaModelId } from './model-option-support';
+
 export type ThinkingConfig =
   | { type: 'adaptive'; display?: 'summarized' | 'omitted' }
   | { type: 'enabled'; budgetTokens?: number; display?: 'summarized' | 'omitted' }
@@ -403,9 +405,12 @@ export function sanitizeClaudeModelOptions(
     }
   }
 
-  // Opus 4.7+ ship 1M by default — the beta header is unnecessary and
-  // kept out to make regression hunting cleaner.
-  const applyContext1mBeta = !!input.context1m && !isOpusAdaptiveThinking;
+  // The descriptor and both Runtime request paths share this exact upstream-ID
+  // allowlist. A stale/forged persisted flag must not attach the beta to Haiku,
+  // a bare role alias, or another Anthropic model with a 200K window.
+  const applyContext1mBeta = !!input.context1m
+    && isContext1mBetaModelId(input.model)
+    && !isOpusAdaptiveThinking;
 
   // Sampling guard. The adaptive family 400s on non-default temperature/top_p/
   // top_k; strip non-defaults and report them so the caller can surface the

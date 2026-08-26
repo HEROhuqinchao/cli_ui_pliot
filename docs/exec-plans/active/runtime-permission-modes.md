@@ -1,5 +1,7 @@
 # 跨 Runtime 权限模式：按规则询问 / 替我审批 / 完全访问
 
+> UI ownership（2026-08-25）：本计划继续是三 Runtime reviewer/bypass wire 的权威；Composer 的四档展示、`mode + permission_profile` 双向映射、legacy ask no-touch 与单一入口由 [composer-model-route-permission-consolidation.md](composer-model-route-permission-consolidation.md) 负责。两者不得各写一套 resolver。
+
 > 创建时间：2026-07-17
 > 最后更新：2026-07-20
 > 状态：🚧 Claude capability route 可读取 Agent SDK 0.2.111；Codex auto reviewer 已完成 Runtime 分流、保守版本门、thread start/resume 回显校验与运行时降级，定向回归通过。真实 Claude/Codex approve/deny/MCP smoke 仍待完成；Native Phase 3 仍明确不支持。
@@ -42,7 +44,7 @@
 
 推荐 canonical profile（UI 文案不直接复用存储枚举）：
 
-- `default` / **需要时询问我**：安全操作直接执行，有风险的操作先征求用户同意。
+- `default` / **请求批准**：安全操作直接执行，有风险的操作先征求用户同意。
 - `auto_review` / **替我审批**：把本来需要用户确认的请求交给受限 reviewer；仍受 workspace/sandbox 约束，拒绝、超时或 reviewer 不可用均 fail closed。
 - `full_access`：跳过确认；危险选项，保留二次确认和醒目状态。
 
@@ -75,7 +77,7 @@
       bare allowlist 由 8 个 server 收窄到 3 个只读 server（memory / widget / widget-guidelines）；canUseTool 内那份**已漂移**的手写 `autoApprovedTools`（放行了 `codepilot_cli_tools_add/remove` 与 `codepilot_generate_image`）删除，改为 `isHostAutoApproved` 派生。heartbeat 分支与 disallowedTools 未回归（测试钉住）。
 - [x] SDK 不支持/版本过低时禁用选项并解释，不静默回落为 full access 或 acceptEdits。
       `sdk-capability.ts` 读实际安装版本；新会话选项 disabled 且显示原因（i18n en/zh）；降级方向是 `'default'`（更多询问），**不是** acceptEdits；服务端降级发 canonical `unavailable` 事件。
-      **复审轮 #3 补齐（P1）**：**已持久化为 auto_review 的旧会话**在不支持的 SDK 上，chip 不再显示「替我审批」——改为显示**真实生效档**（需要时询问我），并在下拉里用 `permission.autoReviewDegraded`（en/zh）说明「保存的是替我审批，当前 SDK 无法执行」。探测未返回时不预判降级。
+      **复审轮 #3 补齐（P1）**：**已持久化为 auto_review 的旧会话**在不支持的 SDK 上，chip 不再显示「替我审批」——改为显示**真实生效档**（请求批准），并在下拉里用 `permission.autoReviewDegraded`（en/zh）说明「保存的是替我审批，当前 SDK 无法执行」。探测未返回时不预判降级。
       **复审轮 #4 修正（P2，placeholder 反假数据）**：探测状态由 `capability | null` 改为三态 `checking | failed | ready`——旧写法把「还没问」和「问了但失败」都塌成 `null`，于是用 `minVersion ?? '—'` 渲染出「需要 SDK —（当前：—）」，fetch 失败后该占位**永久保留**，等于用编造的版本声明冒充「我不知道」。现新增 `auto-review-display.ts` 单点决策，组件只渲染它给的 notice key（组件已看不到版本号，无法自己编）：checking / probe-failed / 低版本 / 版本读不出 / 外部 MCP / MCP 配置读不出 六条路径各有真实文案（en/zh），并有 `permission-external-mcp.test.ts` 断言任一状态都不产出 `—` 占位。
 - [x] 把 SDK reviewer 决策映射到 canonical audit event；UI 能区分“模型代审拒绝”和“用户拒绝”。
       rule-engine / user 两条来源已接线并测试；`sdk-reviewer` 的 **denied** 经 SDK `PermissionDenied` hook 落为 canonical event + `permission_review` SSE（该 hook 仅在 classifier 拒绝时触发，故来源精确，不靠形状猜）；`unavailable` 由 route 降级分支产出。
@@ -145,7 +147,7 @@
 | _待跑_ | claude_code | Anthropic/env | current supported | login/key | **复审轮 #2 deny-rule 前置性**：auto_review 下调用 `codepilot_generate_image` / `codepilot_notify` 必须被 SDK 直接拒绝，且**不产生任何计费/外发副作用**；同一工具在 default 档仍能正常弹窗使用 | 📋 移交用户统一验证 | 前置性来自读 cli.js classifier 源码，非测试证明；无凭据环境无法执行 SDK 权限路径 |
 | _待跑_ | claude_code | Anthropic/env | current supported | login/key | **复审轮 #2 sdk-reviewer denied 事件**：classifier 拒绝一次后，`PermissionDenied` hook 必须触发并产出 `reviewerSource='sdk-reviewer'` 的 `permission_review` SSE（用户点 Deny 则不得触发） | 📋 移交用户统一验证 | hook 触发条件来自 cli.js 静态证据 |
 | _待跑_ | claude_code | Anthropic/env | current supported | login/key | **复审轮 #3 reviewer 拒绝的 UI 可见性**：auto_review 下被 classifier 拒绝一次，聊天区应出现「模型代审拒绝 + 工具名」通知（`PermissionReviewNotices`）；用户自己点 Deny 不得出现该通知 | 📋 移交用户统一验证 | 单测覆盖到守卫与事件合同层；SSE→snapshot→组件的端到端渲染未在真实流里跑过 |
-| _待跑_ | claude_code | any | any | any | **复审轮 #3 旧会话降级显示**：把会话存为 auto_review 后换用低于 0.2.111 的 SDK，chip 应显示「需要时询问我」且下拉给出降级说明，而不是继续显示「替我审批」 | 📋 移交用户统一验证 | 需要真实降级 SDK 环境，无法在本仓库单测构造 |
+| _待跑_ | claude_code | any | any | any | **复审轮 #3 旧会话降级显示**：把会话存为 auto_review 后换用低于 0.2.111 的 SDK，chip 应显示「请求批准」且下拉给出降级说明，而不是继续显示「替我审批」 | 📋 移交用户统一验证 | 需要真实降级 SDK 环境，无法在本仓库单测构造 |
 | _待跑_ | claude_code | any | any | any | **a05 收窄 UX 回归**：mutating MCP（cli-tools / media / image-gen / dashboard / notify）移出 bare allowlist 后，日常使用是否出现预期外的新权限弹窗 | 📋 移交用户统一验证 | 单测只能证明它们进入权限判定路径，不能证明弹窗频率可接受 |
 | _待跑_ | claude_code | any | any | any | **复审轮 #4 外部 MCP 能力门（可用性回归）**：配置任一外部 MCP server 后，「替我审批」应变灰并给出外部 MCP 原因；全部停用后该档应恢复可选 | 📋 移交用户统一验证 | 单测用临时目录构造配置文件；真实用户的 `~/.claude.json` 形态多样，需确认门不会因常见配置**永久**关死该档（可用性风险见决策日志 #4 ②） |
 | _待跑_ | claude_code | any | any | any | **复审轮 #4 能力探测四态文案**：断网/接口 500 时下拉应显示「无法确认…」而非「需要 SDK —（当前：—）」；探测中显示「正在检测…」 | 📋 移交用户统一验证 | 单测覆盖 resolver 全部状态与 i18n 完整性；真实 fetch 失败时序未在浏览器里跑过 |

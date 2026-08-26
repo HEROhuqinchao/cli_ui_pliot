@@ -40,6 +40,28 @@ contextBridge.exposeInMainWorld('electronAPI', {
     openHtmlFile: (request: { path: string; sessionId: string }) =>
       ipcRenderer.invoke('shell:open-html-file', request),
   },
+  browser: {
+    getConfig: (workspaceId: string) => ipcRenderer.invoke('browser:get-config', workspaceId) as Promise<{
+      partition: string;
+      webPreferences: string;
+    } | null>,
+    openExternal: (url: string) => ipcRenderer.invoke('browser:open-external', url) as Promise<boolean>,
+    onNavigationBlocked: (callback: (data: { webContentsId: number; reason: string }) => void) => {
+      const listener = (_event: unknown, data: { webContentsId: number; reason: string }) => callback(data);
+      ipcRenderer.on('browser:navigation-blocked', listener);
+      return () => { ipcRenderer.removeListener('browser:navigation-blocked', listener); };
+    },
+    onOpenUrlRequested: (callback: (data: { webContentsId: number; url: string }) => void) => {
+      const listener = (_event: unknown, data: { webContentsId: number; url: string }) => callback(data);
+      ipcRenderer.on('browser:open-url-requested', listener);
+      return () => { ipcRenderer.removeListener('browser:open-url-requested', listener); };
+    },
+    onDownloadBlocked: (callback: (data: { webContentsId: number }) => void) => {
+      const listener = (_event: unknown, data: { webContentsId: number }) => callback(data);
+      ipcRenderer.on('browser:download-blocked', listener);
+      return () => { ipcRenderer.removeListener('browser:download-blocked', listener); };
+    },
+  },
   app: {
     getLogPath: () => ipcRenderer.invoke('app:get-log-path') as Promise<string | null>,
     getDefaultAssistantHome: () =>

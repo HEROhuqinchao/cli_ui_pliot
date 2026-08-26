@@ -10,9 +10,9 @@ import { SettingsSidebar } from "./SettingsSidebar";
 import { CardFrame, CardSurface, ResizeGutter } from "./card-primitives";
 import { UpdateBanner } from "./UpdateBanner";
 import { UnifiedTopBar } from "./UnifiedTopBar";
-import { WorkspaceSidebarProvider, useWorkspaceSidebar, useWorkspaceSidebarOptional } from "@/hooks/useWorkspaceSidebar";
+import { WorkspaceSidebarProvider, useWorkspaceSidebar } from "@/hooks/useWorkspaceSidebar";
 import { FileMutationProvider, useFileMutation } from "@/hooks/useFileMutation";
-import { PanelContext, usePanel, type PreviewViewMode, type PreviewSource } from "@/hooks/usePanel";
+import { PanelContext, type PreviewViewMode, type PreviewSource } from "@/hooks/usePanel";
 import { UpdateContext } from "@/hooks/useUpdate";
 import { useUpdateChecker } from "@/hooks/useUpdateChecker";
 import { BatchImageGenContext, useBatchImageGenState } from "@/hooks/useBatchImageGen";
@@ -156,37 +156,9 @@ function AppFileMutationParticipant({
 }
 
 /**
- * Inner row that holds the chat main area + the two right-rail
- * surfaces:
- *   - `<PanelZone>` mounts the lightweight FileTreePanel (independent
- *     topbar entry) and the AssistantPanel.
- *   - `<WorkspaceSidebar>` mounts the unified Tab shell that owns
- *     Git / Widget / Markdown / Artifact / file preview Tabs.
- *
- * Reads PanelContext + WorkspaceSidebarContext to derive whether any
- * rail is visible and toggles a top border accordingly:
- *   - file tree open OR sidebar open OR both → border-t between
- *     topbar chrome and the work area
- *   - both collapsed → no border (chat reads uncluttered)
- *
- * v13 product decision: the two right-rail panels are additive — both
- * can be open simultaneously (file tree on the inner edge, sidebar on
- * the outer edge), and chat shrinks accordingly. The topbar onClick
- * handlers each flip their own panel only; no auto-close of the other.
- */
-
-/**
- * v13 — Right-rail panels (FileTreePanel + WorkspaceSidebar) are
- * **additive**, not mutex. Earlier rounds (and v11) treated them as
- * mutually exclusive: opening one would auto-close the other, both
- * via topbar onClick handlers and via a `RightRailMutexEnforcer`
- * effect that plugged the event-driven sidebar-open path. That choice
- * was reversed: the user wants both panels openable at once so they
- * can browse files in the tree while a markdown / artifact preview is
- * pinned on the sidebar tab. The v11 enforcer was removed entirely,
- * and the topbar onClick mutex lines were dropped (each toggle now
- * just flips its own panel state). The flexbox layout below already
- * supported coexistence — only the behavior was wrong.
+ * Inner row that holds chat, the unified WorkspaceSidebar, and the
+ * assistant-workspace-only PanelZone. The v13 standalone FileTree rail
+ * was removed after Files Primary + Inspector passed responsive UI smoke.
  */
 
 function ChatContentRow({
@@ -232,8 +204,14 @@ function ChatContentRow({
           <ResizeGutter
             onResize={handleWorkspaceResize}
             onReset={() => ws.setWidth(360)}
+            ariaLabel="Resize workspace sidebar"
+            className="max-lg:hidden"
           />
-          <CardFrame kind="workspace" width={ws.state.width}>
+          <CardFrame
+            kind="workspace"
+            width={ws.state.width}
+            className="max-lg:absolute max-lg:inset-y-0 max-lg:right-0 max-lg:z-40 max-lg:max-w-[calc(100vw-24px)]"
+          >
             <CardSurface kind="workspace">
               <WorkspaceSidebar />
             </CardSurface>
@@ -385,14 +363,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     setChatListOpenRaw(open);
   }, []);
 
-  // --- Right-rail panel states ---
-  // Phase 2 (2026-04-30): gitPanelOpen / dashboardPanelOpen / previewOpen
-  // were removed — those surfaces moved into the Workspace Sidebar
-  // (Git + Widget fixed Tabs, Markdown / Artifact / file preview as
-  // dynamic Tabs). Only fileTreeOpen remains as the lightweight
-  // independent topbar entry, plus assistantPanelOpen which doesn't
-  // fit the AI-work-surface Tab model.
-  const [fileTreeOpen, setFileTreeOpen] = useState(false);
+  // Workspace surfaces now live in WorkspaceSidebar. AssistantPanel
+  // remains separate because it is specific to assistant workspaces.
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [assistantPanelOpen, setAssistantPanelOpen] = useState(false);
   const [isAssistantWorkspace, setIsAssistantWorkspace] = useState(false);
@@ -409,6 +381,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const { status: gitStatusFromHook } = useGitStatus(workingDirectory);
   const currentBranch = gitStatusFromHook?.branch ?? "";
   const gitDirtyCount = gitStatusFromHook?.changedFiles.filter(f => f.status !== 'untracked').length ?? 0;
+  const gitRepositoryState = !gitStatusFromHook
+    ? 'unknown' as const
+    : gitStatusFromHook.isRepo
+      ? 'repository' as const
+      : 'directory' as const;
 
   // --- Multi-session stream tracking (driven by stream-session-manager) ---
   const [activeStreamingSessions, setActiveStreamingSessions] = useState<Set<string>>(EMPTY_SET);
@@ -586,7 +563,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   // `previewSource` is the discriminated union (file / inline-html /
   // inline-jsx / inline-datatable) that the WorkspaceSidebar's
   // dynamic-Tab content reads. `previewFile` is a derived path-only
-  // view for code paths (FileTreePanel toggle logic, etc.) that only
+  // view for path-only callers (file search/deep links, etc.) that only
   // care about the file kind — when the active source is inline-*,
   // `previewFile` is null.
   const [previewSource, setPreviewSourceRaw] = useState<PreviewSource | null>(null);
@@ -638,8 +615,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       if (path === null) {
         setPreviewSource(null);
       } else {
-        // Legacy file-only entry point — used by FileTreePanel toggles
-        // and any other code that thinks in path-strings only. All known
+        // Legacy file-only adapter — used by path-string callers. All known
         // callers operate on workspace files (the file tree is scoped to
         // workingDirectory), so we stamp the workspace trust tier and
         // pass workingDirectory as baseDir. Callers that need a
@@ -697,34 +673,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     return () => mql.removeEventListener("change", handler);
   }, []);
 
-
-  // --- Skip-permissions indicator ---
-  const [skipPermissionsActive, setSkipPermissionsActive] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    const doFetch = async () => {
-      try {
-        const res = await fetch("/api/settings/app");
-        if (res.ok && !cancelled) {
-          const data = await res.json();
-          setSkipPermissionsActive(data.settings?.dangerously_skip_permissions === "true");
-        }
-      } catch { /* ignore */ }
-    };
-    doFetch();
-    const handleVisibility = () => {
-      if (document.visibilityState === "visible") doFetch();
-    };
-    document.addEventListener("visibilitychange", handleVisibility);
-    window.addEventListener("focus", doFetch);
-    return () => {
-      cancelled = true;
-      document.removeEventListener("visibilitychange", handleVisibility);
-      window.removeEventListener("focus", doFetch);
-    };
-  }, []);
-
   // --- Update checker (native Electron + browser fallback) ---
   const updateContextValue = useUpdateChecker();
 
@@ -732,8 +680,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     () => ({
       chatListOpen,
       setChatListOpen,
-      fileTreeOpen,
-      setFileTreeOpen,
       terminalOpen,
       setTerminalOpen,
       assistantPanelOpen,
@@ -742,6 +688,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       setIsAssistantWorkspace,
       currentBranch,
       gitDirtyCount,
+      gitRepositoryState,
       currentWorktreeLabel,
       setCurrentWorktreeLabel,
       workingDirectory,
@@ -763,7 +710,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       previewViewMode,
       setPreviewViewMode,
     }),
-    [chatListOpen, setChatListOpen, fileTreeOpen, terminalOpen, assistantPanelOpen, isAssistantWorkspace, currentBranch, gitDirtyCount, currentWorktreeLabel, workingDirectory, sessionId, sessionTitle, streamingSessionId, pendingApprovalSessionId, activeStreamingSessions, pendingApprovalSessionIds, previewSource, setPreviewSource, previewFile, setPreviewFile, previewViewMode]
+    [chatListOpen, setChatListOpen, terminalOpen, assistantPanelOpen, isAssistantWorkspace, currentBranch, gitDirtyCount, gitRepositoryState, currentWorktreeLabel, workingDirectory, sessionId, sessionTitle, streamingSessionId, pendingApprovalSessionId, activeStreamingSessions, pendingApprovalSessionIds, previewSource, setPreviewSource, previewFile, setPreviewFile, previewViewMode]
   );
 
   const batchImageGenValue = useBatchImageGenState();
@@ -781,9 +728,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <SplitContext.Provider value={splitContextValue}>
         <BatchImageGenContext.Provider value={batchImageGenValue}>
         <TooltipProvider delayDuration={300}>
-          {/* Round 20 — layout reorganized so the four floating cards
-              (left sidebar, main content, workspace sidebar, file
-              tree) all start at the same y under a SHARED topbar.
+          {/* Round 20 — layout reorganized so the floating cards
+              (left sidebar, main content, workspace sidebar) all
+              start at the same y under a SHARED topbar.
               Previously the topbar sat inside the main column, which
               made the left sidebar visually taller than the other
               three (it included the topbar's vertical space inside
@@ -795,10 +742,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <div className="flex flex-col h-screen overflow-hidden" data-app-shell>
             <UnifiedTopBar />
             <UpdateBanner />
-            <div className="flex flex-1 min-h-0 overflow-hidden" data-app-content-row>
+            <div className="relative flex flex-1 min-h-0 overflow-hidden" data-app-content-row>
               {/* Phase 7c closeout — the left sidebar is now a
-                  row-level card, exactly like main / workspace /
-                  fileTree: its CardFrame and ResizeGutter sit FLAT in
+                  row-level card, exactly like main / workspace: its
+                  CardFrame and ResizeGutter sit FLAT in
                   data-app-content-row with no extra wrapper.
 
                   The old `<div className="flex h-full shrink-0">`

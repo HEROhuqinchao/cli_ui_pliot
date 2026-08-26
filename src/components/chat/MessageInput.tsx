@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState, useCallback, useEffect, useMemo, type KeyboardEvent, type FormEvent } from 'react';
+import { useRef, useState, useCallback, useEffect, useMemo, type KeyboardEvent, type FormEvent, type ReactNode } from 'react';
 import { CodePilotIcon } from "@/components/ui/semantic-icon";
 import { useTranslation } from '@/hooks/useTranslation';
 import type { TranslationKey } from '@/i18n';
@@ -21,7 +21,7 @@ import type { FileAttachment, MentionRef } from '@/types';
 import { SlashCommandPopover } from './SlashCommandPopover';
 import { CliToolsPopover } from './CliToolsPopover';
 import { ModelSelectorDropdown } from './ModelSelectorDropdown';
-import { EffortSelectorDropdown } from './EffortSelectorDropdown';
+import { ModelCapabilityDropdown } from './ModelCapabilityDropdown';
 import { FileAwareSubmitButton, FileTreeAttachmentBridge, FileAttachmentsCapsules, CliBadge, ComposerBadgeRow, DirectoryRefsCapsules, AttachmentPendingTracker } from './MessageInputParts';
 import { useMentionTokenEstimate } from '@/hooks/useMentionTokenEstimate';
 import { dataUrlToFileAttachment } from '@/lib/file-utils';
@@ -29,12 +29,17 @@ import { usePopoverState } from '@/hooks/usePopoverState';
 import { useProviderModels, isComposerProviderLoading } from '@/hooks/useProviderModels';
 import { resolveComposerModelAutoCorrect, findModelOption } from '@/lib/model-option-match';
 import { resolveComposerEffortDisplay } from '@/lib/effort-levels';
+import {
+  buildComposerModelCapabilityDescriptor,
+  normalizeContext1mSelection,
+} from '@/lib/model-option-support';
 // Import from `chat-runtime-shared` (client-safe). See ChatView import
 // note + `src/lib/chat-runtime-shared.ts` doc-block. Even type-only
 // imports from `chat-runtime.ts` are risky if the build leans on
 // runtime resolution paths; the shared module is the future-proof
 // choice for any client bundle.
 import type { ChatRuntimeParam } from '@/lib/chat-runtime-shared';
+import type { RuntimeId } from '@/lib/runtime/runtime-id';
 import { useCommandBadge } from '@/hooks/useCommandBadge';
 import { useCliToolsFetch } from '@/hooks/useCliToolsFetch';
 import { useSlashCommands } from '@/hooks/useSlashCommands';
@@ -145,13 +150,27 @@ interface MessageInputProps {
   /**
    * Phase 2 Step 3b — runtime gate for the picker feed.
    *   - `'auto'`: new chat, follow global `agent_runtime`.
-   *   - `'claude_code'` / `'codepilot_runtime'`: existing session with
+   *   - `'claude_code'` / `'codepilot_runtime'` / `'codex_runtime'`: existing session with
    *     a `runtime_pin` — picker shows only what THIS session can
    *     reach, immune to global flips.
    * Required (no default) so a new caller can't silently inherit the
    * old "auto = follow global, drift on flip" behavior.
    */
   runtime: ChatRuntimeParam;
+  /** Model picker left lane. Selecting a Runtime changes the effective
+   * session runtime before the matching model route is chosen. */
+  onRuntimeChange?: (runtime: RuntimeId) => void;
+  /** Controls consolidated into the input shell by the parent-owned session
+   * flows. Slots keep New Chat and ChatView autonomous while sharing layout. */
+  permissionControl?: ReactNode;
+  runStatusControl?: ReactNode;
+  /** Current provider option. Fixed-1M models are represented by the sourced
+   * model capacity and never call this setter. */
+  context1m?: boolean;
+  onContext1mChange?: (enabled: boolean) => void;
+  /** Per-route effective value. Normalization must never write the shared
+   * provider option; parents use this local signal for the current send/UI. */
+  onContext1mEffectiveChange?: (enabled: boolean) => void;
 }
 
 function joinPath(base: string, rel: string): string {
@@ -214,6 +233,12 @@ export function MessageInput({
   onPendingContextTokensChange,
   onPendingContextSubTotalsChange,
   blockingReasonIds,
+  onRuntimeChange,
+  permissionControl,
+  runStatusControl,
+  context1m = false,
+  onContext1mChange,
+  onContext1mEffectiveChange,
 }: MessageInputProps) {
   const { t, locale } = useTranslation();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -1074,8 +1099,58 @@ export function MessageInput({
   }, [normalizeMentionPath]);
 
   // Effort selector state — guard against undefined when model not found in current provider's list
-  const currentModelMeta = currentModelOption as (typeof currentModelOption & { supportsEffort?: boolean; supportedEffortLevels?: string[]; effortNoteKey?: string }) | undefined;
-  const showEffortSelector = currentModelMeta?.supportsEffort === true;
+  const currentModelMeta = currentModelOption as (typeof currentModelOption & {
+    upstreamModelId?: string;
+    supportsEffort?: boolean;
+    supportedEffortLevels?: string[];
+    effortNoteKey?: string;
+    contextWindow?: number;
+  }) | undefined;
+  const currentProviderGroup = providerGroups.find((group) => group.provider_id === currentProviderIdValue);
+  const capabilityDescriptor = buildComposerModelCapabilityDescriptor({
+    runtime: runtimeApplied ?? (runtime === 'auto' ? undefined : runtime),
+    protocol: currentProviderGroup?.protocol,
+    modelIds: [currentModelMeta?.value, currentModelMeta?.upstreamModelId],
+    supportsEffort: currentModelMeta?.supportsEffort,
+    supportedEffortLevels: currentModelMeta?.supportedEffortLevels,
+    effortNoteKey: currentModelMeta?.effortNoteKey,
+    contextWindow: currentModelMeta?.contextWindow,
+  });
+  const normalizedContext1m = normalizeContext1mSelection(
+    capabilityDescriptor.context1m,
+    context1m,
+  );
+  const contextAdjustmentNoticeRef = useRef('');
+  useEffect(() => {
+    if (fetchState !== 'loaded' || !currentModelMeta) return;
+    onContext1mEffectiveChange?.(normalizedContext1m.effective);
+    if (!normalizedContext1m.adjusted) return;
+    const noticeIdentity = [
+      currentProviderIdValue,
+      currentModelMeta.value,
+      normalizedContext1m.source,
+    ].join('\u0000');
+    if (contextAdjustmentNoticeRef.current !== noticeIdentity) {
+      contextAdjustmentNoticeRef.current = noticeIdentity;
+      void import('@/hooks/useToast').then(({ showToast }) => {
+        showToast({
+          type: 'info',
+          message: t('messageInput.context1m.resetOnModelSwitch' as TranslationKey),
+          duration: 4000,
+        });
+      });
+    }
+  }, [
+    fetchState,
+    currentModelMeta,
+    currentModelMeta?.value,
+    currentProviderIdValue,
+    normalizedContext1m.adjusted,
+    normalizedContext1m.effective,
+    normalizedContext1m.source,
+    onContext1mEffectiveChange,
+    t,
+  ]);
   // Default label is 'auto' — the UI displays "默认 / Auto" and no explicit
   // effort value is sent to the backend. This lets Claude Code apply its
   // per-model default (e.g. xhigh on Opus 4.7). If we initialized to 'high'
@@ -1211,8 +1286,8 @@ export function MessageInput({
               />
             </PromptInputBody>
 
-            <PromptInputFooter>
-              <PromptInputTools>
+            <PromptInputFooter className="flex-wrap items-center">
+              <PromptInputTools className="flex-1 flex-wrap">
                 <PromptInputActionMenu>
                   <PromptInputActionMenuTrigger
                     aria-label={t('messageInput.actionMenuTooltip' as TranslationKey)}
@@ -1242,20 +1317,24 @@ export function MessageInput({
                   onProviderModelChange={emitProviderModelChange}
                   globalDefaultModel={globalDefaultModel}
                   globalDefaultProvider={globalDefaultProvider}
-                  runtimeApplied={runtimeApplied}
+                  runtimeApplied={runtime === 'auto' ? runtimeApplied : runtime}
+                  onRuntimeChange={onRuntimeChange}
+                  runtimeChangeDisabled={isStreaming}
                   isLoading={isProviderLoading}
                 />
 
-                {showEffortSelector && (
-                  <EffortSelectorDropdown
-                    selectedEffort={selectedEffort}
-                    onEffortChange={setSelectedEffort}
-                    supportedEffortLevels={currentModelMeta?.supportedEffortLevels}
-                    effortNoteKey={currentModelMeta?.effortNoteKey}
-                  />
-                )}
+                <ModelCapabilityDropdown
+                  descriptor={capabilityDescriptor}
+                  selectedEffort={selectedEffort}
+                  onEffortChange={setSelectedEffort}
+                  context1m={normalizedContext1m.effective}
+                  contextWindow={currentModelMeta?.contextWindow}
+                  onContext1mChange={onContext1mChange}
+                />
+                {permissionControl}
               </PromptInputTools>
 
+              {runStatusControl}
               <FileAwareSubmitButton
                 status={chatStatus}
                 onStop={onStop}
