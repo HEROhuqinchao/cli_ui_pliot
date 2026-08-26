@@ -32,9 +32,7 @@ function writeMetadata(root: string, name: string, version: string, assetName: s
     sha512: sha512(asset),
     size: fs.statSync(asset).size,
   };
-  if (/\.(zip|exe)$/i.test(assetName)) {
-    item.blockMapSize = fs.statSync(`${asset}.blockmap`).size;
-  } else if (/\.AppImage$/i.test(assetName)) {
+  if (/\.AppImage$/i.test(assetName)) {
     item.blockMapSize = 64;
   }
   fs.writeFileSync(path.join(root, name), JSON.stringify({ version, files: [item] }, null, 2));
@@ -419,16 +417,18 @@ describe('release signing and update asset contracts', () => {
 
       const windowsMetadataPath = path.join(fixture, 'latest.yml');
       const windowsMetadata = JSON.parse(fs.readFileSync(windowsMetadataPath, 'utf8'));
-      delete windowsMetadata.files[0].blockMapSize;
-      fs.writeFileSync(windowsMetadataPath, JSON.stringify(windowsMetadata));
-      const missingBlockMapSize = spawnSync(
+      assert.equal(windowsMetadata.files[0].blockMapSize, undefined);
+
+      const windowsBlockmapPath = path.join(fixture, `CodePilot.Setup.${version}.exe.blockmap`);
+      fs.unlinkSync(windowsBlockmapPath);
+      const missingExternalBlockmap = spawnSync(
         process.execPath,
         [assetVerifier, fixture, version, 'stable', 'distribution'],
         { encoding: 'utf8' },
       );
-      assert.notEqual(missingBlockMapSize.status, 0);
-      assert.match(missingBlockMapSize.stderr, /positive blockMapSize/);
-      writeMetadata(fixture, 'latest.yml', version, `CodePilot.Setup.${version}.exe`);
+      assert.notEqual(missingExternalBlockmap.status, 0);
+      assert.match(missingExternalBlockmap.stderr, /blockmap/i);
+      writeFile(fixture, path.basename(windowsBlockmapPath));
 
       const oldVersion = '0.60.0';
       const oldInstallerName = `CodePilot.Setup.${oldVersion}.exe`;

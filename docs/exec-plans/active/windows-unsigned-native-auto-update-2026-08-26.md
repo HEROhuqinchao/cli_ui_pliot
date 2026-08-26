@@ -1,8 +1,8 @@
 # Windows 无签名原生自动更新与差分下载
 
 > 创建时间：2026-08-26
-> 最后更新：2026-08-26
-> 当前状态：🚧 `v0.67.8` 不可变失败 tag 已保留，`v0.67.9` 修复候选正在门禁。Windows 采用用户确认过的“无 Authenticode、GitHub 为单一信任根”模型；Linux 保持手动安装并明确延期。仓库保护已启用，管理员 no-bypass 确认状态与 live ruleset 防漂移已补齐；Windows RC-A → RC-B 真实升级仍待完成。
+> 最后更新：2026-08-27
+> 当前状态：🚧 `v0.67.8` / `v0.67.9` 不可变失败 tag 已保留，`v0.67.10` 修复候选正在门禁。Windows 采用用户确认过的“无 Authenticode、GitHub 为单一信任根”模型；Linux 保持手动安装并明确延期。仓库保护与 ruleset 防漂移已补齐；central audit 已按 builder 原生的外置 blockmap 合同修正，Windows RC-A → RC-B 真实升级仍待完成。
 
 ## 用户问题与取舍
 
@@ -18,7 +18,7 @@
 | Phase 1 | Windows 正式包能发现、下载并在用户确认后安装新版本 | ✅ 本地完成 | 既有 `v0.67.7` 不会凭空获得 updater；第一跳仍需手动安装 bootstrap 版本 |
 | Phase 2 | 后续 Windows 更新优先差分下载，失败时自动回退完整安装包 | ✅ 本地完成 | 不承诺固定节省比例；节省量由两个真实版本的 blockmap 决定 |
 | Phase 3 | 发布者能看到仓库信任门禁和完整 Windows updater 资产审计 | ✅ 仓库设置与权限可见性修复完成 | 门禁未满足时不公开 `latest.yml`，不把 attestation 冒充客户端强制校验 |
-| Phase 4 | Windows RC-A → RC-B 的真实升级结果可验收 | 🔄 `v0.67.8` 发布 gate fail；`v0.67.9` 候选与真实 RC 待执行 | Linux updater、包管理器提权安装与 Linux manifest 不进入本轮 |
+| Phase 4 | Windows RC-A → RC-B 的真实升级结果可验收 | 🔄 `v0.67.8` / `v0.67.9` 发布 gate fail；`v0.67.10` 候选与真实 RC 待执行 | Linux updater、包管理器提权安装与 Linux manifest 不进入本轮 |
 
 ## 执行清单
 
@@ -40,7 +40,7 @@
 
 - [x] builder 显式生成 NSIS differential package；Main 显式保持 differential download 开启。
 - [x] Windows artifact/checksum/attestation/release graph 包含同版本 `latest.yml`、NSIS installer 与 installer blockmap。
-- [x] central verifier 要求 metadata URL 是当前版本裸 basename，校验 SHA-512、size、blockMapSize 和精确 checksum 集合；拒绝旧版本/额外 payload 与所有 Linux updater metadata。
+- [x] central verifier 要求 metadata URL 是当前版本裸 basename，校验 SHA-512、size、外置 blockmap 存在性和精确 checksum 集合；拒绝旧版本/额外 payload 与所有 Linux updater metadata。`blockMapSize` 只用于嵌入式 blockmap，不能强加给 Mac ZIP/完整 NSIS 的 builder 原生 metadata。
 - [x] source-contract 覆盖缺 metadata、缺 blockmap、错 hash、外部 URL、旧版本 payload、checksum 前缀蒙混、Linux feed 混入和 full-download fallback pin。
 
 ### Phase 3 — GitHub 单一信任根门禁
@@ -54,7 +54,7 @@
 ### Phase 4 — 验证与发布前人验
 
 - [x] Claude 审查修复后重新完成 targeted tests、`npm run test`、production build、Electron bundle 与 workflow YAML 解析。
-- [x] 首个 Windows updater 版本升级版本号时同步当版 `RELEASE_NOTES.md`；`v0.67.8` 未公开且不可复用，当前候选递增为 `v0.67.9`，不回写已发布的 `v0.67.7` 历史说明。
+- [x] 首个 Windows updater 版本升级版本号时同步当版 `RELEASE_NOTES.md`；`v0.67.8` / `v0.67.9` 未公开且不可复用，当前候选递增为 `v0.67.10`，不回写已发布的 `v0.67.7` 历史说明。
 - [ ] Windows clean VM 手动安装 RC-A（bootstrap），保留自定义安装目录和用户数据。
 - [ ] RC-A → RC-B 从 `latest.yml` 自动发现、下载；分别收集差分成功与 blockmap 不可用时完整下载回退证据。
 - [ ] 更新下载后存在 active chat/bridge/task 时拒绝退出；idle 后确认重启，安装 handoff 成功且新版本可启动。
@@ -104,6 +104,7 @@ official stable Windows app
 | 2026-08-26 | isolated local build | Next 16 / esbuild | n/a | official-build compile-time fixture | production build + Electron Main/Preload bundle | ✅ Build pass | 原工作区 dev lock 保留；隔离副本 `next build` 与 official updater bundle 成功，产物固定 differential=true / web installer=false / officialBuild=true，并包含 packaged publisher breadcrumb fail-closed 逻辑 |
 | 2026-08-26 | GitHub Actions macOS + Intel + Windows + Linux | stable `v0.67.8` | n/a | 正式 Apple secrets；Windows signer 全缺；Actions `GITHUB_TOKEN` | 正式三平台 package + single-trust-root publish gate | ❌ Release blocked，未公开 | run [`32989409053`](https://github.com/op7418/CodePilot/actions/runs/32989409053)：source、Windows unsigned package、Linux 双架构、Mac 签名/公证/Intel ABI 全绿；release job 因 API 不暴露 `bypass_actors` 在公开前 fail-closed。tag 保留，不创建/不修改 Release |
 | 2026-08-26 | GitHub repository API | `op7418/CodePilot` | n/a | 管理员 token + anonymous read；未记录 token value | no-bypass 管理员确认状态生成与 Actions 等价防漂移复验 | ✅ Gate fixture pass | 管理员响应确认两条 ruleset 的 `bypass_actors=[]`；公开响应隐藏该字段但 live `id` / `updated_at` 与 `CODEPILOT_RULESETS_CONFIRMED_STATE` 精确一致；定向契约 8/8 |
+| 2026-08-27 | GitHub Actions macOS + Intel + Windows + Linux | stable `v0.67.9` | n/a | 正式 Apple secrets；Windows signer 全缺；Actions `GITHUB_TOKEN` | 正式三平台 package + central asset audit | ❌ Release blocked，未公开 | run [`32995824925`](https://github.com/op7418/CodePilot/actions/runs/32995824925)：所有 source/package/Intel ABI job 与 single-trust-root gate 全绿；central audit 错把外置 ZIP blockmap 要求成 metadata `blockMapSize`，在 draft/public Release 前阻断。锁定 builder 类型与公开 v0.67.7 metadata 均确认该字段只属嵌入式 blockmap；tag 保留 |
 | _待执行_ | Windows packaged Electron | GitHub Release | n/a | unsigned NSIS | RC-A bootstrap → RC-B differential/full fallback | ⏳ | clean VM run / installer logs / version+data checks |
 
 ## 决策日志
@@ -115,3 +116,4 @@ official stable Windows app
 - 2026-08-26：Claude 只读审查报告 2 个 P2、4 个 P3，逐项复核均成立；本轮不以 tech-debt 关闭，直接修复真实 publisher breadcrumb、当前版本资产白名单、裸 metadata URL、精确 checksum 集合、ruleset exclude/重名/分页与短时 Immutable acknowledgement，并补负例测试。
 - 2026-08-26：用户授权发版后，启用 Immutable Releases 管理员 acknowledgement、active main no-delete/no-force 和 `v*` no-delete/no-update ruleset；`v0.67.8` 正式 run 的所有平台构建通过，但 final release job 发现 Actions `GITHUB_TOKEN` 因没有 ruleset write access 而不返回 `bypass_actors`。这是权限可见性与 verifier 假设不匹配，不是规则缺失；按不可变发布纪律保留失败 tag，不重跑/移动。
 - 2026-08-26：不把缺失 `bypass_actors` 降级为空，也不把管理员 PAT 放进 Actions。改为管理员完整响应验证 no-bypass 后生成短时确认状态，CI 实时核对同一 ruleset 的 shape、`id` 与 `updated_at`；任何规则改动都会要求管理员重新确认。修复版本递增为 `v0.67.9`。
+- 2026-08-27：`v0.67.9` 已通过 ruleset gate，却在 central audit 暴露 `blockMapSize` 语义错误。锁定的 builder 类型定义说明该字段用于嵌入式 blockmap，公开 v0.67.7 的原生 `latest-mac.yml` 也只包含 sha512/size；Mac ZIP 与完整 NSIS 使用外置 sidecar。修复保留 sidecar 存在性与 checksum fail-closed 门禁，不手写 metadata，候选递增为 `v0.67.10`。

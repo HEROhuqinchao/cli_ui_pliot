@@ -172,13 +172,10 @@ for (const metadataName of metadataNames) {
       throw new Error(`${metadataName} size mismatch for ${assetName}`);
     }
     if (/\.(zip|exe)$/i.test(assetName)) {
-      const blockmapPath = one(`${assetName}.blockmap`);
-      if (!Number.isFinite(item.blockMapSize) || Number(item.blockMapSize) <= 0) {
-        throw new Error(`${metadataName} must declare a positive blockMapSize for ${assetName}`);
-      }
-      if (fs.statSync(blockmapPath).size !== item.blockMapSize) {
-        throw new Error(`${metadataName} blockMapSize mismatch for ${assetName}`);
-      }
+      // electron-builder emits external sidecar blockmaps for macOS ZIP and full
+      // NSIS artifacts. blockMapSize is reserved for embedded blockmaps (for
+      // example AppImage/web-package data), so native latest*.yml omits it.
+      one(`${assetName}.blockmap`);
     }
     if (/\.AppImage$/i.test(assetName) && !(Number(item.blockMapSize) > 0)) {
       throw new Error(`${metadataName} must describe the embedded AppImage blockmap`);
