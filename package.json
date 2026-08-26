@@ -1,6 +1,6 @@
 {
   "name": "codepilot",
-  "version": "0.67.7",
+  "version": "0.67.8",
   "private": true,
   "license": "BUSL-1.1",
   "workspaces": [
