@@ -35,7 +35,7 @@ import {
  * "Claude Code" / "CodePilot" / "Codex" without the duplicate
  * "Runtime" / "引擎" suffix that bloated the composer toolbar.
  */
-function runtimeTranslationKeys(runtime: RuntimeId): {
+export function runtimeTranslationKeys(runtime: RuntimeId): {
   label: TranslationKey;
   desc: TranslationKey;
 } {
@@ -56,7 +56,7 @@ function runtimeTranslationKeys(runtime: RuntimeId): {
  *   codepilot_runtime → CodePilot's own cube logo (host product)
  *   codex_runtime     → OpenAI (Codex is an OpenAI product)
  */
-function RuntimeIcon({ runtime, size, className }: { runtime: RuntimeId; size: number; className?: string }) {
+export function RuntimeIcon({ runtime, size, className }: { runtime: RuntimeId; size: number; className?: string }) {
   const icon: RuntimeBrandIcon = requireRuntimeRegistration(runtime).icon;
   if (icon === 'anthropic') return <Anthropic size={size} className={className} />;
   if (icon === 'openai') return <OpenAI size={size} className={className} />;

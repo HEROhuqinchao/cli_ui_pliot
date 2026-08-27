@@ -73,11 +73,11 @@ describe('Provider Catalog', () => {
         assert.deepEqual(glmPresets[0].defaultModels, glmPresets[1].defaultModels);
       });
 
-      it('catalog is the current GLM-5.3 / 5-Turbo / 4.7 lineup', () => {
+      it('catalog is the current GLM-5.3 / GLM-5.3-Flash lineup', () => {
         for (const p of glmPresets) {
           const names = p.defaultModels.map(m => m.displayName);
-          assert.deepEqual(names, ['GLM-5.3', 'GLM-5-Turbo', 'GLM-4.7'], p.key);
-          for (const stale of ['GLM-5.2', 'GLM-5.1', 'GLM-4.5-Air']) {
+          assert.deepEqual(names, ['GLM-5.3', 'GLM-5.3-Flash'], p.key);
+          for (const stale of ['GLM-5.2', 'GLM-5.1', 'GLM-5-Turbo', 'GLM-4.7', 'GLM-4.5-Air']) {
             assert.ok(!names.includes(stale), `${p.key} still lists superseded ${stale}`);
           }
         }
@@ -90,23 +90,27 @@ describe('Provider Catalog', () => {
         }
       });
 
-      it('role mapping uses the Claude [1m] flagship and GLM-4.7 small slot', () => {
+      it('role mapping keeps GLM-5.3 as flagship and uses Flash for the small slot', () => {
         for (const p of glmPresets) {
           assert.equal(p.defaultEnvOverrides.ANTHROPIC_DEFAULT_SONNET_MODEL, 'glm-5.3[1m]', p.key);
           assert.equal(p.defaultEnvOverrides.ANTHROPIC_DEFAULT_OPUS_MODEL, 'glm-5.3[1m]', p.key);
-          assert.equal(p.defaultEnvOverrides.ANTHROPIC_DEFAULT_HAIKU_MODEL, 'glm-4.7', p.key);
+          assert.equal(p.defaultEnvOverrides.ANTHROPIC_DEFAULT_HAIKU_MODEL, 'glm-5.3-flash[1m]', p.key);
           assert.equal(p.defaultEnvOverrides.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '1000000', p.key);
           assert.equal(p.defaultRoleModels?.default, 'glm-5.3[1m]', p.key);
         }
       });
 
-      it('flagship effort capability declares exactly Low, High and Max', () => {
+      it('both current models declare exactly Low, High and Max', () => {
         for (const p of glmPresets) {
-          const flagship = p.defaultModels.find(m => m.displayName === 'GLM-5.3');
-          assert.ok(flagship, `${p.key} missing GLM-5.3 row`);
-          assert.equal(flagship.capabilities?.supportsEffort, true, p.key);
-          assert.deepEqual(flagship.capabilities?.supportedEffortLevels, ['low', 'high', 'max'], p.key);
-          assert.equal(flagship.capabilities?.defaultEffortLevel, 'max', p.key);
+          for (const model of p.defaultModels) {
+            assert.equal(model.capabilities?.supportsEffort, true, `${p.key}/${model.displayName}`);
+            assert.deepEqual(
+              model.capabilities?.supportedEffortLevels,
+              ['low', 'high', 'max'],
+              `${p.key}/${model.displayName}`,
+            );
+            assert.equal(model.capabilities?.defaultEffortLevel, 'max', `${p.key}/${model.displayName}`);
+          }
         }
       });
 
@@ -121,7 +125,7 @@ describe('Provider Catalog', () => {
         }
       });
 
-      it('the effort menu explains the documented Max default in both locales', () => {
+      it('the effort menu explains the documented Max default concisely in both locales', () => {
         const flagship = glmPresets[0].defaultModels.find(m => m.displayName === 'GLM-5.3');
         const key = flagship?.capabilities?.effortNoteKey;
         assert.ok(key, 'GLM-5.3 must explain Auto/default behavior in the menu');
@@ -129,8 +133,14 @@ describe('Provider Catalog', () => {
         const zhNote = zh[key as keyof typeof zh] as string;
         assert.ok(enNote, `missing en string for ${key}`);
         assert.ok(zhNote, `missing zh string for ${key}`);
-        assert.match(enNote, /Low.*High.*Max.*default.*Max/i);
-        assert.match(zhNote, /低.*高.*最大.*自动.*最大/);
+        // The selectable levels are rendered immediately above this note from
+        // supportedEffortLevels; repeating the whole list here made the compact
+        // Composer menu unnecessarily wide. The note only needs to explain the
+        // otherwise non-obvious Default → Max behavior.
+        assert.match(enNote, /default.*max/i);
+        assert.match(zhNote, /默认.*最大/);
+        assert.ok(enNote.length <= 24);
+        assert.ok(zhNote.length <= 12);
       });
 
       it('menu resolves to Auto + Low/High/Max', () => {
@@ -141,13 +151,11 @@ describe('Provider Catalog', () => {
         );
       });
 
-      it('GLM-5-Turbo and GLM-4.7 do not invent selectable effort tiers', () => {
-        for (const modelName of ['GLM-5-Turbo', 'GLM-4.7']) {
-          const model = glmPresets[0].defaultModels.find(m => m.displayName === modelName);
-          assert.ok(model, `${modelName} row missing`);
-          assert.equal(model.capabilities?.supportsEffort, undefined);
-          assert.equal(resolveEffortMenuLevels(model.capabilities?.supportedEffortLevels), null);
-        }
+      it('GLM-5.3-Flash is honestly marked as native multimodal', () => {
+        const flash = glmPresets[0].defaultModels.find(m => m.displayName === 'GLM-5.3-Flash');
+        assert.ok(flash);
+        assert.equal(flash.capabilities?.vision, true);
+        assert.equal(flash.capabilities?.contextWindow, 1_000_000);
       });
     });
 

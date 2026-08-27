@@ -451,8 +451,13 @@ describe('U3 — CodePlan add-model is not held hostage by an optional upstream 
     assert.deepEqual(persistedCapabilities.supportedEffortLevels, ['low', 'high', 'max']);
     assert.equal(persistedCapabilities.defaultEffortLevel, 'max');
     assert.equal(persistedCapabilities.effortNoteKey, 'messageInput.effort.note.glmCodePlan');
-    assert.equal(byId.get('glm-5-turbo')?.display_name, 'GLM-5-Turbo', 'new catalog ids must materialize');
-    assert.equal(byId.get('haiku')?.display_name, 'GLM-4.7');
+    assert.equal(byId.get('haiku')?.display_name, 'GLM-5.3-Flash');
+    assert.equal(byId.get('haiku')?.upstream_model_id, 'glm-5.3-flash[1m]');
+    const flashCapabilities = JSON.parse(
+      getAllModelsForProvider(provider.id).find(model => model.model_id === 'haiku')!.capabilities_json,
+    );
+    assert.equal(flashCapabilities.vision, true);
+    assert.deepEqual(flashCapabilities.supportedEffortLevels, ['low', 'high', 'max']);
     assert.equal(byId.get('user/custom-model')?.display_name, 'My custom GLM');
     assert.equal(byId.get('user/custom-model')?.enabled, 0, 'manual hidden choice must survive catalog merge');
     assert.equal(byId.get('user/custom-model')?.user_edited, 1);
@@ -565,7 +570,10 @@ describe('U3 — CodePlan add-model is not held hostage by an optional upstream 
     const settingsFlagship = settingsBody.models.find(model => model.model_id === 'sonnet')!;
     assert.equal(settingsFlagship.upstream_model_id, 'glm-5.3[1m]');
     assert.equal(settingsFlagship.display_name, 'GLM-5.3');
-    assert.ok(settingsBody.models.some(model => model.model_id === 'glm-5-turbo'));
+    assert.ok(settingsBody.models.some(model =>
+      model.model_id === 'haiku'
+      && model.upstream_model_id === 'glm-5.3-flash[1m]'
+      && model.display_name === 'GLM-5.3-Flash'));
 
     const groups = await getGroups();
     const composerGroup = groups.find(group => group.provider_id === provider.id)!;
@@ -687,7 +695,7 @@ describe('U3 — CodePlan add-model is not held hostage by an optional upstream 
     assert.equal(restored.enable_source, 'catalog');
     assert.equal(restored.upstream_model_id, 'glm-5.3[1m]');
     const caps = JSON.parse(restored.capabilities_json);
-    assert.equal(caps.contextWindow, 1_048_576);
+    assert.equal(caps.contextWindow, 1_000_000);
     assert.equal(caps.supportsEffort, true);
     assert.deepEqual(caps.supportedEffortLevels, ['low', 'high', 'max']);
   });
@@ -858,10 +866,10 @@ describe('U2b — untouched catalog rows follow current Kimi capability', () => 
   });
 });
 
-describe('U4 — effort selector uses the model selector visual contract', () => {
-  it('shares optical typography, item spacing, popover radius and motion', () => {
-    const effortSource = fs.readFileSync(
-      path.join(SRC, 'components/chat/EffortSelectorDropdown.tsx'),
+describe('U4 — consolidated model controls share the compact composer contract', () => {
+  it('keeps route and capability selectors compact, collision-aware, and sans-serif', () => {
+    const capabilitySource = fs.readFileSync(
+      path.join(SRC, 'components/chat/ModelCapabilityDropdown.tsx'),
       'utf8',
     );
     const modelSource = fs.readFileSync(
@@ -870,51 +878,41 @@ describe('U4 — effort selector uses the model selector visual contract', () =>
     );
 
     assert.match(
-      effortSource,
+      capabilitySource,
       /<span className="text-xs font-normal">/,
-      'effort trigger must use the shared compact toolbar typography',
+      'the combined effort/context trigger must use compact toolbar typography',
     );
     assert.match(
       modelSource,
-      /<span className="text-xs font-normal">\{currentModelOption\?\.label\}<\/span>/,
+      /<span className="[^"]*text-xs font-normal">\{currentModelOption\?\.label\}<\/span>/,
       'selected model must not use an oversized system-monospace fallback',
-    );
-    assert.match(
-      modelSource,
-      /<span className="text-xs font-normal truncate">\{option\.label\}<\/span>/,
-      'recent model rows must use the same compact sans typography as the trigger',
-    );
-    assert.match(
-      modelSource,
-      /<span className="text-xs font-normal truncate">\{opt\.label\}<\/span>/,
-      'provider model rows must use the same compact sans typography as the trigger',
     );
     assert.doesNotMatch(
       modelSource,
-      /font-mono text-xs truncate">\{(?:option|opt)\.label\}/,
+      /font-mono[^\n]*\{(?:currentModelOption\?\.label|route\.modelName)\}/,
       'human-readable model names must never inherit the offline monospace fallback',
     );
     assert.match(
-      effortSource,
+      capabilitySource,
       /\bCommandListItems\b/,
-      'effort rows must use the same shared p-1 item container as the model menu',
+      'capability rows must use the shared command-list item container',
     );
-    assert.doesNotMatch(
-      effortSource,
-      /rounded-lg/,
-      'CommandList already owns the model menu rounded-2xl radius; effort must not override it',
+    assert.match(
+      modelSource,
+      /w-\[42rem\] max-w-\[calc\(100vw-2rem\)\]/,
+      'the provider/model route menu must preserve the two-lane layout while shrinking in narrow windows',
     );
-    for (const [name, source] of [['effort', effortSource], ['model', modelSource]] as const) {
+    for (const [name, source] of [['capability', capabilitySource], ['model', modelSource]] as const) {
       assert.match(
         source,
-        /w-80 max-w-\[calc\(100vw-2rem\)\]/,
+        /max-w-\[calc\(100vw-2rem\)\]/,
         `${name} popover must shrink inside a narrow window instead of overflowing`,
       );
       assert.match(source, /<PopoverContent[\s\S]{0,220}collisionPadding=\{16\}/,
         `${name} popover must use collision-aware viewport placement, not only a max-width`);
-      assert.match(source, /<CommandList positioning="inline"/,
-        `${name} command list must let the Radix popover own placement`);
     }
+    assert.match(capabilitySource, /<CommandList positioning="inline"/,
+      'the combined capability list must let the Radix popover own placement');
   });
 
   it('keeps auto-review in the same muted toolbar tier as mode and runtime', () => {

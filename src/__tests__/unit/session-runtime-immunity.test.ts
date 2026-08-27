@@ -1307,28 +1307,20 @@ describe('RED — known global-runtime hazard sites Phase 2 Step 2 must replace'
     }
   });
 
-  it('ChatView wires RuntimeSelector with a PATCH-on-change handler (Step 4c)', () => {
-    // The composer toolbar order is locked by user direction:
-    // [ModeIndicator] [RuntimeSelector] [ChatPermissionSelector]. Static
-    // checks:
-    //   1. RuntimeSelector is imported and rendered.
-    //   2. handleRuntimePinChange exists, is wrapped in useCallback, and
-    //      PATCHes runtime_pin.
-    //   3. The local runtimePin state exists (not just a prop) so the
-    //      selector can write through without waiting for parent reload.
+  it('ChatView wires the integrated Runtime/model picker to the PATCH-on-change handler (Step 4c)', () => {
     const src = fs.readFileSync(
       path.join(repoRoot, 'components/chat/ChatView.tsx'),
       'utf8',
     );
-    assert.match(
+    assert.doesNotMatch(
       src,
       /import\s*\{\s*RuntimeSelector\s*\}\s*from\s*['"]\.\/RuntimeSelector['"]/,
-      'ChatView must import RuntimeSelector',
+      'ChatView must not render a second standalone Runtime selector beside the integrated picker',
     );
     assert.match(
       src,
-      /<RuntimeSelector[\s\S]{0,400}onRuntimePinChange=\{handleRuntimePinChange\}/,
-      'ChatView must render RuntimeSelector and wire onRuntimePinChange',
+      /<MessageInput[\s\S]{0,900}runtime=\{sessionRuntimeParam\}[\s\S]{0,120}onRuntimeChange=\{handleRuntimePinChange\}/,
+      'ChatView must wire the model picker Runtime lane to handleRuntimePinChange',
     );
     assert.match(
       src,

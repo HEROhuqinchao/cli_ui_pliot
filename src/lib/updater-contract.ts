@@ -12,8 +12,15 @@ export type UpdaterUnsupportedReason =
   | 'unofficial_build'
   | 'channel_not_stable'
   | 'platform_not_supported'
+  | 'publisher_verification_unknown'
   | 'linux_trust_not_enabled'
   | null;
+
+export type UpdaterPublisherVerification =
+  | 'authenticode'
+  | 'none'
+  | 'unknown'
+  | 'not_applicable';
 
 export type UpdaterErrorCode =
   | 'offline'
@@ -33,6 +40,7 @@ export interface UpdaterSnapshot {
   targetVersion: string | null;
   channel: string;
   packageType: 'mac' | 'nsis' | 'appimage' | 'package-manager' | 'unknown';
+  publisherVerification: UpdaterPublisherVerification;
   progressPercent: number | null;
   transferredBytes: number | null;
   totalBytes: number | null;
@@ -41,6 +49,24 @@ export interface UpdaterSnapshot {
   releaseDate: string;
   errorCode: UpdaterErrorCode | null;
   checkedAt: string | null;
+}
+
+export function resolveUpdaterPublisherVerification(
+  platform: NodeJS.Platform,
+  appUpdateConfig: unknown,
+): UpdaterPublisherVerification {
+  if (platform !== 'win32') return 'not_applicable';
+  if (!appUpdateConfig || typeof appUpdateConfig !== 'object' || Array.isArray(appUpdateConfig)) {
+    return 'unknown';
+  }
+  const config = appUpdateConfig as Record<string, unknown>;
+  if (!Object.prototype.hasOwnProperty.call(config, 'publisherName')) return 'none';
+  const publisherName = config.publisherName;
+  if (typeof publisherName === 'string' && publisherName.trim()) return 'authenticode';
+  if (Array.isArray(publisherName) && publisherName.some((value) => typeof value === 'string' && value.trim())) {
+    return 'authenticode';
+  }
+  return 'unknown';
 }
 
 export interface UpdaterInstallResult {

@@ -6,14 +6,10 @@ import type { Message, SSEEvent, SessionResponse, TokenUsage, PermissionRequestE
 import type { SessionPermissionProfile } from '@/lib/permission/profile';
 import { MessageList } from '@/components/chat/MessageList';
 import { MessageInput, composerDraftKey } from '@/components/chat/MessageInput';
-import { ChatComposerActionBar } from '@/components/chat/ChatComposerActionBar';
-import { ModeIndicator } from '@/components/chat/ModeIndicator';
 import { ChatPermissionSelector } from '@/components/chat/ChatPermissionSelector';
-import { RuntimeSelector } from '@/components/chat/RuntimeSelector';
-import { agentRuntimeToChatRuntime, effectiveChatRuntime } from '@/lib/chat-runtime-shared';
+import { effectiveChatRuntime } from '@/lib/chat-runtime-shared';
 import { toWireEffort, resolveModelSwitchEffortEffect } from '@/lib/effort-levels';
 import { refreshSessionTitle } from '@/lib/session-title-events';
-import type { ChatRuntime } from '@/lib/chat-runtime-shared';
 import { PermissionPrompt } from '@/components/chat/PermissionPrompt';
 import { ChatEmptyState } from '@/components/chat/ChatEmptyState';
 import { NewChatWelcome } from '@/components/chat/NewChatWelcome';
@@ -27,7 +23,7 @@ import { buildCheckpoints } from '@/lib/run-checkpoint';
 // fans out to 6+ /api endpoints + transitively pulls runtime/effective
 // + provider-catalog). RunCheckpoint now only carries session-scoped
 // "can this send go through" reasons; full health signals belong to
-// /settings/health and the lazy RunCockpit popover. RuntimeSelector
+// /settings/health and the lazy RunCockpit popover. The unified picker
 // only needs the global agent_runtime label, which the lightweight
 // hook below fetches from /api/settings/app alone.
 // `computeEffectiveRuntime` and `useClaudeStatus` were here ONLY to
@@ -250,7 +246,7 @@ function NewChatPageInner() {
   }, [modelReady, canSendWithCurrentProvider]);
 
   // Phase 2 Step 4c — runtime pin for the not-yet-created session.
-  // RuntimeSelector writes here; on first send we PATCH the new
+  // The unified Runtime/model picker writes here; on first send we PATCH the new
   // session row with this value before the chat POST runs (so the
   // chat route's lazy-seed sees the user's choice instead of falling
   // through to the global default). Empty string = follow global.
@@ -367,11 +363,15 @@ function NewChatPageInner() {
   // Provider options (thinking mode + 1M context)
   const [thinkingMode, setThinkingMode] = useState<string>('adaptive');
   const [context1m, setContext1m] = useState(false);
+  const [effectiveContext1m, setEffectiveContext1m] = useState(false);
 
   // Fetch provider-specific options (with abort to prevent stale responses on fast switch)
   useEffect(() => {
     const pid = currentProviderId || 'env';
     const controller = new AbortController();
+    // Keep the provider preference intact while failing closed for the current
+    // route until MessageInput resolves its model capability descriptor.
+    setEffectiveContext1m(false);
     fetch(`/api/providers/options?providerId=${encodeURIComponent(pid)}`, { signal: controller.signal })
       .then(r => r.ok ? r.json() : null)
       .then(data => {
@@ -382,6 +382,22 @@ function NewChatPageInner() {
       })
       .catch(() => {});
     return () => controller.abort();
+  }, [currentProviderId]);
+
+  const handleContext1mChange = useCallback((enabled: boolean) => {
+    setContext1m(enabled);
+    setEffectiveContext1m(enabled);
+    fetch('/api/providers/options', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        providerId: currentProviderId || 'env',
+        options: { context_1m: enabled },
+      }),
+    }).catch(() => {
+      // Optimistic provider option; the existing fetch reconciles on route
+      // changes/reload if persistence fails.
+    });
   }, [currentProviderId]);
 
   // Validate restored model/provider against actual available providers/models.
@@ -431,7 +447,7 @@ function NewChatPageInner() {
       // No silent substitution for Pinned — see invalidDefault state.
       //
       // Step 4c round 2 — when the user has explicitly switched runtime
-      // via RuntimeSelector (`runtimePin !== ''`), the global pinned
+      // via the unified picker (`runtimePin !== ''`), the global pinned
       // policy no longer reflects their intent for THIS conversation:
       // they've actively asked for a different runtime, so blocking
       // them on a global pinned default that's incompatible with that
@@ -913,7 +929,7 @@ function NewChatPageInner() {
         setPanelWorkingDirectory(session.working_directory || workingDir.trim());
 
         // Phase 2 Step 4c — if the user explicitly picked a runtime in
-        // the composer's RuntimeSelector before sending, persist it now
+        // the composer's unified Runtime/model picker before sending, persist it now
         // (before the chat POST runs). This way the chat route's
         // lazy-seed sees `session.runtime_pin` already set and skips the
         // global-default fallback. Awaited so we don't race with /api/chat.
@@ -960,7 +976,7 @@ function NewChatPageInner() {
             // Code CLI applies its per-model default (Opus 4.7 → xhigh).
             ...(toWireEffort(selectedEffort) ? { effort: toWireEffort(selectedEffort) } : {}),
             ...(thinkingConfig ? { thinking: thinkingConfig } : {}),
-            ...(context1m ? { context_1m: true } : {}),
+            ...(effectiveContext1m ? { context_1m: true } : {}),
             ...(displayOverride ? { displayOverride } : {}),
             ...(selectedSkills && selectedSkills.length > 0
               ? { selectedSkills }
@@ -1335,7 +1351,7 @@ function NewChatPageInner() {
         firstSendInFlightRef.current = false;
       }
     },
-    [isStreaming, router, workingDir, mode, currentModel, currentProviderId, runtimePin, permissionProfile, selectedEffort, thinkingMode, context1m, setPendingApprovalSessionId, setPanelSessionId, setPanelWorkingDirectory, t, canSendWithCurrentProvider, modelReady, noCompatibleProvider, invalidDefault]
+    [isStreaming, router, workingDir, mode, currentModel, currentProviderId, runtimePin, permissionProfile, selectedEffort, thinkingMode, effectiveContext1m, setPendingApprovalSessionId, setPanelSessionId, setPanelWorkingDirectory, t, canSendWithCurrentProvider, modelReady, noCompatibleProvider, invalidDefault]
   );
 
   const handleCommand = useCallback((command: string) => {
@@ -1413,8 +1429,8 @@ function NewChatPageInner() {
 
   // Single composer stack — reused in both the new-chat hero (centered)
   // and the active-chat layout (bottom-pinned). Avoids duplicating
-  // ErrorBanner / RunCheckpoint / PermissionPrompt / MessageInput /
-  // ChatComposerActionBar across two branches.
+  // ErrorBanner / RunCheckpoint / PermissionPrompt / MessageInput across two
+  // branches. Runtime, access and Run status now live in MessageInput's footer.
   const composerStack = (
     <>
       {/* #615: stable keys so MessageInput keeps its identity (and PromptInput
@@ -1459,6 +1475,7 @@ function NewChatPageInner() {
         onModelChange={setCurrentModel}
         providerId={currentProviderId}
         runtime={sessionRuntimeParam}
+        onRuntimeChange={setRuntimePin}
         onProviderModelChange={(pid, model, opts) => {
           setCurrentProviderId(pid);
           setCurrentModel(model);
@@ -1501,35 +1518,31 @@ function NewChatPageInner() {
         onPendingContextTokensChange={setPendingContextTokens}
         onPendingContextSubTotalsChange={setPendingContextSubTotals}
         blockingReasonIds={blockingReasonIds}
-      />
-      <ChatComposerActionBar
-        left={
-          <>
-            <ModeIndicator mode={mode} onModeChange={setMode} disabled={isStreaming} />
-            <RuntimeSelector
-              runtimePin={runtimePin}
-              effectiveRuntime={agentRuntimeToChatRuntime(globalRuntime.agentRuntime)}
-              onRuntimePinChange={(pin: ChatRuntime) => setRuntimePin(pin)}
-              disabled={isStreaming}
-            />
-            <ChatPermissionSelector
-              permissionProfile={permissionProfile}
-              onPermissionChange={setPermissionProfile}
-              runtime={sessionRuntimeParam}
-            />
-          </>
-        }
-        right={
+        context1m={context1m}
+        onContext1mChange={handleContext1mChange}
+        onContext1mEffectiveChange={setEffectiveContext1m}
+        permissionControl={(
+          <ChatPermissionSelector
+            mode={mode}
+            onModeChange={setMode}
+            permissionProfile={permissionProfile}
+            onPermissionChange={setPermissionProfile}
+            runtime={sessionRuntimeParam}
+            disabled={isStreaming}
+          />
+        )}
+        runStatusControl={(
           <RunCockpit
             providerId={currentProviderId}
             messages={[]}
             modelName={currentModel}
+            context1m={effectiveContext1m}
             permissionProfile={permissionProfile}
             pendingContextTokens={pendingContextTokens}
             pendingContextSubTotals={pendingContextSubTotals}
             sessionRuntimePin={runtimePin}
           />
-        }
+        )}
       />
     </>
   );

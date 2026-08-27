@@ -1,13 +1,13 @@
 # 模型目录与推理强度统一适配
 
 > 创建时间：2026-07-17
-> 最后更新：2026-08-24
-> 状态：🟡 v0.67.1 已发布后被真实用户打回；候选版已按发布历史补齐 gen-0 `GLM-4.7`、后续 sonnet/haiku `legacyFingerprints`、五态/conflict recovery、保守迁移与四面合同。2026-08-24 收口定向 49/49；全量/build 证据见关联生产反馈计划。B-031 仍不关闭：至少一名受影响 0.67.1 用户的候选版升级 smoke、真实 xAI/GLM 凭据 smoke 仍待跑；本轮未发布。
+> 最后更新：2026-08-26
+> 状态：🟡 GLM-5.3-Flash 当前目录、1M/vision/effort 与 Claude/Codex 双 wire 已增量落地；定向 217/217、标准全量 5391/0/1、隔离 production build 137 pages 通过。真实套餐 smoke 仍待跑。B-031 不因模型目录更新关闭：至少一名受影响 0.67.1 用户的候选版升级 smoke 仍未完成；本轮未发布。
 > 事实基线：[基础体验更新事实基线](../../research/foundation-experience-refresh-2026-07-17.md)
 
 ## 用户问题与取舍
 
-用户需要 GLM（现已从 5.2 更新到 5.3）、GPT-5.6（Codex）、Kimi for Coding 最新模型渠道和 Claude 新模型都能选择真实支持的推理强度，并希望 Claude 的控件出现在模型右侧。
+用户需要 GLM（现为 5.3 + 5.3-Flash）、GPT-5.6（Codex）、Kimi for Coding 最新模型渠道和 Claude 新模型都能选择真实支持的推理强度，并希望 Claude 的控件出现在模型右侧。
 
 仓库已经有该位置和控件，问题是 capability 真源不完整：GLM/Kimi 目录过期，Sonnet 5 缺失，Codex 同时存在动态与硬编码目录，而且 app-server 字段已从 `effort` 漂移为 `reasoningEffort`。本计划不重做 UI，而是把目录、能力、wire 参数和失败降级收敛成同一合同。
 
@@ -16,9 +16,9 @@
 | Phase | 内容 | 状态 | 用户能看到什么 |
 |---|---|---|---|
 | Phase 0 | Codex GPT-5.6 与 schema drift | ✅ 恢复修复：最终序列化统一 lift capability；route-contract 直接断言 GPT-5.6 top-level effort allowlist | Codex 渠道可看到账号真实返回的 5.6，并显示可用强度 |
-| Phase 1 | GLM-5.2 / Kimi for Coding 目录与强度 | ✅ 恢复修复：manual exact-ID + hidden legacy alias 仍可只读 enrichment；CodePlan search 以内置目录降级 | 两个 Coding Plan 显示正确模型和真实档位 |
+| Phase 1 | GLM / Kimi for Coding 目录与强度 | ✅ GLM 当前阵容增量至 5.3 + 5.3-Flash；manual exact-ID + hidden legacy alias 仍可只读 enrichment | 两个 Coding Plan 显示当前模型和真实档位 |
 | Phase 2 | Claude Sonnet 5 / Opus 5 与现有模型复核 | ✅ 恢复修复：Opus 5 显式目录、1M context、三 Runtime 共用 adaptive/effort、effort provenance/精确档位门与本地化提示已落地；真实 CLI route/entitlement 通过，packaged UI smoke 待跑 | Sonnet 5 / Opus 5 可选；Claude 模型右侧稳定显示匹配且视觉一致的强度菜单 |
-| Phase 3 | capability 统一与后续跟进机制 | ✅ Grok SDK 边界、GLM provider-scoped Codex effort 与 Turbo transport 已收口 | 上游模型变化不会再靠多处硬编码静默漂移 |
+| Phase 3 | capability 统一与后续跟进机制 | ✅ Grok SDK 边界、GLM provider-scoped effort、跨 transport ID 与 Flash vision 已收口 | 上游模型变化不会再靠多处硬编码静默漂移 |
 | Phase 4 | Tier 2 回归与真实凭据 smoke | 🟡 legacy identity Code/Tests/Build 已完成；受影响用户与真实 GLM smoke 待补 | 候选版可区分 current/hidden/legacy/conflict/missing；production 关闭权仍由真实升级 smoke 决定 |
 
 ## 2026-08-23 用户升级后再次打回
@@ -122,6 +122,7 @@
 
 - [ ] 建立 provider/model capability normalization：`supportedEffortLevels`、default、thinking mode、context、source breadcrumb。
 - [x] GLM-5.3 CodePlan：目录更新为 5.3 / 5-Turbo / 4.7；Claude 使用 `glm-5.3[1m]`、Codex Responses 使用 bare `glm-5.3`；旗舰 1M + Low/High/Max/default Max；CN/Global endpoint、reasoning summary、parallel tool 与 text-only 能力有第一方 breadcrumb；存量 catalog 管理行除 Runtime 即时 read-through 外，Models GET 也会非破坏持久升级 metadata/缺失 id，stable/upstream 双查重且并发冲突安全，manual/user-edited 继续 DB-wins；Add Model 明确区分 hidden 并可恢复，精确目录重加不会丢 capabilities。
+- [x] GLM-5.3-Flash 增量：当前新建目录收敛为 5.3 + Flash；旗舰默认保持 5.3，stable haiku 槽升级 `glm-5.3-flash[1m]`；两模型 1M/always-thinking/Low-High-Max/default Max，只有 Flash 开 vision；Codex 使用 bare `glm-5.3-flash`。历史 Turbo/4.7 行继续由非破坏 merge 保留，不把读页面变成 prune。
 - [x] DeepSeek V4 Flash 0731 / Pro 0813 均保持稳定模型 ID；补两者 Low/High/Max + 1M/default High，并以官方链接记录 source breadcrumb。
 - [x] 模型/UI capability 与 provider wire capability 分轴：preset `wireCapabilities` 经 identity + exact model 解析；DeepSeek 第一方 Flash 与非 suffix Pro 有 Codex Responses，ClinePass/OpenCode Go 同名模型保持 tool-use-only。
 - [x] Grok 4.6 API Key 与 Grok Build virtual provider：500K/vision/always-reasoning、4.5 legacy、动态 callback 与 host 分流已落地；UI 只展示锁定 `@ai-sdk/xai@4.0.18` 可承载的 Low/Medium/High，外部 xhigh/max 在生产 builder 折叠 High；Build proxy 的 version/token-auth/identifier/authenticate-response/client-mode 与实际 model override 已补齐。真实账号 `/v1/models`、版本接受与 4.6 entitlement 仍只留在 smoke，不再把它们写成代码 blocker。
@@ -137,10 +138,12 @@
 - [x] 单测：Sonnet 5 / Opus 5 不发 manual thinking / 非默认 sampling；Opus 5 disabled-thinking × Auto/xhigh/max 生成合法 high wire；Codex proxy 全 adaptive 家族无 manual budget；Kimi for Coding 恰为 Auto/Low/High/Max；GLM-5.3 表达官方 Low/High/Max 三档，旧 GLM-5.2 两档合同已被增量替换。
 - [x] 单测：DeepSeek exact preset/model dispatch、legacy provider env 分层、Flash/Pro Codex Responses 与 Pro 0813 outbound body、Anthropic `output_config.effort`、Max 保真 / xhigh→High / suffix+aggregator fail-closed。
 - [x] 单测：GLM-5.3 CN/Global exact preset/model dispatch、Claude `[1m]` / Codex bare ID、Turbo Responses / 4.7 Anthropic fallback、Low/High/Max + compatibility aliases、存量 5.2 catalog 行 read-through/align、production Responses outbound body 与 aggregator fail-closed（定向 175/175）。
+- [x] 单测：GLM-5.3-Flash CN/Global 当前两模型目录、haiku legacy 原位升级、历史 Turbo 非破坏保留、1M/vision/always-thinking、Claude `[1m]` / Codex bare ID、Auto/Max、Anthropic/Responses 图片输入和 aggregator fail-closed（与相关目录/上下文测试合计定向 217/217）。
 - [x] Grok 回归：minimal/Low/Medium/High/XHigh/Max 已逐档穿过生产 builder 与真实 `@ai-sdk/xai` 序列化层；OAuth token form 的 `redirect_uri` 等于 authorize URL 的动态 URI；proxy header 正反例覆盖 version/token-auth/authenticate-response/client-mode/identifier，且公共 API/custom host 请求数保持 0。
 - [x] 完整门禁（历史）：权威串行全量 4410/4410，exit 0；2026-08-13 Grok 4.6 / DeepSeek V4 Pro 0813 增量后的标准 `npm run test` 完成 typecheck、Harness 边界检查与 1209 suites / 5196 tests（5195 pass / 0 fail / 1 skipped），exit 0。
 - [x] 完整门禁（2026-08-15 三轮 review remediation + v0.67.0 发布）：GLM provider catalog→Codex 显式 Max / Auto→Max / 无账号冷缓存的严格 binary version gate / 旧与 prerelease binary fail-visible、Turbo verified Responses 无 effort、Grok 媒体实际挂载提示与取消资产边界均已并入标准测试。发布门禁又以真实 ChatGPT.app app-server user-agent 捕获并修复 strict parser 的 Desktop 格式缺口；最终版本门定向 78/78、标准全量 5246/0/1、production build 136 pages、production `@smoke` 22/22。第三轮复审 5242/2/1 的两个失败仍是已跨机器复现并登记为 tech-debt #86 的 telemetry flake；本次绿色不关闭它。
 - [x] 完整门禁（2026-08-16 v0.67.1 GLM Models 热修）：route/SQLite/UI helper 五文件定向 210/210；标准 `npm run test` 1218 suites / 5258 tests（5257 pass / 0 fail / 1 skipped），exit 0；production build 136 pages；隔离临时数据库的真实 Settings UI 验证“已添加（已隐藏）”→“重新启用”、`glm-5.3[1m]` 搜索、3/3 父列表刷新与 `sonnet→glm-5.3[1m]` 映射，控制台 0 error/warning。真实用户 DB 全程只读；修复后 Claude 复审仍待跑。
+- [x] 完整门禁（2026-08-26 GLM-5.3-Flash）：沙箱内首轮因 loopback listen `EPERM` 出现环境失败，不计回归；沙箱外标准 `npm run test` 完成 typecheck、Harness boundary 与 1242 suites / 5392 tests（5391 pass / 0 fail / 1 skipped）。工作区 live `.next/dev/lock` 未触碰，复制到临时隔离目录后 production build 137 pages 通过；仅保留既有 NFT dynamic trace warning。
 - [ ] 真实 smoke：Claude Code × GLM/Kimi/Anthropic；Codex Runtime × Codex Account；Native × Anthropic/OpenAI-compatible。
 - [x] DeepSeek 第一方真实 smoke：Codex Runtime × Flash × Responses High；CodePilot Runtime × Flash × Anthropic thinking + High。两条均返回预期 marker，且 production resolver/factory/wire builder 全链参与。
 - [ ] 每个 smoke 记录 Runtime / Provider / Model / UI 选择 / wire 参数 / 实际结果。
@@ -150,7 +153,7 @@
 - 用户在模型右侧看到的每个档位都有官方或运行时 source breadcrumb。
 - UI 所选、session 持久化、发送参数、供应商实际档位四者一致；映射必须显式说明。
 - 模型不支持或能力未知时隐藏/降级，不显示假选项。
-- GPT-5.6、GLM-5.2、Kimi for Coding、Sonnet 5 / Opus 5 各有至少一个真实凭据 smoke；route/entitlement 与完整输出必须分开记账。
+- GPT-5.6、GLM-5.3 / GLM-5.3-Flash、Kimi for Coding、Sonnet 5 / Opus 5 各有至少一个真实凭据 smoke；route/entitlement 与完整输出必须分开记账。
 - 新模型不会改变旧会话已固定的 provider/model。
 
 ## Smoke Ledger
@@ -169,6 +172,9 @@
 | _待跑_ | codex_runtime | Codex Account | gpt-5.6-sol | real login | select effort → one turn | 📋 | |
 | _待跑_ | claude_code | GLM Coding Plan CN / Global | glm-5.3[1m] | API key | Low/High/Max 三档 + Auto default Max；1M compact window；完整文本 turn | 📋 | 第一方合同与 synthetic Anthropic body 已证；未使用真实套餐凭据 |
 | _待跑_ | codex_runtime | GLM Coding Plan CN / Global | glm-5.3 | API key | production resolver → native Responses，Max + reasoning summary，完整文本 turn | 📋 | synthetic factory 已证区域 endpoint、Bearer、bare model ID 与 reasoning body；未使用真实套餐凭据 |
+| _待跑_ | claude_code | GLM Coding Plan CN / Global | glm-5.3-flash[1m] | API key + image | 完整文本/图片 turn；Low/High/Max + Auto default Max；1M | 📋 | 2026-08-26 synthetic Anthropic request body 已证 data URL 图片与 `[1m]` ID；未使用真实套餐凭据 |
+| _待跑_ | codex_runtime | GLM Coding Plan CN / Global | glm-5.3-flash | API key + image | native Responses 完整文本/图片 turn；bare ID、Max、reasoning summary | 📋 | 2026-08-26 production factory synthetic body 已证 endpoint、bare ID、图片和 reasoning；Codex 工具页示例目录尚未同步 Flash，故真实 smoke 不省略 |
+| 2026-08-26 | local contract tests + build | GLM Coding Plan CN / Global | GLM-5.3 + GLM-5.3-Flash | catalog / SQLite / synthetic fetch fixtures | 当前目录、legacy upgrade、历史 Turbo 保留、双 Runtime ID/effort/vision wire | ✅ 217/217 targeted；5391/0/1 full；137-page build | 沙箱内 loopback `EPERM` 后已在沙箱外重跑全绿；未使用真实套餐凭据，只记 Tests/Build，不记 entitlement / Smoke passed |
 | 2026-08-15 | codex_runtime contract | GLM Coding Plan CN / Global | glm-5.3 / glm-5-turbo | isolated catalog/app-server fixtures | provider-scoped explicit Max、Auto→Max、无 Codex Account 目录缓存的本机 binary version gate、旧 binary gate；Turbo Responses summary without effort | ✅ Tests pass；Smoke pending | 标准 `npm run test`：5244 pass / 0 fail / 1 skipped（5245 tests），exit 0；未使用真实套餐凭据。production build 因 live `.next/dev/lock` 安全跳过 |
 | 2026-08-15 | production build / Playwright | GLM shared Codex runtime surface | glm-5.3 / Codex auto-review capability | 本机 ChatGPT.app bundle；无 GLM provider 请求 | v0.67.0 strict binary gate + production route | ✅ Build + Smoke passed；真实 GLM turn pending | 首轮 21/22 捕获 `Codex Desktop/0.147.0-alpha.6.5 (...)` 被误拒；修复后定向 78/78、全量 5246/0/1、production build 通过、`@smoke` 22/22。只证明本机 binary/route 合同，不替代 CN/Global 真实凭据 |
 | 2026-08-15 | Settings Models contract | 智谱 CodePlan / GLM (CN) legacy DB | sonnet → GLM-5.2 | isolated stale catalog fixture | Models GET 后持久升级 5.3/Turbo/4.7；Add Model stable id / wire id 分离；manual-hidden 保留 | ✅ Tests + Build passed；UI smoke pending | 用户真实 DB 证实旧行仍为 `sonnet→sonnet / GLM-5.2`；定向 201/201、完整注册量 5248/0/1（5249 tests）、production build 通过。未修改真实用户 DB，待新版进 Models 页自动执行非破坏 merge |
@@ -192,6 +198,8 @@
 
 ## 决策日志
 
+- 2026-08-26（GLM-5.3-Flash Coding Plan）：**Signal**：用户要求适配新发布 Flash。**Triage**：官方当前阵容已从 5.3/Turbo/4.7 收敛为 5.3 + Flash；Flash 是 1M 原生视觉 always-thinking 模型，Low/High/Max 默认 Max。Claude 需要 `glm-5.3-flash[1m]`，Codex Responses 需要 bare `glm-5.3-flash`。旧 Turbo/4.7 自动路由到 Flash 是供应商兼容事实，不授权 CodePilot 在 Models GET 删除存量行。**Decision/Fix**：旗舰 default/sonnet/opus 保持 5.3，stable haiku 升级 Flash；新目录只展示两个当前 SKU；exact preset/model wire allowlist 承载双 ID、effort aliases 与 vision；context fallback 按官方配置使用 1,000,000；legacy haiku 原位升级，独立历史 Turbo 行非破坏保留。**Verify**：相关 catalog/DB/resolver/context/production request 测试定向 217/217，覆盖 Anthropic/Responses 图片输入和 aggregator 反例；沙箱外标准全量 5391/0/1，隔离 production build 137 pages。**Guardrail**：真实套餐文本/图片 turn 与 entitlement 未跑，不用 synthetic body 关闭 Smoke；事实基线见 `docs/research/glm-5-3-flash-codeplan-adaptation-2026-08-26.md`。
+- 2026-08-26（Claude review P3 收口）：**Signal**：审查指出“1M”无精确 1,048,576 来源，且旧模型自动路由引用错指 latest-model。**Triage**：官方 Flash 页只写 1M，Coding Plan 示例明确配置 1,000,000；自动路由原文位于 overview。**Fix**：GLM-5.3/Flash catalog、Flash fallback 与全部断言统一为 1,000,000，研究文档改成精度边界说明并修正 overview 链接。**Verify**：定向 217/217；沙箱外标准全量 5392 tests（5391 pass / 0 fail / 1 skipped）；最终代码隔离 production build 137 pages。**Guardrail**：Runtime 新增“token 的 1M 不得按 Mi 换算”规则。
 - 2026-08-14（GLM-5.3 CodePlan）：**Signal**：用户要求评估并落地新发布 GLM-5.3。**Triage**：第一方模型页与 CodePlan 文档确认通用 API 尚未上线，本轮只适配现有 CodePlan；当前目录为 5.3 / 5-Turbo / 4.7，旗舰 1M、text-only、Low/High/Max 默认 Max；Claude 要 `glm-5.3[1m]`，Codex 原生 Responses 要 bare `glm-5.3`，旧代码的一条 upstream 无法同时满足。旧“高峰 3 倍”提示也已过期。**Fix**：保留 `sonnet/haiku` 稳定 DB alias，更新 upstream 与 role env；新增 Turbo；wire capability 增加 exact model ID override 与 provider-scoped effort aliases，GLM `minimal→low / medium→high / xhigh→max`，DeepSeek 原 xhigh→high 也改为显式声明；Codex 使用区域 Responses endpoint，存量 catalog 管理行 read-through 当前 metadata，manual/user-edited 不动；更新当前积分/高峰提示。**Verify**：GLM/DeepSeek/Resolver/DB 定向 175/175；production synthetic request 捕获 CN `/api/v1/responses` + Bearer + model=`glm-5.3` + reasoning max/summary；typecheck 与 Harness 边界检查通过；touched ESLint 0 error（6 条既有 warning）。全量 unit exit 1：未改动的 `telemetry-native-stream-loop.test.ts` 中 ToolLoop POC initial-503 capture 0 vs 1，隔离复跑 9/10，production-loop 对照通过。production build 因用户正在运行的 dev 客户端持有 `.next/dev/lock` 而安全跳过，不记 Tests/Build passed。**Guardrail**：Runtime 写明跨 transport ID 与 effort alias 必须 exact-preset/model 声明，不得把某服务商兼容规则全局化。事实基线见 `docs/research/glm-5-3-codeplan-adaptation-2026-08-14.md`；真实凭据两条 smoke 保持 📋。
 - 2026-08-14（Claude review P1/P2 接手）：**Signal**：review 指出 Grok 4.6 XHigh 只测 helper，真实 SDK schema 不接受；另有动态 redirect、执行计划漂移与 Build proxy version header 缺口。**Triage**：独立探针使用生产 `buildXaiProviderOptions` + `@ai-sdk/xai@4.0.18`，阳性 `high` 发出 1 次请求且 wire=`high`，`xhigh` 发网前报 `invalid xai provider options` 且请求数 0，P1 confirmed；npm 当前 latest 仍为 4.0.18，不能靠升级闭环。官方 Grok Build commit `e5fd4816…` 还明确要求 `x-grok-client-version`、`x-authenticateresponse`、`x-grok-client-mode`，当前 header 合同不完整。**Decision**：SDK 支持前 UI 只承诺 Low/Medium/High，外部 xhigh/max 安全折叠 High；版本 header 使用有 provenance 的 Grok Build compatibility version，不能任意伪造；补真实 SDK wire 矩阵与 redirect/header 合同。**Verify**：P1 probe high 1 request / xhigh 0 requests；原 108/108、5195/0/1 与 build 只保留为历史 Tests pass，不计 Review passed。**Guardrail**：本计划与 qwen plan/索引/ModelDiscovery/Onboarding/研究基线同步标 blocker；产品修复待 Claude 或用户重新授权 Codex 实施。
 - 2026-08-13（Grok 4.6 + DeepSeek V4 Pro 0813）：**Signal**：用户要求同时适配两项新发布，并明确 Grok 不只 API、还要 Grok Build 授权。**Triage**：Grok 4.6 是新 API slug，4.5 的 `none`/xhigh 映射与旧 OAuth 公共 API host 已漂移；Grok Build 当前开源实现改用动态 loopback、扩展 scopes 与 `cli-chat-proxy.grok.com`。DeepSeek Pro 的 API ID 未变，服务端版本滚到 0813，官方目录已声明 Pro 支持 Responses、1M 与 Low/High/Max，因此不能新增伪 SKU，也不能继续只放行 Flash。**Fix**：Grok 目录默认 4.6、4.5 legacy；effort 按模型把 4.6 xhigh 保真且 minimal 省略；Build OAuth 跟随官方 client/scopes/referrer/dynamic redirect，订阅 bearer 仅去 Build proxy并带 token-auth header。DeepSeek Pro 对外保持稳定名称 `DeepSeek V4 Pro`，0813 只作版本证据；补 1M/Low、精确稳定 ID 加入 Codex Responses，`[1m]` suffix 保持 Claude-only。**Verify**：定向 108/108；标准 `npm run test` 完成 typecheck、Harness 边界检查与 5195 pass / 0 fail / 1 skipped，exit 0；production build 通过。未使用真实 xAI/DeepSeek 凭据，故不记 Smoke passed。**Guardrail**：Onboarding/ElectronMain/ProviderManagement/Runtime 与研究基线同步更新。

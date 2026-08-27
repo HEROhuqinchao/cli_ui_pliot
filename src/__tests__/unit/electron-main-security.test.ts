@@ -104,6 +104,37 @@ describe('electron main security guardrails (audit 2026-07 Loop 1)', () => {
     );
   });
 
+  it('the embedded browser is partition-gated and hardened again at attachment time', () => {
+    assert.match(main, /webviewTag:\s*true/);
+    assert.match(main, /sandbox:\s*true/);
+    const attachIndex = main.indexOf("mainWindow.webContents.on('will-attach-webview'");
+    assert.ok(attachIndex >= 0, 'main window must guard every guest attachment');
+    const attachBody = balancedBlock(main, attachIndex);
+    assert.match(attachBody, /issuedBrowserPartitions\.has\(partition\)/);
+    assert.match(attachBody, /isAllowedBrowserGuestUrl\(params\.src\)/);
+    assert.match(attachBody, /delete webPreferences\.preload/);
+    assert.match(attachBody, /webPreferences\.sandbox\s*=\s*true/);
+    assert.match(attachBody, /webPreferences\.contextIsolation\s*=\s*true/);
+    assert.match(attachBody, /webPreferences\.nodeIntegration\s*=\s*false/);
+    assert.match(attachBody, /webPreferences\.nodeIntegrationInSubFrames\s*=\s*false/);
+    assert.match(attachBody, /webPreferences\.nodeIntegrationInWorker\s*=\s*false/);
+    assert.match(attachBody, /webPreferences\.webviewTag\s*=\s*false/);
+    assert.match(attachBody, /webPreferences\.webSecurity\s*=\s*true/);
+
+    const configIndex = main.indexOf("ipcMain.handle('browser:get-config'");
+    assert.ok(configIndex >= 0, 'browser config IPC must exist');
+    const configBody = balancedBlock(main, configIndex);
+    assert.match(configBody, /isTrustedMainWindowSender\(event\)/);
+    assert.match(configBody, /isCanonicalBrowserWorkspaceId\(workspaceId\)/);
+    assert.match(main, /setPermissionRequestHandler\([^]*callback\(false\)/);
+    assert.match(main, /setPermissionCheckHandler\(\(\)\s*=>\s*false\)/);
+    assert.match(preload, /browser:get-config/);
+    const preloadBrowserIndex = preload.indexOf('browser: {');
+    assert.ok(preloadBrowserIndex >= 0, 'browser preload namespace must exist');
+    const preloadBrowserBody = balancedBlock(preload, preloadBrowserIndex);
+    assert.doesNotMatch(preloadBrowserBody, /executeJavaScript|debugger|sendCommand/);
+  });
+
   it('local paths expose no generic openPath bridge and directories are reveal-only', () => {
     assert.doesNotMatch(main, /ipcMain\.handle\(['"]shell:open-path['"]/);
     assert.doesNotMatch(preload, /openPath\s*:/);

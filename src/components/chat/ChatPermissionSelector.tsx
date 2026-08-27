@@ -21,7 +21,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { CaretDown } from '@/components/ui/icon';
+import { CaretDown, NotePencil } from '@/components/ui/icon';
 // LockOpen removed — both lock/lock-open render via CodePilotIcon
 // `permission` alias; the open state just gets a red color override.
 import { CodePilotIcon } from '@/components/ui/semantic-icon';
@@ -33,11 +33,19 @@ import {
   type AutoReviewCapability,
   type AutoReviewProbeState,
 } from '@/lib/permission/auto-review-display';
+import {
+  decodeComposerAccessLevel,
+  encodeComposerAccessLevel,
+  type ComposerAccessLevel,
+} from '@/lib/composer-access-level';
 
 interface ChatPermissionSelectorProps {
   sessionId?: string;
+  mode: string;
+  onModeChange: (mode: string) => void;
   permissionProfile: SessionPermissionProfile;
   onPermissionChange: (profile: SessionPermissionProfile) => void;
+  disabled?: boolean;
   /**
    * The session's effective ChatRuntime. Claude Code and Codex have distinct
    * native reviewer implementations; Native AI SDK remains fail-closed because
@@ -49,8 +57,11 @@ interface ChatPermissionSelectorProps {
 
 export function ChatPermissionSelector({
   sessionId,
+  mode,
+  onModeChange,
   permissionProfile,
   onPermissionChange,
+  disabled,
   runtime,
 }: ChatPermissionSelectorProps) {
   const { t } = useTranslation();
@@ -68,6 +79,7 @@ export function ChatPermissionSelector({
   // Re-probed per working directory AND runtime: the external-MCP gate depends
   // on the project's own .mcp.json / .claude settings (not global), and the
   // runtime gate flips the answer entirely for Native / Codex.
+  /* eslint-disable react-hooks/set-state-in-effect -- a route change invalidates the previous external capability probe synchronously */
   useEffect(() => {
     let cancelled = false;
     setProbe({ status: 'checking' });
@@ -89,6 +101,7 @@ export function ChatPermissionSelector({
       });
     return () => { cancelled = true; };
   }, [workingDirectory, runtime]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   const autoReviewDisplay = resolveAutoReviewDisplay({ probe, permissionProfile });
   const autoReviewSupported = autoReviewDisplay.selectable;
@@ -99,43 +112,62 @@ export function ChatPermissionSelector({
       )
     : null;
 
-  const handleSelect = (profile: SessionPermissionProfile) => {
-    if (profile === permissionProfile) return;
-    if (profile === 'auto_review') {
+  const decoded = decodeComposerAccessLevel(
+    mode,
+    permissionProfile,
+    probe.status === 'ready'
+      ? { autoReviewSupported: probe.capability.supported }
+      : undefined,
+  );
+
+  const handleSelect = (level: ComposerAccessLevel) => {
+    if (level === decoded.level && !decoded.legacyAsk && !decoded.degraded) return;
+    if (level === 'auto_review') {
       if (!autoReviewSupported) return;
       setPendingElevation('auto_review');
       return;
     }
-    if (profile === 'full_access') {
+    if (level === 'full_access') {
       setPendingElevation('full_access');
       return;
     }
-    applyChange(profile);
+    void applyChange(level);
   };
 
-  const applyChange = async (profile: SessionPermissionProfile) => {
+  const applyChange = async (level: ComposerAccessLevel) => {
+    const encoded = encodeComposerAccessLevel(level);
     // No sessionId yet (new chat) — local-only update
     if (!sessionId) {
-      onPermissionChange(profile);
+      onModeChange(encoded.mode);
+      onPermissionChange(encoded.permissionProfile);
       return;
     }
     try {
       const res = await fetch(`/api/chat/sessions/${sessionId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ permission_profile: profile }),
+        // One validated request prevents a client-visible transient
+        // `plan + full_access` or `code + stale-profile` pair between two
+        // independent PATCHes. The API validates both values before writing.
+        body: JSON.stringify({
+          mode: encoded.mode,
+          permission_profile: encoded.permissionProfile,
+        }),
       });
       if (!res.ok) {
         console.warn(`[ChatPermissionSelector] PATCH failed: ${res.status}`);
         return;
       }
-      onPermissionChange(profile);
+      onModeChange(encoded.mode);
+      onPermissionChange(encoded.permissionProfile);
+      window.dispatchEvent(new CustomEvent('session-updated'));
     } catch (err) {
       console.warn('[ChatPermissionSelector] PATCH error:', err);
     }
   };
 
-  const isFullAccess = permissionProfile === 'full_access';
+  const isReadOnly = decoded.level === 'read_only';
+  const isFullAccess = decoded.level === 'full_access';
   // A session persisted as auto_review that the build can't honour (an older
   // SDK, a downgrade, an external MCP server) is NOT running under a reviewer:
   // the resolver degrades it to 'default' on the wire. Showing 替我审批 here
@@ -145,9 +177,11 @@ export function ChatPermissionSelector({
   // don't claim a degradation we haven't confirmed (resolveAutoReviewDisplay
   // owns that rule).
   const autoReviewDegraded = autoReviewDisplay.degraded;
-  const isAutoReview = permissionProfile === 'auto_review' && !autoReviewDegraded;
+  const isAutoReview = decoded.level === 'auto_review' && !autoReviewDegraded;
 
-  const triggerLabel = isFullAccess
+  const triggerLabel = isReadOnly
+    ? t('permission.readOnly' as TranslationKey)
+    : isFullAccess
     ? t('permission.fullAccess')
     : isAutoReview
       ? t('permission.autoReview' as TranslationKey)
@@ -161,6 +195,7 @@ export function ChatPermissionSelector({
           <Button
             variant="ghost"
             size="xs"
+            disabled={disabled}
             className={cn(
               'h-7 rounded-md',
               isFullAccess
@@ -183,7 +218,9 @@ export function ChatPermissionSelector({
                   : 'text-xs font-normal text-muted-foreground',
             )}
           >
-            {isFullAccess ? (
+            {isReadOnly ? (
+              <NotePencil size={12} aria-hidden />
+            ) : isFullAccess ? (
               <CodePilotIcon name="permission" size={12} className="text-status-error-foreground" aria-hidden />
             ) : (
               <CodePilotIcon name="permission" size={12} aria-hidden />
@@ -192,14 +229,32 @@ export function ChatPermissionSelector({
             <CaretDown size={10} className="opacity-60" />
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" className="min-w-[260px]">
+        <DropdownMenuContent
+          align="start"
+          className="w-64 max-w-[calc(100vw-2rem)]"
+        >
+          <DropdownMenuItem onClick={() => handleSelect('read_only')} className="items-start py-2">
+            <NotePencil size={14} className="mt-0.5" aria-hidden />
+            <div className="flex min-w-0 flex-col items-start gap-0.5">
+              <span>{t('permission.readOnly' as TranslationKey)}</span>
+              <span className="break-words text-[11px] leading-tight text-muted-foreground">
+                {t('permission.readOnlyDesc' as TranslationKey)}
+              </span>
+            </div>
+          </DropdownMenuItem>
+
           <DropdownMenuItem onClick={() => handleSelect('default')} className="items-start py-2">
             <CodePilotIcon name="permission" size="sm" className="mt-0.5" aria-hidden />
-            <div className="flex flex-col items-start gap-0.5">
+            <div className="flex min-w-0 flex-col items-start gap-0.5">
               <span>{t('permission.default')}</span>
-              <span className="text-[11px] text-muted-foreground leading-tight">
+              <span className="break-words text-[11px] leading-tight text-muted-foreground">
                 {t('permission.defaultDesc' as TranslationKey)}
               </span>
+              {decoded.legacyAsk && (
+                <span className="break-words text-[11px] leading-tight text-status-warning-foreground">
+                  {t('permission.legacyAsk' as TranslationKey)}
+                </span>
+              )}
             </div>
           </DropdownMenuItem>
 
@@ -209,16 +264,16 @@ export function ChatPermissionSelector({
             className="items-start py-2"
           >
             <CodePilotIcon name="permission" size="sm" className="mt-0.5" aria-hidden />
-            <div className="flex flex-col items-start gap-0.5">
+            <div className="flex min-w-0 flex-col items-start gap-0.5">
               <span>{t('permission.autoReview' as TranslationKey)}</span>
-              <span className="text-[11px] text-muted-foreground leading-tight">
+              <span className="break-words text-[11px] leading-tight text-muted-foreground">
                 {t('permission.autoReviewDesc' as TranslationKey)}
               </span>
               {/* Disabled without a reason is just a dead option — say why.
                   The reason is always a fact we established (probing / probe
                   failed / SDK version / external MCP), never a placeholder. */}
               {autoReviewNotice && (
-                <span className="text-[11px] text-status-warning-foreground leading-tight">
+                <span className="break-words text-[11px] leading-tight text-status-warning-foreground">
                   {autoReviewNotice}
                 </span>
               )}
@@ -226,7 +281,7 @@ export function ChatPermissionSelector({
                   line above says the option is unavailable; this one says the
                   saved choice is not what's running. */}
               {autoReviewDegraded && (
-                <span className="text-[11px] text-status-warning-foreground leading-tight">
+                <span className="break-words text-[11px] leading-tight text-status-warning-foreground">
                   {t('permission.autoReviewDegraded' as TranslationKey)}
                 </span>
               )}
@@ -235,9 +290,9 @@ export function ChatPermissionSelector({
 
           <DropdownMenuItem onClick={() => handleSelect('full_access')} className="items-start py-2">
             <CodePilotIcon name="permission" size="sm" className="mt-0.5 text-status-error-foreground" aria-hidden />
-            <div className="flex flex-col items-start gap-0.5">
+            <div className="flex min-w-0 flex-col items-start gap-0.5">
               <span className="text-status-error-foreground">{t('permission.fullAccess')}</span>
-              <span className="text-[11px] text-status-error-foreground/70 leading-tight">
+              <span className="break-words text-[11px] leading-tight text-status-error-foreground/70">
                 {t('permission.fullAccessDesc' as TranslationKey)}
               </span>
             </div>
@@ -267,7 +322,7 @@ export function ChatPermissionSelector({
               onClick={() => {
                 const profile = pendingElevation;
                 setPendingElevation(null);
-                if (profile) applyChange(profile);
+                if (profile) void applyChange(profile);
               }}
             >
               {pendingElevation === 'full_access'

@@ -29,7 +29,7 @@
 | Windows | [Installer (.exe)](https://github.com/op7418/CodePilot/releases/latest) | x64 |
 | Linux | [AppImage / deb / rpm](https://github.com/op7418/CodePilot/releases/latest) | x64 / arm64 |
 
-Official macOS stable builds can check, download, and install signed updates in the app. Windows and Linux releases are manual downloads.
+Official macOS stable builds can check, download, and install signed updates in the app. After manually installing the first supported Windows version, later Windows releases can update in the app using unsigned packages from the official GitHub Release; Linux releases remain manual downloads.
 
 Or visit the [Releases](https://github.com/op7418/CodePilot/releases) page for all versions.
 
@@ -155,7 +155,7 @@ npm run electron:dev     # full desktop app
 
 ## Platform & Installation Notes
 
-macOS stable builds are signed with Developer ID, notarized, stapled, and verified by Gatekeeper. If macOS reports that the developer cannot be verified or the file is damaged, stop and report it instead of bypassing the warning. Windows builds are currently unsigned and may show SmartScreen; Windows and Linux updates are installed manually.
+macOS stable builds are signed with Developer ID, notarized, stapled, and verified by Gatekeeper. If macOS reports that the developer cannot be verified or the file is damaged, stop and report it instead of bypassing the warning. Windows builds are unsigned and may show SmartScreen. After manually installing the first Windows updater-capable release, later stable versions can update in-app from the official `op7418/CodePilot` GitHub Release; the app verifies the metadata SHA-512 but does not claim independent Authenticode publisher verification. Linux updates remain manual.
 
 <details>
 <summary>macOS: Gatekeeper rejects the download</summary>
@@ -169,9 +169,7 @@ macOS stable builds are signed with Developer ID, notarized, stapled, and verifi
 <details>
 <summary>Windows: SmartScreen blocks the installer</summary>
 
-**Option 1** -- Click "More info" on the SmartScreen dialog, then "Run anyway".
-
-**Option 2** -- Settings > Apps > Advanced app settings > set App Install Control to allow apps from anywhere.
+Verify the installer against `SHA256SUMS.txt` from the same official Release first. If the checksum matches and the source is `op7418/CodePilot`, click "More info", then "Run anyway". If organization policy removes that option, contact the device administrator instead of weakening system-wide protection.
 </details>
 
 ---
@@ -267,7 +265,7 @@ npm run electron:pack:win      # Windows NSIS installer
 npm run electron:pack:linux    # Linux AppImage, deb, rpm
 ```
 
-**CI/CD:** Pushing a stable `vX.Y.Z` tag builds signed/notarized macOS arm64, x64, and universal packages plus the `latest-mac.yml` automatic-update feed; it also builds Windows x64 and Linux arm64/x64 manual installers. The Release is made public only after signing, notarization, packaged health, checksum, attestation, Intel ABI, and complete asset-graph checks pass. Windows/Linux updater metadata is intentionally not published.
+**CI/CD:** Pushing a stable `vX.Y.Z` tag builds signed/notarized macOS arm64, x64, and universal packages plus `latest-mac.yml`; an unsigned Windows x64 NSIS updater plus `latest.yml`; and Linux arm64/x64 manual packages. The Release is made public only after signing/notarization where applicable, packaged health, checksum, attestation, Intel ABI, GitHub single-trust-root safeguards, and complete asset-graph checks pass. The unsigned Windows trust gate requires a fresh administrator audit of immutable Releases and no-bypass branch/tag rulesets; Actions compares the live ruleset IDs and update timestamps with that audit and fails closed on drift. Windows publishes an EXE blockmap for opportunistic differential updates with full-installer fallback; Linux updater metadata is intentionally not published.
 
 **Notes:**
 - Electron forks a Next.js standalone server on `127.0.0.1` with a random free port

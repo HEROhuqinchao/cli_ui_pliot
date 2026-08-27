@@ -60,6 +60,11 @@ export const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
   // it only feeds composition now (untrusted fallback, see above), so the
   // exact figure no longer drives a user-visible percentage.
   'glm-5-turbo': 202752,
+  // GLM-5.3-Flash — official docs state 1M and configure it as 1,000,000.
+  // The `[1m]` Claude Coding Plan wire variant substring-matches this bare
+  // key; Codex Responses uses the bare ID. Do not reinterpret decimal 1M as Mi.
+  // https://docs.bigmodel.cn/cn/guide/models/vlm/glm-5.3-flash
+  'glm-5.3-flash': 1_000_000,
   // GPT-5.5 (OpenAI) — 16 sessions in DB
   // https://openai.com/index/introducing-gpt-5-5/ — 1M API context
   'gpt-5.5': 1_000_000,

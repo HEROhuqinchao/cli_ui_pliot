@@ -20,7 +20,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { createSession, getSession, updateSessionPermissionProfile, createPermissionRequest } from '@/lib/db';
+import { createSession, getSession, updateSessionAccessLevel, updateSessionPermissionProfile, createPermissionRequest } from '@/lib/db';
 import { POST as createSessionRoute } from '@/app/api/chat/sessions/route';
 import { PATCH as patchSessionRoute } from '@/app/api/chat/sessions/[id]/route';
 import { registerPendingPermission, resolvePendingPermission } from '@/lib/permission-registry';
@@ -83,6 +83,16 @@ describe('DB roundtrip (a01)', () => {
     }
   });
 
+  it('updates the consolidated mode/profile pair through one DB boundary', () => {
+    const session = createSession('perm-access-pair', '', '', '/tmp', 'code', '', 'auto_review');
+    updateSessionAccessLevel(session.id, 'plan', 'default');
+    assert.equal(getSession(session.id)?.mode, 'plan');
+    assert.equal(getSession(session.id)?.permission_profile, 'default');
+    updateSessionAccessLevel(session.id, 'code', 'full_access');
+    assert.equal(getSession(session.id)?.mode, 'code');
+    assert.equal(getSession(session.id)?.permission_profile, 'full_access');
+  });
+
   it('writes fail closed if an unvalidated value reaches the DB layer', () => {
     const session = createSession('perm-bad', '', '', '/tmp', 'code', '', 'default');
     // Simulating an un-typechecked caller (JS, old client, bad migration).
@@ -138,6 +148,25 @@ describe('API validation rejects unknown profiles (a01)', () => {
     assert.equal(res.status, 400);
     assert.equal(getSession(session.id)?.permission_profile, 'auto_review',
       'a rejected PATCH must not disturb the existing profile');
+  });
+
+  it('validates the consolidated mode/profile pair before writing either half', async () => {
+    const session = createSession('perm-pair-bad', '', '', '/tmp', 'code', '', 'auto_review');
+    const rejected = await patchSession(session.id, {
+      mode: 'plan',
+      permission_profile: 'bypass',
+    });
+    assert.equal(rejected.status, 400);
+    assert.equal(getSession(session.id)?.mode, 'code');
+    assert.equal(getSession(session.id)?.permission_profile, 'auto_review');
+
+    const accepted = await patchSession(session.id, {
+      mode: 'plan',
+      permission_profile: 'default',
+    });
+    assert.equal(accepted.status, 200);
+    assert.equal(getSession(session.id)?.mode, 'plan');
+    assert.equal(getSession(session.id)?.permission_profile, 'default');
   });
 
   it('PATCH moves between all three profiles', async () => {

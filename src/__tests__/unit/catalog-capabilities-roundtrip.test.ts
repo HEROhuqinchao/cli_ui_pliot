@@ -157,8 +157,10 @@ describe('catalog capabilities survive the DB round-trip — GLM', () => {
     const flagship = alignedRows.find(row => row.model_id === 'sonnet')!;
     assert.equal(flagship.display_name, 'GLM-5.3');
     assert.equal(flagship.upstream_model_id, 'glm-5.3[1m]');
-    assert.ok(alignedRows.some(row => row.model_id === 'glm-5-turbo'));
-    assert.ok(alignedRows.some(row => row.model_id === 'haiku' && row.upstream_model_id === 'glm-4.7'));
+    const flash = alignedRows.find(row => row.model_id === 'haiku');
+    assert.equal(flash?.upstream_model_id, 'glm-5.3-flash[1m]');
+    assert.equal(flash?.display_name, 'GLM-5.3-Flash');
+    assert.equal(JSON.parse(flash?.capabilities_json ?? '{}').vision, true);
   });
 
   it('Models-page catalog merge preserves a user-hidden catalog identity', () => {
@@ -182,7 +184,7 @@ describe('catalog capabilities survive the DB round-trip — GLM', () => {
       base_url: GLM_BASE_URL,
     });
     const result = mergeCatalogManagedModels(providerId, catalog);
-    assert.equal(result.inserted, 2, 'missing Turbo/Haiku catalog rows should still be added');
+    assert.equal(result.inserted, 1, 'the missing Flash catalog row should still be added');
     assert.equal(result.updated, 0, 'the existing user-managed flagship must not be rewritten');
 
     const flagship = getAllModelsForProvider(providerId).find(row => row.model_id === 'sonnet')!;
@@ -193,6 +195,43 @@ describe('catalog capabilities survive the DB round-trip — GLM', () => {
     assert.equal(flagship.user_edited, 1);
     assert.equal(flagship.enable_source, 'manual_hidden');
     assert.deepEqual(JSON.parse(flagship.capabilities_json), { private: true });
+  });
+
+  it('keeps a retired pristine GLM-5-Turbo row as historical data', () => {
+    const providerId = createScratchProvider(GLM_BASE_URL);
+    upsertProviderModel({
+      provider_id: providerId,
+      model_id: 'glm-5-turbo',
+      upstream_model_id: 'glm-5-turbo',
+      display_name: 'GLM-5-Turbo',
+      capabilities_json: JSON.stringify({
+        reasoning: true,
+        toolUse: true,
+        contextWindow: 204_800,
+        defaultEffortLevel: 'max',
+      }),
+      variants_json: '{}',
+      sort_order: 1,
+      enabled: 1,
+      source: 'catalog',
+      user_edited: 0,
+      enable_source: 'catalog',
+    });
+
+    const catalog = getCatalogDefaultModelsForRecord({
+      provider_type: 'anthropic',
+      base_url: GLM_BASE_URL,
+    });
+    mergeCatalogManagedModels(providerId, catalog);
+
+    const rows = getAllModelsForProvider(providerId);
+    const retired = rows.find(row => row.model_id === 'glm-5-turbo');
+    assert.ok(retired, 'a Models-page read must not delete a retired catalog row');
+    assert.equal(retired.display_name, 'GLM-5-Turbo');
+    assert.equal(retired.upstream_model_id, 'glm-5-turbo');
+    assert.equal(retired.enabled, 1);
+    assert.ok(rows.some(row => row.model_id === 'sonnet'));
+    assert.equal(rows.find(row => row.model_id === 'haiku')?.upstream_model_id, 'glm-5.3-flash[1m]');
   });
 
   it('upgrades the exact three-row pre-source-migration GLM snapshot without inventing fingerprints', () => {
@@ -244,7 +283,7 @@ describe('catalog capabilities survive the DB round-trip — GLM', () => {
       base_url: GLM_BASE_URL,
     });
     const result = mergeCatalogManagedModels(providerId, catalog);
-    assert.deepEqual(result, { inserted: 1, updated: 2 });
+    assert.deepEqual(result, { inserted: 0, updated: 2 });
 
     const rows = getAllModelsForProvider(providerId);
     const flagship = rows.find(row => row.model_id === 'sonnet')!;
@@ -252,10 +291,8 @@ describe('catalog capabilities survive the DB round-trip — GLM', () => {
     assert.equal(flagship.display_name, 'GLM-5.3');
     assert.equal(flagship.source, 'catalog');
     assert.equal(flagship.enable_source, 'catalog');
-    assert.ok(rows.some(row => row.model_id === 'glm-5-turbo'),
-      'moving the legacy stable slot must release the old Turbo upstream for its current dedicated row');
-    assert.equal(rows.find(row => row.model_id === 'haiku')?.upstream_model_id, 'glm-4.7');
-    assert.equal(rows.find(row => row.model_id === 'haiku')?.display_name, 'GLM-4.7');
+    assert.equal(rows.find(row => row.model_id === 'haiku')?.upstream_model_id, 'glm-5.3-flash[1m]');
+    assert.equal(rows.find(row => row.model_id === 'haiku')?.display_name, 'GLM-5.3-Flash');
     assert.equal(rows.find(row => row.model_id === 'opus')?.display_name, 'GLM-5.1',
       'the retired opus slot is historical data and must not be silently deleted or rewritten');
   });
@@ -286,12 +323,12 @@ describe('catalog capabilities survive the DB round-trip — GLM', () => {
       provider_type: 'anthropic',
       base_url: GLM_BASE_URL,
     });
-    assert.deepEqual(mergeCatalogManagedModels(providerId, catalog), { inserted: 1, updated: 2 });
+    assert.deepEqual(mergeCatalogManagedModels(providerId, catalog), { inserted: 0, updated: 2 });
 
     const rows = getAllModelsForProvider(providerId);
     assert.equal(rows.find(row => row.model_id === 'sonnet')?.upstream_model_id, 'glm-5.3[1m]');
     assert.equal(rows.find(row => row.model_id === 'sonnet')?.display_name, 'GLM-5.3');
-    assert.equal(rows.find(row => row.model_id === 'haiku')?.upstream_model_id, 'glm-4.7');
+    assert.equal(rows.find(row => row.model_id === 'haiku')?.upstream_model_id, 'glm-5.3-flash[1m]');
     assert.equal(rows.find(row => row.model_id === 'opus')?.display_name, 'GLM-5',
       'retired gen-0 opus history is preserved rather than guessed into a current slot');
   });
@@ -447,7 +484,7 @@ describe('catalog capabilities survive the DB round-trip — GLM', () => {
       base_url: GLM_BASE_URL,
     });
     const result = mergeCatalogManagedModels(providerId, catalog);
-    assert.equal(result.inserted, 2, 'Turbo and 4.7 are new, but the duplicate 5.3 wire is not');
+    assert.equal(result.inserted, 1, 'Flash is new, but the duplicate 5.3 wire is not');
     const rows = getAllModelsForProvider(providerId);
     assert.equal(rows.filter(row => row.upstream_model_id === 'glm-5.3[1m]').length, 1);
     assert.equal(rows.some(row => row.model_id === 'sonnet'), false);
@@ -562,7 +599,7 @@ describe('catalog capabilities survive the DB round-trip — GLM', () => {
     assert.equal(new Set(rows.map(row => row.sort_order)).size, rows.length);
     assert.equal(rows.find(row => row.model_id === 'user/pinned-order')?.sort_order, 1);
     const catalogRows = catalog.map(model => rows.find(row => row.model_id === model.modelId)!);
-    assert.deepEqual(catalogRows.map(row => row.sort_order), [0, 2, 3]);
+    assert.deepEqual(catalogRows.map(row => row.sort_order), [0, 2]);
   });
 
   it('absorbs a unique-key winner committed after the merge snapshot', () => {
@@ -590,7 +627,7 @@ describe('catalog capabilities survive the DB round-trip — GLM', () => {
         base_url: GLM_BASE_URL,
       });
       const result = mergeCatalogManagedModels(providerId, catalog);
-      assert.equal(result.inserted, 2, 'the ignored catalog insert must not inflate the write count');
+      assert.equal(result.inserted, 1, 'the ignored catalog insert must not inflate the write count');
       const winner = getAllModelsForProvider(providerId).find(row => row.model_id === 'sonnet')!;
       assert.equal(winner.display_name, 'Concurrent winner');
       assert.equal(winner.source, 'manual');

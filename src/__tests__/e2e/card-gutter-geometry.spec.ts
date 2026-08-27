@@ -20,10 +20,9 @@ import {
  *
  * Two cases:
  *   - default `/chat`: only the sidebar↔main gutter is present.
- *   - multi-panel `/chat/[id]` with file tree + workspace opened: the
- *     row holds sidebar | main | workspace | fileTree → all 3 gutters,
- *     which is the state this Phase 7c closeout actually changed
- *     (assistant / fileTree / workspace are now row-level cards).
+ *   - multi-panel `/chat/[id]` with the unified workspace sidebar open:
+ *     the row holds sidebar | main | workspace. Files now renders inside
+ *     workspace Primary instead of creating another card.
  *
  * Platform note: a browser stamps data-shell="web", so the darwin
  * clip-path / radius profile does NOT activate here. Gutter geometry is

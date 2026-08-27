@@ -467,14 +467,18 @@ describe('Chat composer RuntimeSelector — codex_runtime support (IA round 3)',
     assert.match(sharedSrc, /return\s+['"]claude_code['"]/);
   });
 
-  it('both chat composer callsites use the helper (not inline binary ternary)', () => {
+  it('both chat composer callsites resolve a concrete runtime and wire it into the integrated picker', () => {
     for (const relativePath of ['app/chat/page.tsx', 'components/chat/ChatView.tsx']) {
       const src = fs.readFileSync(path.join(repoRoot, relativePath), 'utf8');
-      // The new wiring: helper invocation
       assert.match(
         src,
-        /effectiveRuntime=\{agentRuntimeToChatRuntime\(globalRuntime\.agentRuntime\)\}/,
-        `${relativePath} must call agentRuntimeToChatRuntime`,
+        /sessionRuntimeParam\s*=\s*effectiveChatRuntime\(runtimePin,\s*globalRuntime\.agentRuntime\)/,
+        `${relativePath} must resolve the effective runtime before rendering the integrated picker`,
+      );
+      assert.match(
+        src,
+        /<MessageInput[\s\S]{0,900}runtime=\{sessionRuntimeParam\}[\s\S]{0,120}onRuntimeChange=/,
+        `${relativePath} must let the model picker change the session runtime`,
       );
       // The old wiring: inline binary ternary that dropped codex_runtime
       assert.doesNotMatch(
@@ -487,7 +491,7 @@ describe('Chat composer RuntimeSelector — codex_runtime support (IA round 3)',
 });
 
 // ─────────────────────────────────────────────────────────────────────
-// Model picker — full-catalog + per-row disabled (Phase 6 UI收口 P2)
+// Model picker — Runtime lane + compatible model routes
 //
 // Replaces the earlier Slice B suite which pinned the server-side
 // filter behavior + header disclosure copy. P2 inverted those:
@@ -500,78 +504,72 @@ describe('Chat composer RuntimeSelector — codex_runtime support (IA round 3)',
 //     because the server omits the group entirely)
 // ─────────────────────────────────────────────────────────────────────
 
-describe('Model picker — per-row compat gating (Phase 6 UI收口 P2)', () => {
+describe('Model picker — Runtime-first compatible routes', () => {
   const pickerSrc = fs.readFileSync(
     path.join(repoRoot, 'components/chat/ModelSelectorDropdown.tsx'),
     'utf8',
   );
+  const enSrc = fs.readFileSync(path.join(repoRoot, 'i18n/en.ts'), 'utf8');
+  const zhSrc = fs.readFileSync(path.join(repoRoot, 'i18n/zh.ts'), 'utf8');
 
-  it('row disabled-state checks opt.supportedRuntimes against runtimeApplied', () => {
-    // The load-bearing assertion: each model row computes its own
-    // disabled state from the per-row annotation. Regression would
-    // either hide rows again (server filter) or stop reading the
-    // annotation (incompatible rows become silently clickable).
+  it('left lane enumerates Runtime IDs and compatibility is evaluated against that lane', () => {
+    assert.match(pickerSrc, /RUNTIME_IDS\.map\(\(runtimeId\)\s*=>/);
+    assert.match(pickerSrc, /<nav[^>]+aria-label="Runtime"/);
     assert.match(
       pickerSrc,
-      /opt\.supportedRuntimes[\s\S]{0,80}\.includes\(runtimeApplied\)/,
+      /option\.supportedRuntimes[\s\S]{0,80}option\.supportedRuntimes\.includes\(lane\)/,
     );
+    assert.match(pickerSrc, /ranked\.filter\(\(route\)\s*=>\s*route\.selectable\s*&&\s*route\.option\)/);
   });
 
-  it('row tooltip reads from opt.unsupportedReasonByRuntime for the active runtime', () => {
-    assert.match(
-      pickerSrc,
-      /opt\.unsupportedReasonByRuntime\?\.\[runtimeApplied!\]/,
-    );
-    // Generic zh + en fallbacks for rows whose upstream contract
-    // doesn't supply a per-runtime reason.
-    assert.match(pickerSrc, /当前 Agent 引擎不支持此模型/);
-    assert.match(pickerSrc, /Current Agent engine does not support this model/);
+  it('right lane is grouped by provider, with models nested under each provider heading', () => {
+    assert.match(pickerSrc, /interface\s+ProviderRouteSection/);
+    assert.match(pickerSrc, /providerSections\.map\(\(section\)\s*=>/);
+    assert.match(pickerSrc, /data-model-provider-section=\{section\.providerInstanceId\}/);
+    assert.match(pickerSrc, /<ProviderGlyph\s+name=\{section\.providerName\}/);
+    assert.match(pickerSrc, /section\.routes\.map\(\(route\)\s*=>/);
   });
 
-  it('recent-models section honours the same disabled-state gating', () => {
-    // Without this gate, a "recently used GLM" entry would stay
-    // clickable under Codex even though the active engine can't
-    // serve GLM models. Same supportedRuntimes / tooltip wiring as
-    // the main groups below.
-    assert.match(
-      pickerSrc,
-      /option\.supportedRuntimes[\s\S]{0,80}\.includes\(runtimeApplied\)/,
-    );
+  it('favorites sit above Runtime and key the exact Runtime + provider + model combination', () => {
+    const favoritesOffset = pickerSrc.indexOf("setLane('favorites')");
+    const runtimesOffset = pickerSrc.indexOf('RUNTIME_IDS.map');
+    assert.ok(favoritesOffset >= 0 && favoritesOffset < runtimesOffset);
+    assert.match(pickerSrc, /modelRouteFavoriteIdentity\(\s*favorite\.runtimeId/);
+    assert.match(pickerSrc, /runtimeId:\s*route\.runtimeId/);
+    assert.match(pickerSrc, /onRuntimeChange\?\.\(route\.runtimeId\)/);
+    assert.match(pickerSrc, /onProviderModelChange\?\.\(route\.providerInstanceId,\s*route\.modelId\)/);
   });
 
-  it('header disclosure banners are GONE (per-row tooltips replace them)', () => {
-    // Pre-P2 the picker carried a "only showing models for X" /
-    // "Codex currently supports only Codex Account models..." top
-    // banner. Both are obsolete now that every row is visible with
-    // its own tooltip — keeping them would be visual noise.
-    assert.doesNotMatch(
-      pickerSrc,
-      /仅显示当前 Agent 引擎可用的模型/,
-    );
-    assert.doesNotMatch(
-      pickerSrc,
-      /Models available under the current Agent engine/,
-    );
-    assert.doesNotMatch(
-      pickerSrc,
-      /Codex 当前仅支持 Codex Account 模型/,
-    );
+  it('recent ranking reuses the same route object and selection gate', () => {
+    assert.match(pickerSrc, /recentAt:\s*recentTimes\.get\(modelRouteIdentity/);
+    assert.match(pickerSrc, /disabled=\{selectionDisabled\}/);
+    assert.match(pickerSrc, /onClick=\{\(\) => handleModelSelect\(route\)\}/);
   });
 
-  it('empty state collapses to the generic "no providers configured" copy', () => {
-    // Phase 6 UI收口 P2: with the full catalog always returned, an
-    // empty groups array means "user has zero providers configured
-    // at all" — rare, and the only meaningful recovery is the
-    // Providers page. No more codex-specific empty-state branch.
+  it('empty states distinguish no providers, no favorites, and no Runtime-compatible model', () => {
     assert.match(pickerSrc, /providerGroups\.length\s*===\s*0/);
-    assert.match(pickerSrc, /尚未配置任何服务商/);
-    assert.match(pickerSrc, /No providers configured yet/);
-    // Regression guard: the codex-specific empty branch must not
-    // creep back in. The picker's compat gating now operates per
-    // row, not per empty-state branch.
-    assert.doesNotMatch(
-      pickerSrc,
-      /providerGroups\.length\s*===\s*0[\s\S]{0,300}runtimeApplied\s*===\s*['"]codex_runtime['"]/,
+    assert.match(pickerSrc, /composer\.noProvidersConfigured/);
+    assert.match(pickerSrc, /composer\.noFavoriteCombinations/);
+    assert.match(pickerSrc, /composer\.noModelsForRuntime/);
+    assert.match(enSrc, /'composer\.noProvidersConfigured': 'No providers configured yet'/);
+    assert.match(enSrc, /'composer\.noFavoriteCombinations': 'No favorite model combinations yet'/);
+    assert.match(enSrc, /'composer\.noModelsForRuntime': 'No models are available for this runtime'/);
+    assert.match(zhSrc, /'composer\.noProvidersConfigured': '尚未配置任何服务商'/);
+    assert.match(zhSrc, /'composer\.noFavoriteCombinations': '还没有收藏模型组合'/);
+    assert.match(zhSrc, /'composer\.noModelsForRuntime': '这个 Runtime 暂无可用模型'/);
+  });
+});
+
+describe('Composer footer — context status stays beside Send', () => {
+  const inputSrc = fs.readFileSync(
+    path.join(repoRoot, 'components/chat/MessageInput.tsx'),
+    'utf8',
+  );
+
+  it('renders runStatusControl after the left tools group and immediately before submit', () => {
+    assert.match(
+      inputSrc,
+      /<\/PromptInputTools>\s*\{runStatusControl\}\s*<FileAwareSubmitButton/,
     );
   });
 });

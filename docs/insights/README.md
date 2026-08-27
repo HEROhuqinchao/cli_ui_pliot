@@ -8,6 +8,7 @@
 
 | 文档 | 对应交接文档 | 主题 |
 |------|------------|------|
+| [windows-unsigned-auto-update.md](./windows-unsigned-auto-update.md) | [handover/windows-unsigned-auto-update.md](../handover/windows-unsigned-auto-update.md) | 为什么 Windows 可以无证书自动更新但不能冒充 publisher verification；GitHub 单一信任根的接受边界、应用内风险提示、差分更新诚实承诺与 Linux 延后原因 |
 | [windows-runtime-recovery-hardening.md](./windows-runtime-recovery-hardening.md) | [handover/windows-runtime-recovery-hardening.md](../handover/windows-runtime-recovery-hardening.md) | 为什么 Windows 适配必须从路径补丁升级为可证明的执行链；如何吸收 OpenClaw/Craft/OpenCode/Codex 原则而不照搬弱安全实现；为什么恢复按钮只复制并打开 PowerShell、最终仍靠真实 probe 验收 |
 | [harness-home.md](./harness-home.md) | [handover/harness-home.md](../handover/harness-home.md) | 为什么 Harness Home 是用户所有的领域聚合根而不是一张页面；普通文件可读与 Assistant 自动服务为何分层；Skill/MCP/CLI/builtin/renderer/model adapter 如何成为一个可相互调用的 Capability Package；Asset ownership 与 `creative` 效果/policy/多模型扩展取舍 |
 | [default-assistant-heartbeat-system-notification.md](./default-assistant-heartbeat-system-notification.md) | [handover/default-assistant-heartbeat-system-notification.md](../handover/default-assistant-heartbeat-system-notification.md) | 为什么默认助理必须开箱可用但不替用户造身份；为什么心跳要把文件、调度、运行、投递拆成四个事实源；为什么系统通知必须由 Main 独占且只承诺 OS accepted |

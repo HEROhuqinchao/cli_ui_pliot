@@ -3,9 +3,10 @@ name: Build & Package
 # Stable tag-release workflow.
 #
 # Triggers on `v*` tags → builds macOS arm64/x64 bootstrap assets plus one
-# universal updater ZIP, and Windows/Linux manual installers, then creates a real
-# GitHub Release (NOT a prerelease) whose body is RELEASE_NOTES.md. Only macOS
-# receives updater metadata/provenance; Windows/Linux remain manual downloads.
+# universal updater ZIP, an unsigned Windows NSIS updater, and Linux manual
+# installers, then creates a real GitHub Release (NOT a prerelease) whose body
+# is RELEASE_NOTES.md. macOS and Windows receive updater metadata/provenance;
+# Linux remains a manual download.
 # The internal tester channel lives in `preview-build.yml` / `preview-release.yml`
 # (artifacts-only / prerelease) and has its own signed `preview*.yml` feed.
 #
@@ -22,7 +23,7 @@ on:
   workflow_dispatch:
     inputs:
       platform:
-        description: "Target platform (Windows signs when all signer settings exist; otherwise manual unsigned)"
+        description: "Target platform (Windows auto-updates unsigned when no optional signer is configured)"
         required: true
         default: "macos"
         type: choice
@@ -49,7 +50,7 @@ jobs:
     outputs:
       version: ${{ steps.ver.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
 
@@ -89,7 +90,7 @@ jobs:
             console.log(`✓ package version ${v}`);
           '
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 20
           cache: npm
@@ -166,9 +167,9 @@ jobs:
     if: ${{ github.event_name == 'push' || inputs.platform == 'all' || inputs.platform == 'macos' }}
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 20
           cache: npm
@@ -346,7 +347,7 @@ jobs:
           find . -maxdepth 1 -type f \( -name 'CodePilot-*.dmg' -o -name 'CodePilot-*.zip' -o -name '*.blockmap' -o -name 'latest-mac.yml' \) -print0 \
             | sort -z | xargs -0 shasum -a 256 | tee checksums-macos.sha256
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.telemetry_smoke) }}
         with:
           name: release-macos
@@ -367,9 +368,9 @@ jobs:
     # at `npm ci`. See v0.56.1 release failure.
     runs-on: windows-2022
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 20
           cache: npm
@@ -380,7 +381,7 @@ jobs:
         timeout-minutes: 35
         env:
           CODEPILOT_APP_CHANNEL: stable
-          CODEPILOT_OFFICIAL_UPDATE_BUILD: "0"
+          CODEPILOT_OFFICIAL_UPDATE_BUILD: "1"
           CODEPILOT_SOURCE_MAPS: "1"
           SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
         run: npm run electron:build
@@ -388,7 +389,7 @@ jobs:
       - name: Upload Windows source maps to Sentry
         env:
           CODEPILOT_APP_CHANNEL: stable
-          CODEPILOT_OFFICIAL_UPDATE_BUILD: "0"
+          CODEPILOT_OFFICIAL_UPDATE_BUILD: "1"
           CODEPILOT_SOURCE_MAPS: "1"
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
           SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
@@ -396,7 +397,7 @@ jobs:
           SENTRY_PROJECT: ${{ secrets.SENTRY_PROJECT }}
         run: npm run sentry:sourcemaps:upload
 
-      - name: Resolve Windows manual-package signing mode
+      - name: Resolve optional Windows signing mode
         id: windows-signing
         shell: pwsh
         env:
@@ -411,7 +412,7 @@ jobs:
           }
           if ($configuredCount -eq 0) {
             'mode=unsigned' | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-            Write-Host 'Windows signer is not configured; producing a manual-only unsigned installer with native updater provenance disabled.'
+            Write-Host 'Windows signer is not configured; producing the official unsigned updater installer under the GitHub single-trust-root policy.'
             exit 0
           }
           if ($configuredCount -ne 3) {
@@ -434,6 +435,7 @@ jobs:
           if ('${{ steps.windows-signing.outputs.mode }}' -eq 'unsigned') {
             $env:CSC_IDENTITY_AUTO_DISCOVERY = 'false'
             $builderArgs += '--config.win.forceCodeSigning=false'
+            $builderArgs += '--config.win.verifyUpdateCodeSignature=false'
           }
           & npx @builderArgs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -457,9 +459,16 @@ jobs:
       - name: Verify Authenticode publisher and RFC3161 timestamp
         if: ${{ steps.windows-signing.outputs.mode == 'signed' }}
         shell: pwsh
-        run: ./scripts/verify-windows-signing.ps1 -ReleaseRoot release -ExpectedSubject $env:CODEPILOT_WINDOWS_PUBLISHER_SUBJECT
+        run: |
+          $ErrorActionPreference = 'Stop'
+          ./scripts/verify-windows-signing.ps1 -ReleaseRoot release -ExpectedSubject $env:CODEPILOT_WINDOWS_PUBLISHER_SUBJECT
+          $appUpdate = Join-Path $PWD 'release/win-unpacked/resources/app-update.yml'
+          if (-not (Test-Path $appUpdate -PathType Leaf)) { throw 'app-update.yml is missing from the signed Windows package' }
+          if ((Get-Content $appUpdate -Raw) -notmatch '(?m)^\s*publisherName\s*:') {
+            throw 'Signed Windows app-update.yml must expose publisherName for runtime Authenticode breadcrumb verification'
+          }
 
-      - name: Verify unsigned manual package makes no Authenticode claim
+      - name: Verify unsigned updater package makes no Authenticode publisher claim
         if: ${{ steps.windows-signing.outputs.mode == 'unsigned' }}
         shell: pwsh
         run: |
@@ -473,20 +482,31 @@ jobs:
             $signature = Get-AuthenticodeSignature -FilePath $target
             if ($signature.Status -ne 'NotSigned') { throw "$target unexpectedly reports Authenticode status $($signature.Status)" }
           }
-          Write-Host 'Verified manual Windows installer is explicitly unsigned; native updater provenance remains disabled.'
+          $appUpdate = Join-Path $PWD 'release/win-unpacked/resources/app-update.yml'
+          if (-not (Test-Path $appUpdate -PathType Leaf)) { throw 'app-update.yml is missing from the official Windows package' }
+          if ((Get-Content $appUpdate -Raw) -match '(?m)^\s*publisherName\s*:') {
+            throw 'Unsigned Windows app-update.yml must not claim an Authenticode publisherName'
+          }
+          $metadata = @(Get-ChildItem release -Filter 'latest.yml')
+          $blockmaps = @(Get-ChildItem release -Filter 'CodePilot.Setup.*.exe.blockmap')
+          if ($metadata.Count -ne 1) { throw "Expected one latest.yml, found $($metadata.Count)" }
+          if ($blockmaps.Count -ne 1) { throw "Expected one NSIS blockmap, found $($blockmaps.Count)" }
+          Write-Host 'Verified Windows updater is explicitly unsigned, carries official provenance, and makes no publisher identity claim.'
 
       - name: Checksums
         shell: bash
         run: |
           cd release
-          find . -maxdepth 1 -type f -name 'CodePilot.Setup.*.exe' -print0 \
+          find . -maxdepth 1 -type f \( -name 'CodePilot.Setup.*.exe' -o -name 'CodePilot.Setup.*.exe.blockmap' -o -name 'latest.yml' \) -print0 \
             | sort -z | xargs -0 sha256sum | tee checksums-windows.sha256
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: release-windows
           path: |
             release/CodePilot.Setup.*.exe
+            release/CodePilot.Setup.*.exe.blockmap
+            release/latest.yml
             release/checksums-windows.sha256
           retention-days: 7
 
@@ -509,9 +529,9 @@ jobs:
             file_arch: ARM aarch64
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 20
           cache: npm
@@ -592,7 +612,7 @@ jobs:
           find . -maxdepth 1 -type f \( -name 'CodePilot-*.AppImage' -o -name 'CodePilot-*.deb' -o -name 'CodePilot-*.rpm' \) -print0 \
             | sort -z | xargs -0 sha256sum | tee "checksums-linux-${{ matrix.arch }}.sha256"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: release-linux-${{ matrix.arch }}
           path: |
@@ -610,16 +630,16 @@ jobs:
     # Intel hardware instead of treating cross-build structure as ABI proof.
     runs-on: macos-15-intel
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 20
           cache: npm
 
       - run: npm ci
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: release-macos
           path: artifacts
@@ -637,8 +657,8 @@ jobs:
           node scripts/verify-electron-main-health.mjs "$APP/Contents/MacOS/CodePilot"
 
   release:
-    # Only on a `v*` tag push, after macOS updater assets and every manual
-    # Windows/Linux installer pass their platform gates.
+    # Only on a `v*` tag push, after macOS/Windows updater assets and every
+    # Linux manual installer pass their platform gates.
     if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
     needs: [build-macos, verify-macos-intel-abi, build-windows, build-linux]
     runs-on: ubuntu-latest
@@ -648,11 +668,11 @@ jobs:
       attestations: write
       artifact-metadata: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 20
           cache: npm
@@ -660,10 +680,34 @@ jobs:
       - run: npm ci
 
       - name: Download all build artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           path: artifacts
           merge-multiple: true
+
+      - name: Verify GitHub single-trust-root prerequisites
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMMUTABLE_RELEASES_CONFIRMED_AT: ${{ vars.CODEPILOT_IMMUTABLE_RELEASES_CONFIRMED_AT }}
+          RULESETS_CONFIRMED_STATE: ${{ vars.CODEPILOT_RULESETS_CONFIRMED_STATE }}
+        run: |
+          set -euo pipefail
+          node scripts/verify-immutable-release-ack.mjs "$IMMUTABLE_RELEASES_CONFIRMED_AT"
+
+          RULESETS="$(gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/rulesets?includes_parents=true&per_page=100" | jq 'add')"
+          mapfile -t MAIN_IDS < <(printf '%s' "$RULESETS" | jq -r '.[] | select(.name == "main" and .target == "branch" and .enforcement == "active") | .id')
+          mapfile -t TAG_IDS < <(printf '%s' "$RULESETS" | jq -r '.[] | select(.name == "stable-release-tags" and .target == "tag" and .enforcement == "active") | .id')
+          [ "${#MAIN_IDS[@]}" -eq 1 ] || { echo "::error::expected exactly one active main branch ruleset, found ${#MAIN_IDS[@]}"; exit 1; }
+          [ "${#TAG_IDS[@]}" -eq 1 ] || { echo "::error::expected exactly one active stable-release-tags ruleset, found ${#TAG_IDS[@]}"; exit 1; }
+          MAIN_ID="${MAIN_IDS[0]}"
+          TAG_ID="${TAG_IDS[0]}"
+
+          gh api "repos/${GITHUB_REPOSITORY}/rulesets/${MAIN_ID}" > "$RUNNER_TEMP/codepilot-main-ruleset.json"
+          gh api "repos/${GITHUB_REPOSITORY}/rulesets/${TAG_ID}" > "$RUNNER_TEMP/codepilot-tag-ruleset.json"
+          node scripts/verify-github-update-rulesets.mjs \
+            "$RUNNER_TEMP/codepilot-main-ruleset.json" \
+            "$RUNNER_TEMP/codepilot-tag-ruleset.json" \
+            "$RULESETS_CONFIRMED_STATE"
 
       - name: List artifacts
         run: find artifacts -type f | sort
@@ -692,11 +736,12 @@ jobs:
           node scripts/verify-update-assets.mjs artifacts "$VERSION" stable distribution
 
       - name: Attest every release asset
-        uses: actions/attest@v4
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: |
             artifacts/CodePilot-*
-            artifacts/CodePilot.Setup.*.exe
+            artifacts/CodePilot.Setup.*
+            artifacts/latest.yml
             artifacts/latest-mac.yml
             artifacts/SHA256SUMS.txt
 
@@ -711,7 +756,7 @@ jobs:
           FILES=()
           while IFS= read -r f; do
             FILES+=("$f")
-          done < <(find artifacts -type f \( -name "*.dmg" -o -name "*.zip" -o -name "*.blockmap" -o -name "latest-mac.yml" -o -name "CodePilot.Setup.*.exe" -o -name "*.AppImage" -o -name "*.deb" -o -name "*.rpm" \) | sort)
+          done < <(find artifacts -type f \( -name "*.dmg" -o -name "*.zip" -o -name "*.blockmap" -o -name "latest-mac.yml" -o -name "latest.yml" -o -name "CodePilot.Setup.*.exe" -o -name "*.AppImage" -o -name "*.deb" -o -name "*.rpm" \) | sort)
           FILES+=("artifacts/SHA256SUMS.txt")
           echo "=== Release assets ==="
           printf '%s\n' "${FILES[@]}"

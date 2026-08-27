@@ -17,6 +17,7 @@ import {
   boundedUpdateText,
   classifyUpdaterError,
   resolveUpdaterFeedChannel,
+  resolveUpdaterPublisherVerification,
   resolveUpdaterSupport,
   updaterInitialDelay,
   updaterRetryDelay,
@@ -53,6 +54,17 @@ describe('Main-owned updater contract', () => {
     assert.equal(classifyUpdaterError(new Error('/Users/alice/private/cache')), 'internal');
   });
 
+  it('derives Windows publisher verification from packaged update metadata', () => {
+    assert.equal(resolveUpdaterPublisherVerification('win32', {}), 'none');
+    assert.equal(
+      resolveUpdaterPublisherVerification('win32', { publisherName: ['CN=CodePilot'] }),
+      'authenticode',
+    );
+    assert.equal(resolveUpdaterPublisherVerification('win32', { publisherName: [] }), 'unknown');
+    assert.equal(resolveUpdaterPublisherVerification('win32', null), 'unknown');
+    assert.equal(resolveUpdaterPublisherVerification('darwin', null), 'not_applicable');
+  });
+
   it('bounds startup jitter, retry backoff and untrusted release notes', () => {
     assert.equal(updaterInitialDelay(0), 30_000);
     assert.equal(updaterInitialDelay(1), 120_000);
@@ -79,6 +91,8 @@ describe('Main-owned updater contract', () => {
     assert.match(updater, /allowDowngrade = false/);
     assert.match(updater, /autoDownload = true/);
     assert.match(updater, /autoInstallOnAppQuit = true/);
+    assert.match(updater, /disableDifferentialDownload = false/);
+    assert.match(updater, /disableWebInstaller = true/);
     assert.match(updater, /trustedSender\(event\)/);
     assert.match(updater, /activity_unavailable/);
     assert.match(updater, /downloadInFlight/);
@@ -110,6 +124,7 @@ describe('Main-owned updater contract', () => {
     const root = path.resolve(__dirname, '../../..');
     const route = fs.readFileSync(path.join(root, 'src/app/api/app/updates/route.ts'), 'utf8');
     const dialog = fs.readFileSync(path.join(root, 'src/components/layout/UpdateDialog.tsx'), 'utf8');
+    const updateChecker = fs.readFileSync(path.join(root, 'src/hooks/useUpdateChecker.ts'), 'utf8');
     const about = fs.readFileSync(path.join(root, 'src/components/settings/AboutSection.tsx'), 'utf8');
     const overview = fs.readFileSync(path.join(root, 'src/components/settings/OverviewSection.tsx'), 'utf8');
 
@@ -122,6 +137,10 @@ describe('Main-owned updater contract', () => {
       assert.match(surface, /update\.platformAssetMissing/);
     }
     assert.match(dialog, /update\.viewReleaseDetails/);
+    assert.match(updateChecker, /nativePackageType: snapshot\.packageType/);
+    assert.match(updateChecker, /nativePublisherVerification: snapshot\.publisherVerification/);
+    assert.match(dialog, /nativePackageType === 'nsis'[\s\S]*?nativePublisherVerification === 'none'/);
+    assert.match(dialog, /update\.windowsUnsignedTrustNotice/);
     for (const settingsSurface of [about, overview]) {
       assert.match(settingsSurface, /nativeUpdateBusy/);
       assert.match(settingsSurface, /update\.checkUnavailableDuringUpdate/);

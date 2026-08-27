@@ -8,6 +8,7 @@
 
 | 文件 | 主题 |
 |------|------|
+| windows-unsigned-auto-update.md | **Windows 无签名自动更新技术交接**：GitHub 单一信任根、unsigned NSIS provenance、`latest.yml`/EXE blockmap、差分→完整包回退、Immutable Releases/ruleset/Action SHA 门禁与 RC-A→RC-B 验收矩阵 |
 | windows-runtime-recovery-hardening.md | **Windows Runtime P0/P1 加固与跨机复查**：Path Identity、三 Runtime Doctor、Codex sandbox 真实状态、复制固定官方命令并打开 PowerShell、safeStorage + AES-GCM Provider secret 迁移、另一台 Windows 的 smoke 清单 |
 | windows-runtime-path-compatibility-review.md | **Windows Runtime / 路径兼容性修复交接与跨机复查手册**：中文/空格/特殊字符 CWD、PowerShell 编码命令、无 bash/rg 回退、Claude `.exe/.cmd`、Codex Desktop vs standalone、WindowsApps/沙盒边界、参考项目专项适配与另一台 Windows 电脑的验收矩阵 |
 | harness-home.md | **Harness Home 技术交接**：framework-neutral canonical repository、普通文件可读与 Assistant 自动服务显式 binding、Skill/MCP/CLI/builtin/renderer/model adapter 统一 Capability Package/Broker、L0/L1 与 Runtime bridge 边界、SecretRef、Asset/HTML 安全、Codex durable/preview-only 去重与当前未关闭门禁 |

@@ -5,7 +5,7 @@
  * `runtime-permission-modes.md` Phase 0. The three profiles are NOT
  * interchangeable and must never share an implementation switch:
  *
- *   - `default`      需要时询问我 — safe work runs, risky work asks the user.
+ *   - `default`      请求批准 — safe work runs, risky work asks the user.
  *   - `auto_review`  替我审批    — requests that would have asked the user go to a
  *                                 constrained reviewer instead. Still bounded by
  *                                 workspace/sandbox; deny / timeout / reviewer

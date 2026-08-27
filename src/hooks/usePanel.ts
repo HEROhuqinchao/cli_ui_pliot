@@ -155,13 +155,8 @@ export interface PanelContextValue {
   setChatListOpen: (open: boolean) => void;
 
   // --- Right-side panel states ---
-  // Phase 2 (2026-04-30): gitPanelOpen / dashboardPanelOpen / previewOpen
-  // were removed — those surfaces moved into the Workspace Sidebar
-  // (Git + Widget fixed Tabs, Markdown / Artifact / file preview as
-  // dynamic Tabs). fileTreeOpen stays as the lightweight file tree's
-  // independent topbar entry; assistantPanelOpen is its own concern.
-  fileTreeOpen: boolean;
-  setFileTreeOpen: (open: boolean) => void;
+  // Workspace surfaces live in WorkspaceSidebar. AssistantPanel remains
+  // separate because it belongs only to assistant workspaces.
   terminalOpen: boolean;
   setTerminalOpen: (open: boolean) => void;
   assistantPanelOpen: boolean;
@@ -172,6 +167,7 @@ export interface PanelContextValue {
   // --- Git summary (for top bar, derived — no setters) ---
   currentBranch: string;
   gitDirtyCount: number;
+  gitRepositoryState: 'unknown' | 'repository' | 'directory';
   currentWorktreeLabel: string;
   setCurrentWorktreeLabel: (label: string) => void;
 
@@ -203,7 +199,7 @@ export interface PanelContextValue {
    *
    * `previewFile` is non-null only when `previewSource.kind === 'file'`,
    * so reading it stays backward-compatible for existing callers like
-   * FileTreePanel's toggle logic.
+   * path-only preview callers.
    *
    * `setPreviewFile(path)` is a thin wrapper that produces
    * `setPreviewSource(path ? { kind: 'file', filePath: path } : null)`.

@@ -39,8 +39,11 @@ test.describe('Global Search file deep-link seek UX', () => {
     try {
       // 1) First locate in session A.
       await page.goto(`/chat/${sessionA}?file=${encodeURIComponent(fileA)}&seek=seek1`);
-      const panel = page.locator('div[style*="width: 280"]');
+      // T3 migration: file-search deep links now open Files Primary inside the
+      // unified Workspace Sidebar instead of the retired standalone 280px rail.
+      const panel = page.locator('[data-workspace-sidebar]');
       await expect(panel).toBeVisible({ timeout: 15_000 });
+      await expect(panel.locator('[data-primary-kind="files"]')).toBeVisible();
       await expect(page.locator('#file-tree-highlight')).toContainText('target-a.ts', { timeout: 15_000 });
 
       // 2) Re-seek same file in same session; should remain stable and highlighted.

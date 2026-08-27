@@ -58,6 +58,23 @@ interface ElectronAssetAPI {
   }>;
 }
 
+interface ElectronBrowserAPI {
+  getConfig: (workspaceId: string) => Promise<{
+    partition: string;
+    webPreferences: string;
+  } | null>;
+  openExternal: (url: string) => Promise<boolean>;
+  onNavigationBlocked: (
+    callback: (data: { webContentsId: number; reason: string }) => void,
+  ) => () => void;
+  onOpenUrlRequested: (
+    callback: (data: { webContentsId: number; url: string }) => void,
+  ) => () => void;
+  onDownloadBlocked: (
+    callback: (data: { webContentsId: number }) => void,
+  ) => () => void;
+}
+
 interface ElectronAPI {
   versions: {
     electron: string;
@@ -89,6 +106,7 @@ interface ElectronAPI {
     }) => Promise<string>;
     openHtmlFile: (request: { path: string; sessionId: string }) => Promise<string>;
   };
+  browser?: ElectronBrowserAPI;
   app?: {
     /** Resolve the persistent log directory used by main process logging.
      *  Returns null when Electron can't surface a path (e.g. permission

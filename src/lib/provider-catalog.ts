@@ -612,16 +612,16 @@ const BEDROCK_VERTEX_DEFAULT_MODELS: CatalogModel[] = [
 
 /**
  * GLM Coding Plan catalog — shared by the CN and Global presets (same lineup,
- * different regional endpoints). Verified against the vendor's GLM-5.3 model,
- * latest-model, overview, Claude Code and Codex pages on 2026-08-14; the
- * evidence matrix lives in
- * docs/research/glm-5-3-codeplan-adaptation-2026-08-14.md.
+ * different regional endpoints). Refreshed against the vendor's GLM-5.3-Flash
+ * model, latest-model, overview, Claude Code and Codex pages on 2026-08-26;
+ * the evidence matrix lives in
+ * docs/research/glm-5-3-flash-codeplan-adaptation-2026-08-26.md.
  *
  * The stable `sonnet` / `haiku` modelIds preserve saved CodePilot sessions.
  * Their upstream IDs are the current official products. Claude's Anthropic
- * route uses `glm-5.3[1m]`, while the native Responses route requires the bare
- * `glm-5.3`; that transport-specific rewrite is declared in wireCapabilities
- * rather than represented as a duplicate picker row.
+ * route uses a `[1m]` suffix, while the native Responses route requires a bare
+ * model ID; those transport-specific rewrites are declared in
+ * wireCapabilities rather than represented as duplicate picker rows.
  */
 const GLM_CODING_PLAN_MODELS: CatalogModel[] = [
   {
@@ -646,36 +646,41 @@ const GLM_CODING_PLAN_MODELS: CatalogModel[] = [
     capabilities: {
       reasoning: true,
       toolUse: true,
-      contextWindow: 1_048_576,
+      contextWindow: 1_000_000,
       supportsEffort: true,
       supportedEffortLevels: ['low', 'high', 'max'],
       defaultEffortLevel: 'max',
       effortNoteKey: 'messageInput.effort.note.glmCodePlan',
-    },
-  },
-  {
-    modelId: 'glm-5-turbo',
-    upstreamModelId: 'glm-5-turbo',
-    displayName: 'GLM-5-Turbo',
-    capabilities: {
-      reasoning: true,
-      toolUse: true,
-      contextWindow: 204_800,
-      defaultEffortLevel: 'max',
+      thinkingMode: 'always',
     },
   },
   {
     modelId: 'haiku',
-    upstreamModelId: 'glm-4.7',
-    displayName: 'GLM-4.7',
+    upstreamModelId: 'glm-5.3-flash[1m]',
+    displayName: 'GLM-5.3-Flash',
     legacyFingerprints: [
       { upstreamModelId: 'haiku', displayName: 'GLM-4.5-Air', capabilities: {} },
+      {
+        upstreamModelId: 'glm-4.7',
+        displayName: 'GLM-4.7',
+        capabilities: {
+          reasoning: true,
+          toolUse: true,
+          contextWindow: 204_800,
+        },
+      },
     ],
     role: 'haiku',
     capabilities: {
       reasoning: true,
       toolUse: true,
-      contextWindow: 204_800,
+      vision: true,
+      contextWindow: 1_000_000,
+      supportsEffort: true,
+      supportedEffortLevels: ['low', 'high', 'max'],
+      defaultEffortLevel: 'max',
+      effortNoteKey: 'messageInput.effort.note.glmCodePlan',
+      thinkingMode: 'always',
     },
   },
 ];
@@ -834,7 +839,7 @@ export const VENDOR_PRESETS: VendorPreset[] = [
     defaultEnvOverrides: {
       API_TIMEOUT_MS: '3000000',
       CLAUDE_CODE_AUTO_COMPACT_WINDOW: '1000000',
-      ANTHROPIC_DEFAULT_HAIKU_MODEL: 'glm-4.7',
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: 'glm-5.3-flash[1m]',
       ANTHROPIC_DEFAULT_SONNET_MODEL: 'glm-5.3[1m]',
       ANTHROPIC_DEFAULT_OPUS_MODEL: 'glm-5.3[1m]',
     },
@@ -843,14 +848,17 @@ export const VENDOR_PRESETS: VendorPreset[] = [
       default: 'glm-5.3[1m]',
       sonnet: 'glm-5.3[1m]',
       opus: 'glm-5.3[1m]',
-      haiku: 'glm-4.7',
+      haiku: 'glm-5.3-flash[1m]',
     },
     wireCapabilities: {
-      anthropicEffort: { modelIds: ['glm-5.3[1m]'] },
+      anthropicEffort: { modelIds: ['glm-5.3[1m]', 'glm-5.3-flash[1m]'] },
       codexResponses: {
         baseUrl: 'https://open.bigmodel.cn/api/v1',
-        modelIds: ['glm-5.3[1m]', 'glm-5-turbo'],
-        modelIdOverrides: { 'glm-5.3[1m]': 'glm-5.3' },
+        modelIds: ['glm-5.3[1m]', 'glm-5.3-flash[1m]'],
+        modelIdOverrides: {
+          'glm-5.3[1m]': 'glm-5.3',
+          'glm-5.3-flash[1m]': 'glm-5.3-flash',
+        },
         effortAliases: { minimal: 'low', medium: 'high', xhigh: 'max' },
         supportsReasoningSummary: true,
       },
@@ -865,10 +873,12 @@ export const VENDOR_PRESETS: VendorPreset[] = [
       billingModel: 'coding_plan',
       notes: [
         'GLM-5.3 points: input 6.9, cached input 1.7, output 24.',
+        'GLM-5.3-Flash points: input 2.3, cached input 0.56, output 8; native image input is supported.',
         'Off-peak requests use 50% of the listed points; peak hours are weekdays 14:00–18:00 (UTC+8).',
       ],
       notesZh: [
         'GLM-5.3 积分倍率：输入 6.9、缓存输入 1.7、输出 24。',
+        'GLM-5.3-Flash 积分倍率：输入 2.3、缓存输入 0.56、输出 8；支持原生图片输入。',
         '非高峰时段按表列积分的 50% 消耗；高峰时段为工作日 14:00–18:00（UTC+8）。',
       ],
       claudeCodeVerified: true,
@@ -887,7 +897,7 @@ export const VENDOR_PRESETS: VendorPreset[] = [
     defaultEnvOverrides: {
       API_TIMEOUT_MS: '3000000',
       CLAUDE_CODE_AUTO_COMPACT_WINDOW: '1000000',
-      ANTHROPIC_DEFAULT_HAIKU_MODEL: 'glm-4.7',
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: 'glm-5.3-flash[1m]',
       ANTHROPIC_DEFAULT_SONNET_MODEL: 'glm-5.3[1m]',
       ANTHROPIC_DEFAULT_OPUS_MODEL: 'glm-5.3[1m]',
     },
@@ -896,14 +906,17 @@ export const VENDOR_PRESETS: VendorPreset[] = [
       default: 'glm-5.3[1m]',
       sonnet: 'glm-5.3[1m]',
       opus: 'glm-5.3[1m]',
-      haiku: 'glm-4.7',
+      haiku: 'glm-5.3-flash[1m]',
     },
     wireCapabilities: {
-      anthropicEffort: { modelIds: ['glm-5.3[1m]'] },
+      anthropicEffort: { modelIds: ['glm-5.3[1m]', 'glm-5.3-flash[1m]'] },
       codexResponses: {
         baseUrl: 'https://api.z.ai/api/v1',
-        modelIds: ['glm-5.3[1m]', 'glm-5-turbo'],
-        modelIdOverrides: { 'glm-5.3[1m]': 'glm-5.3' },
+        modelIds: ['glm-5.3[1m]', 'glm-5.3-flash[1m]'],
+        modelIdOverrides: {
+          'glm-5.3[1m]': 'glm-5.3',
+          'glm-5.3-flash[1m]': 'glm-5.3-flash',
+        },
         effortAliases: { minimal: 'low', medium: 'high', xhigh: 'max' },
         supportsReasoningSummary: true,
       },
@@ -918,10 +931,12 @@ export const VENDOR_PRESETS: VendorPreset[] = [
       billingModel: 'coding_plan',
       notes: [
         'GLM-5.3 points: input 6.9, cached input 1.7, output 24.',
+        'GLM-5.3-Flash points: input 2.3, cached input 0.56, output 8; native image input is supported.',
         'Off-peak requests use 50% of the listed points; peak hours are weekdays 14:00–18:00 (UTC+8).',
       ],
       notesZh: [
         'GLM-5.3 积分倍率：输入 6.9、缓存输入 1.7、输出 24。',
+        'GLM-5.3-Flash 积分倍率：输入 2.3、缓存输入 0.56、输出 8；支持原生图片输入。',
         '非高峰时段按表列积分的 50% 消耗；高峰时段为工作日 14:00–18:00（UTC+8）。',
       ],
       claudeCodeVerified: true,

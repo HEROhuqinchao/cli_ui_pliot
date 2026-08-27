@@ -27,7 +27,7 @@
 import { useCallback, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 
-export type CardKind = "sidebar" | "main" | "workspace" | "fileTree" | "assistant";
+export type CardKind = "sidebar" | "main" | "workspace" | "assistant";
 
 const CARD_FRAME_ATTR = "data-platform-card-frame";
 
@@ -38,7 +38,6 @@ const SURFACE_ATTR_BY_KIND: Record<CardKind, string> = {
   sidebar: "data-platform-sidebar",
   main: "data-platform-main-content",
   workspace: "data-workspace-sidebar",
-  fileTree: "data-platform-file-tree",
   assistant: "data-platform-assistant",
 };
 
@@ -46,7 +45,6 @@ const FRAME_VALUE_BY_KIND: Record<CardKind, string> = {
   sidebar: "sidebar",
   main: "main",
   workspace: "workspace",
-  fileTree: "file-tree",
   assistant: "assistant",
 };
 
@@ -57,7 +55,7 @@ const FRAME_VALUE_BY_KIND: Record<CardKind, string> = {
 interface CardFrameProps {
   kind: CardKind;
   /**
-   * Fixed pixel width. Provide for sidebar / workspace / fileTree where
+   * Fixed pixel width. Provide for sidebar / workspace where
    * the panel owns its own width state. Leave undefined for `kind="main"`
    * so the frame expands via `flex-1` to fill the remaining row space.
    */
@@ -137,9 +135,8 @@ export function CardSurface({ kind, variant, className, children }: CardSurfaceP
         kind === "sidebar" && "bg-[var(--platform-surface-sidebar)] backdrop-blur-xl",
         kind === "workspace" && "bg-background",
         kind === "main" && "bg-background",
-        kind === "fileTree" && "bg-background",
         // Assistant rail is opaque by deliberate user request (see
-        // AssistantPanel's "Round 5" note) — same treatment as fileTree.
+        // AssistantPanel's "Round 5" note).
         kind === "assistant" && "bg-background",
         className,
       )}
@@ -158,6 +155,9 @@ interface ResizeGutterProps {
   onResizeEnd?: () => void;
   /** Double-click handler — usually "reset to default width". */
   onReset?: () => void;
+  /** Accessible name for keyboard and assistive-technology users. */
+  ariaLabel?: string;
+  className?: string;
 }
 
 /**
@@ -179,17 +179,18 @@ interface ResizeGutterProps {
  */
 export const RESIZE_GUTTER_WIDTH_PX = 8;
 
-export function ResizeGutter({ onResize, onResizeEnd, onReset }: ResizeGutterProps) {
+export function ResizeGutter({ onResize, onResizeEnd, onReset, ariaLabel = "Resize panel", className }: ResizeGutterProps) {
   const isDragging = useRef(false);
   const startX = useRef(0);
-  const containerRef = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState(false);
   const [hoverY, setHoverY] = useState<number | null>(null);
+  const [gutterHeight, setGutterHeight] = useState(0);
 
   const handlePointerDown = useCallback((e: React.PointerEvent) => {
     e.preventDefault();
     isDragging.current = true;
     startX.current = e.clientX;
+    setGutterHeight(e.currentTarget.getBoundingClientRect().height);
     setDragging(true);
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     document.body.style.cursor = "col-resize";
@@ -198,10 +199,9 @@ export function ResizeGutter({ onResize, onResizeEnd, onReset }: ResizeGutterPro
 
   const handlePointerMove = useCallback(
     (e: React.PointerEvent) => {
-      if (containerRef.current) {
-        const rect = containerRef.current.getBoundingClientRect();
-        setHoverY(e.clientY - rect.top);
-      }
+      const rect = e.currentTarget.getBoundingClientRect();
+      setHoverY(e.clientY - rect.top);
+      setGutterHeight(rect.height);
       if (!isDragging.current) return;
       const delta = e.clientX - startX.current;
       startX.current = e.clientX;
@@ -227,11 +227,16 @@ export function ResizeGutter({ onResize, onResizeEnd, onReset }: ResizeGutterPro
     if (!isDragging.current) setHoverY(null);
   }, []);
 
+  const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    e.preventDefault();
+    onResize(e.key === "ArrowLeft" ? -16 : 16);
+    onResizeEnd?.();
+  }, [onResize, onResizeEnd]);
+
   const gradientBg = (() => {
-    if (!dragging && hoverY === null) return undefined;
-    const el = containerRef.current;
-    if (!el) return undefined;
-    const h = el.getBoundingClientRect().height;
+    if ((!dragging && hoverY === null) || gutterHeight <= 0) return undefined;
+    const h = gutterHeight;
     const cy = dragging ? h / 2 : (hoverY ?? h / 2);
     const edge = Math.min(64, h / 2);
     const center = Math.max(edge, Math.min(h - edge, cy));
@@ -256,14 +261,21 @@ export function ResizeGutter({ onResize, onResizeEnd, onReset }: ResizeGutterPro
 
   return (
     <div
-      ref={containerRef}
       data-resize-gutter
+      role="separator"
+      aria-label={ariaLabel}
+      aria-orientation="vertical"
+      tabIndex={0}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
       onPointerLeave={handlePointerLeave}
       onDoubleClick={onReset}
-      className="relative z-10 flex h-full shrink-0 cursor-col-resize items-stretch justify-center touch-none"
+      onKeyDown={handleKeyDown}
+      className={cn(
+        "relative z-10 flex h-full shrink-0 cursor-col-resize items-stretch justify-center touch-none focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+        className,
+      )}
       style={{ width: RESIZE_GUTTER_WIDTH_PX }}
     >
       <div
