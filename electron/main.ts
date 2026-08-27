@@ -5,7 +5,9 @@ import { join } from 'path';
 import { configureElectronMainIntegrations, resolveTelemetryConfig, TELEMETRY_IGNORE_ERRORS } from '../src/lib/telemetry/contract';
 import { sanitizeTelemetryBreadcrumb, sanitizeTelemetryEvent } from '../src/lib/telemetry/sanitize';
 import { createTelemetrySmokeError, telemetrySmokeEnabled } from '../src/lib/telemetry/smoke';
-import { buildUtilityProcessFailureEvent } from '../src/lib/telemetry/utility-process-failure';
+import {
+  buildUtilityProcessFailureEvent,
+} from '../src/lib/telemetry/utility-process-failure';
 import { resolveCodePilotDataDir } from '../src/lib/codepilot-data-dir';
 
 const codePilotDataDir = resolveCodePilotDataDir();
@@ -1527,11 +1529,11 @@ function startServer(port: number, recoverySafeMode = false): Electron.UtilityPr
       || isQuitting
       || (serverLifecyclePhase !== 'running' && !recoverySafeMode)
     ) return;
-    childFailureReported = true;
     const system = process.getSystemMemoryInfo();
-    Sentry.captureEvent(buildUtilityProcessFailureEvent({
+    const event = buildUtilityProcessFailureEvent({
       reason,
       exitCode,
+      platform: process.platform,
       utilityRssBytes: lastServerRuntimeMetrics?.rssBytes,
       utilityHeapUsedBytes: lastServerRuntimeMetrics?.heapUsedBytes,
       utilityHeapTotalBytes: lastServerRuntimeMetrics?.heapTotalBytes,
@@ -1543,7 +1545,10 @@ function startServer(port: number, recoverySafeMode = false): Electron.UtilityPr
       hostAvailableKb: system.available,
       hostSwapTotalKb: system.swapTotal,
       hostSwapFreeKb: system.swapFree,
-    }));
+    });
+    if (!event) return;
+    childFailureReported = true;
+    Sentry.captureEvent(event);
   };
 
   child.on('message', (rawMessage) => {
@@ -1659,10 +1664,10 @@ function startServer(port: number, recoverySafeMode = false): Electron.UtilityPr
     serverExited = true;
     serverExitCode = code;
     if (serverProcess === child) serverProcess = null;
-    reportUtilityFailureOnce(
-      childFailureReason === 'server_exit' ? 'unexpected_exit' : childFailureReason,
-      code,
-    );
+    const telemetryReason = childFailureReason === 'server_exit'
+      ? 'unexpected_exit'
+      : childFailureReason;
+    reportUtilityFailureOnce(telemetryReason, code);
     if (!isDev && !isQuitting && serverLifecyclePhase === 'running') {
       beginServerRecovery(generation, reason);
     }

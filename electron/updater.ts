@@ -6,6 +6,8 @@ import yaml from 'js-yaml';
 import {
   boundedUpdateText,
   classifyUpdaterError,
+  consumeUpdaterDownloadPromise,
+  createUpdaterFailureReporter,
   resolveUpdaterPublisherVerification,
   resolveUpdaterSupport,
   resolveUpdaterFeedChannel,
@@ -119,6 +121,11 @@ function recordUpdaterError(error: unknown): void {
   scheduleRetry();
 }
 
+const recordUpdaterErrorOnce = createUpdaterFailureReporter(
+  () => snapshot.phase,
+  recordUpdaterError,
+);
+
 function applyUpdateInfo(info: UpdateInfo): void {
   updateSnapshot({
     targetVersion: info.version,
@@ -140,13 +147,31 @@ async function checkForUpdates(): Promise<UpdaterSnapshot> {
   checkInFlight = (async () => {
     updateSnapshot({ phase: 'checking', errorCode: null, checkedAt: new Date().toISOString() });
     try {
-      await autoUpdater.checkForUpdates();
+      const result = await autoUpdater.checkForUpdates();
+      const autoDownloadPromise = result?.downloadPromise;
+      if (autoDownloadPromise) {
+        // electron-updater starts this Promise when autoDownload=true but does
+        // not await it from checkForUpdates(). Own the terminal rejection here
+        // so a network failure cannot escape as a process-level unhandled
+        // rejection. The shared reporter gate keeps equivalent Promise and
+        // emitter failures exactly-once.
+        const ownedDownload = (async () => {
+          try {
+            await consumeUpdaterDownloadPromise(autoDownloadPromise, recordUpdaterErrorOnce);
+          } finally {
+            if (downloadInFlight === ownedDownload) downloadInFlight = null;
+          }
+          return publicSnapshot();
+        })();
+        downloadInFlight = ownedDownload;
+        void ownedDownload;
+      }
       consecutiveFailures = 0;
       clearScheduledRetry();
     } catch (error) {
       // electron-updater also emits `error`; do not double-count one failed
       // request and accidentally jump two retry-backoff levels.
-      if (snapshot.phase !== 'error') recordUpdaterError(error);
+      recordUpdaterErrorOnce(error);
     } finally {
       checkInFlight = null;
     }
@@ -170,7 +195,7 @@ async function retryDownload(): Promise<UpdaterSnapshot> {
       updateSnapshot({ phase: 'downloading', errorCode: null });
       await autoUpdater.downloadUpdate();
     } catch (error) {
-      if (snapshot.phase !== 'error') recordUpdaterError(error);
+      recordUpdaterErrorOnce(error);
     } finally {
       downloadInFlight = null;
     }
@@ -276,7 +301,10 @@ function registerUpdaterEvents(): void {
       updateSnapshot({ phase: 'downloaded', errorCode: 'install_failed' });
       return;
     }
-    recordUpdaterError(error);
+    // The nested auto-download Promise and this emitter can surface the same
+    // terminal failure in either order. A real retry leaves the error phase
+    // before it can fail again, so this only deduplicates the current failure.
+    recordUpdaterErrorOnce(error);
   });
 }
 

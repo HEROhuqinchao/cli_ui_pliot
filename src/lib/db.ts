@@ -3212,14 +3212,23 @@ export function addMessage(
   const now = new Date().toISOString().replace('T', ' ').split('.')[0];
   const taskRunId = metadata?.task_run_id ?? null;
   const streamStatus = metadata?.stream_status ?? 'completed';
-
-  db.prepare(
+  const insertMessage = db.prepare(
     'INSERT INTO messages (id, session_id, role, content, created_at, token_usage, task_run_id, stream_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-  ).run(id, sessionId, role, content, now, tokenUsage || null, taskRunId, streamStatus);
+  );
+  const updateSession = db.prepare(
+    'UPDATE chat_sessions SET updated_at = ? WHERE id = ?',
+  );
+  const readMessage = db.prepare(
+    'SELECT *, rowid as _rowid FROM messages WHERE id = ?',
+  );
 
-  updateSessionTimestamp(sessionId);
-
-  return db.prepare('SELECT *, rowid as _rowid FROM messages WHERE id = ?').get(id) as Message;
+  return db.transaction((): Message => {
+    insertMessage.run(id, sessionId, role, content, now, tokenUsage || null, taskRunId, streamStatus);
+    updateSession.run(now, sessionId);
+    const saved = readMessage.get(id) as Message | undefined;
+    if (!saved) throw new Error('CODEPILOT_MESSAGE_PERSISTENCE_FAILED');
+    return saved;
+  })();
 }
 
 export function updateMessageContent(messageId: string, content: string): number {

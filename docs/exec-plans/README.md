@@ -101,6 +101,7 @@
 
 | 文件 | 主题 | 状态 |
 |------|------|------|
+| [active/post-sentry-scan-remediation-2026-08-27.md](active/post-sentry-scan-remediation-2026-08-27.md) | **2026-08-27 Sentry 生产问题修复闭环**：修复 updater auto-download Promise、utility 生命周期误分类、token usage 非法结构、assistant 消息原子持久化、media expected-error 误报与本地路径后缀泄漏 | 🟡 Code complete + Tests pass + Build pass + Claude review findings closed；下一个 official stable 的 Sentry cohort 待发布后观察 |
 | [active/windows-unsigned-native-auto-update-2026-08-26.md](active/windows-unsigned-native-auto-update-2026-08-26.md) | **Windows 无签名原生自动更新与差分下载**：不申请 Microsoft/Azure/PFX 签名，固定 GitHub 单一信任根；stable 发布 `latest.yml` + NSIS blockmap，Linux 保持手动 | ✅ `v0.67.10` bootstrap 已 Shipped：正式 run 全绿、20 资产 Latest Release、Mac/Windows metadata 与外置 blockmap/checksum 已公开复核；Windows RC-A→RC-B 真实差分/完整回退 smoke 待执行，不冒充 `Smoke passed` |
 | [active/composer-model-route-permission-consolidation.md](active/composer-model-route-permission-consolidation.md) | **Composer 模型路线、能力参数与权限入口收口**：Favorites 精确组合 + Runtime 左栏、Provider 分组模型右栏、能力描述符、上下文/Send 末端布局与权限档位双向映射 | 🟡 本轮 UI/定向 unit/scoped E2E 通过；三 Runtime 真实 effective-wire smoke 待执行（Tier 2） |
 | [active/workspace-surface-sidebar-pin-and-inspector.md](active/workspace-surface-sidebar-pin-and-inspector.md) | **Workspace Surface Sidebar**：Files/Git/Browser 等模块统一注册、项目级 pin、瞬时“+”与 tab own close、Primary + Inspector 双 lane、`canonicalWorkspaceKey` 与 v13 可逆迁移 | 🟡 Add/Pin/Unpin/own-close/reload scoped E2E 通过；Diff/Artifact → Inspector 人工验收仍待执行 |
