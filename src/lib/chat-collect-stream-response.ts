@@ -20,6 +20,10 @@ import {
   updateMessageStreamStatus,
 } from '@/lib/db';
 import { notifySessionComplete, notifySessionError } from '@/lib/telegram-bot';
+import {
+  notifyInteractiveChatApproval,
+  notifyInteractiveChatCompleted,
+} from '@/lib/interactive-chat-notifications';
 import { extractCompletion } from '@/lib/onboarding-completion';
 import { saveMediaToLibrary } from '@/lib/media-saver';
 import type { SSEEvent, TokenUsage, MessageContentBlock, MediaBlock, ExternalSource } from '@/types';
@@ -109,11 +113,13 @@ export async function collectStreamResponse(
   let tokenUsage: TokenUsage | null = null;
   let hasError = false;
   let errorMessage = '';
+  let sawSuccessfulResult = false;
   let lastSavedAssistantMsgId: string | null = null;
   let checkpointMessageId: string | null = null;
   let lastCheckpointAt = 0;
   // Dedup layer: skip duplicate tool_result events by tool_use_id
   const seenToolResultIds = new Set<string>();
+  const notifiedPermissionRequestIds = new Set<string>();
 
   const persistCheckpoint = (force = false): void => {
     const now = Date.now();
@@ -183,8 +189,37 @@ export async function collectStreamResponse(
         if (line.startsWith('data: ')) {
           try {
             const event: SSEEvent = JSON.parse(line.slice(6));
-            if (event.type === 'permission_request' || event.type === 'tool_output') {
-              // Skip permission_request and tool_output events - not saved as message content
+            if (event.type === 'permission_request') {
+              // Permission prompts are not transcript content, but they are a
+              // first-class native notification. The server-side collector is
+              // the single cross-Runtime source, so navigation/reload cannot
+              // make the reminder disappear or duplicate it.
+              if (!opts?.suppressNotifications && isLockOwner(sessionId, lockId)) {
+                try {
+                  const permission = JSON.parse(event.data) as {
+                    permissionRequestId?: unknown;
+                    toolName?: unknown;
+                  };
+                  const permissionRequestId = typeof permission.permissionRequestId === 'string'
+                    ? permission.permissionRequestId
+                    : '';
+                  if (permissionRequestId && !notifiedPermissionRequestIds.has(permissionRequestId)) {
+                    await notifyInteractiveChatApproval({
+                      sessionId,
+                      sessionTitle: telegramOpts.sessionTitle,
+                      toolName: typeof permission.toolName === 'string' ? permission.toolName : undefined,
+                    });
+                    notifiedPermissionRequestIds.add(permissionRequestId);
+                  }
+                } catch (error) {
+                  console.warn(
+                    `[chat/route] failed to queue approval notification for session ${sessionId}:`,
+                    error instanceof Error ? error.message : String(error),
+                  );
+                }
+              }
+            } else if (event.type === 'tool_output') {
+              // Streaming tool output is not saved as message content.
             } else if (event.type === 'thinking') {
               // Accumulate thinking content with phase separation (--- between phases)
               if (thinkingPhaseEnded) {
@@ -332,6 +367,8 @@ export async function collectStreamResponse(
                         ? resultData.errors.join('\n')
                         : resultData.subtype) || 'The conversation ended with an error';
                   }
+                } else {
+                  sawSuccessfulResult = true;
                 }
                 // Also capture session_id from result if we missed it from init.
                 // #629 — EXCEPT a stale-resume is_error result: resultData.session_id
@@ -523,6 +560,29 @@ export async function collectStreamResponse(
             .then(({ syncCodexThreadName }) => syncCodexThreadName(sessionId, canonicalTitle))
             .catch(() => { /* best effort — the local title remains canonical */ });
         }
+      }
+    }
+
+    // Native task-completion notification. Require a successful terminal
+    // result, a persisted assistant row, and current lock ownership so a
+    // stopped/empty/superseded turn can never announce false completion.
+    if (
+      !opts?.suppressNotifications
+      && !hasError
+      && sawSuccessfulResult
+      && lastSavedAssistantMsgId !== null
+      && isLockOwner(sessionId, lockId)
+    ) {
+      try {
+        await notifyInteractiveChatCompleted({
+          sessionId,
+          sessionTitle: telegramOpts.sessionTitle,
+        });
+      } catch (error) {
+        console.warn(
+          `[chat/route] failed to queue completion notification for session ${sessionId}:`,
+          error instanceof Error ? error.message : String(error),
+        );
       }
     }
 

@@ -30,6 +30,7 @@ export type UpdaterErrorCode =
   | 'install_failed'
   | 'active_work'
   | 'activity_unavailable'
+  | 'cli_update_running'
   | 'internal';
 
 export interface UpdaterSnapshot {

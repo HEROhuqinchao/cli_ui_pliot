@@ -16,6 +16,11 @@ import {
   type UpdaterInstallResult,
   type UpdaterSnapshot,
 } from '../src/lib/updater-contract';
+import {
+  getInstallLifecycleOwner,
+  releaseInstallLifecycle,
+  tryAcquireInstallLifecycle,
+} from './install-lifecycle-coordinator';
 
 const CHECK_INTERVAL_MS = 8 * 60 * 60 * 1000;
 const INSTALL_HANDOFF_TIMEOUT_MS = 15_000;
@@ -219,6 +224,19 @@ async function installDownloadedUpdate(): Promise<UpdaterInstallResult> {
     updateSnapshot({ errorCode: 'active_work' });
     return { ok: false, errorCode: 'active_work', blockers };
   }
+  // A second install invoke can have passed the initial downloaded check while
+  // both calls were awaiting activity. Recheck before touching the shared
+  // latch so the strict same-owner rule is not mislabeled as a CLI conflict.
+  if (snapshot.phase !== 'downloaded') {
+    return { ok: false, errorCode: 'internal' };
+  }
+  if (!tryAcquireInstallLifecycle('app-updater')) {
+    if (getInstallLifecycleOwner() !== 'cli-maintenance') {
+      return { ok: false, errorCode: 'internal' };
+    }
+    updateSnapshot({ errorCode: 'cli_update_running' });
+    return { ok: false, errorCode: 'cli_update_running' };
+  }
   updateSnapshot({ phase: 'installing', errorCode: null });
   onInstallLifecycleChange(true);
   if (installHandoffTimer) clearTimeout(installHandoffTimer);
@@ -227,6 +245,7 @@ async function installDownloadedUpdate(): Promise<UpdaterInstallResult> {
     // If Electron is still alive, quitAndInstall did not complete its handoff.
     // Restore the resident lifecycle and keep the downloaded package retryable.
     onInstallLifecycleChange(false);
+    releaseInstallLifecycle('app-updater');
     updateSnapshot({ phase: 'downloaded', errorCode: 'install_failed' });
   }, INSTALL_HANDOFF_TIMEOUT_MS);
   installHandoffTimer.unref?.();
@@ -237,6 +256,7 @@ async function installDownloadedUpdate(): Promise<UpdaterInstallResult> {
     if (installHandoffTimer) clearTimeout(installHandoffTimer);
     installHandoffTimer = null;
     onInstallLifecycleChange(false);
+    releaseInstallLifecycle('app-updater');
     updateSnapshot({ phase: 'downloaded', errorCode: 'install_failed' });
     return { ok: false, errorCode: 'install_failed' };
   }
@@ -298,6 +318,7 @@ function registerUpdaterEvents(): void {
       if (installHandoffTimer) clearTimeout(installHandoffTimer);
       installHandoffTimer = null;
       onInstallLifecycleChange(false);
+      releaseInstallLifecycle('app-updater');
       updateSnapshot({ phase: 'downloaded', errorCode: 'install_failed' });
       return;
     }

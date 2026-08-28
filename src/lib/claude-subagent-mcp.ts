@@ -36,6 +36,7 @@ import { resolveForClaudeCode, type ResolvedProvider } from './provider-resolver
 import { getModelCompat, getProviderCompat } from './runtime-compat';
 import { prepareSdkSubprocessEnv } from './sdk-subprocess-env';
 import { findClaudeBinary } from './platform';
+import { assertCliProviderLaunchAllowed } from './cli-maintenance-lease';
 import {
   encodeSubagentStatusResult,
   type SubagentExecutionStatus,
@@ -903,6 +904,7 @@ async function runClaudeSubagent(input: {
     };
     applyClaudeExecutable(queryOptions);
 
+    assertCliProviderLaunchAllowed('claude');
     const conversation = query({ prompt: input.prompt, options: queryOptions });
     for await (const message of conversation) {
       activityTimeout.markActivity();

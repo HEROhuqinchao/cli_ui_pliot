@@ -20,10 +20,10 @@
 | UP-03 | stable 固定 `allowPrerelease=false`，preview 固定 `allowPrerelease=true`；两者 `allowDowngrade=false`。设置 `autoUpdater.channel` 后必须再次压回 downgrade=false；`electron-updater` 必须 exact pin。 |
 | UP-04 | 状态机只允许 idle/checking/available/downloading/downloaded/installing/error；download promise 存在或 phase 为 downloading/downloaded/installing 时拒绝并发 check，窗口重建重放 snapshot。`autoDownload=true` 时 `checkForUpdates()` 返回值里的 `downloadPromise` 也必须由 Main 立即持有并消费终态 rejection；不能只等 updater emitter，否则网络失败会逃逸成 process-level unhandled rejection。同一失败的 emitter/Promise 双源仍只能推进一次 error/backoff。 |
 | UP-05 | 启动抖动检查，之后最多每 8 小时检查；失败指数退避。无更新、离线、用户稍后与 active-work 拒绝都不生成 Sentry Issue。 |
-| UP-06 | 下载完成不强制退出。Main 在 install 前从本地 utility 查询 chat/bridge/task；无法证明 idle 时返回独立 `activity_unavailable` 并 fail closed，不得伪装成三类任务都在运行。用户结束活动工作后再次确认，或正常主动退出时完成安装。 |
+| UP-06 | 下载完成不强制退出。Main 在 install 前从本地 utility 查询 chat/bridge/task；无法证明 idle 时返回独立 `activity_unavailable` 并 fail closed。app updater install 与 CLI maintenance 必须原子竞争严格非重入的 `install-lifecycle-coordinator`：owner 标签不是 operation token，同 owner 第二次 acquire 也必须失败；CLI running 时保持 downloaded/retryable 并返回 `cli_update_running`，CLI update 也必须在 app installing/quitting 时拒绝启动。普通 quit/cancel/force 风险语义见 `CliMaintenance.md` CLIM-10。 |
 | UP-07 | IPC 只暴露 get-status/check/retry-download/install 与只读 status listener；Main 校验 sender 是当前窗口的 `127.0.0.1:<serverPort>`。 |
 | UP-08 | 日志不得包含 feed URL/query、缓存路径、installer 命令或 raw SDK error；只记录版本、枚举状态与整数进度桶。 |
-| UP-09 | release notes 视为不可信 Markdown；更新失败不阻断旧版启动和 Settings，始终保留平台正确的手工 fallback。若 GitHub 最新版本没有当前平台安装包，API 必须返回独立 `platformAssetMissing` breadcrumb，UI 明说“该版本未提供此平台安装包”，不得把 Release 页伪装成下载直链。 |
+| UP-09 | release notes 视为不可信 Markdown/HTML。Atom HTML 必须先 parse，再经 direct dependency 的 strict sanitize；禁止 script/event/style/SVG/form/image 与非 HTTP(S) URL，不能用 raw `dangerouslySetInnerHTML`。更新失败不阻断旧版启动和 Settings，始终保留平台正确的手工 fallback。若 GitHub 最新版本没有当前平台安装包，API 必须返回独立 `platformAssetMissing` breadcrumb，UI 明说“该版本未提供此平台安装包”，不得把 Release 页伪装成下载直链。 |
 | UP-10 | installer、`latest*.yml`、blockmap、checksum/attestation 必须来自同一 immutable output，经 central audit 后一次发布。metadata URL 必须是当前版本裸 basename，checksum 按精确文件名集合核对，任何旧版本/额外 release payload 都失败。mac metadata 只引用 ZIP；后置 staple 的 DMG 只作手工 bootstrap，不进入 updater graph。Windows `latest.yml` 只引用完整 unsigned NSIS installer，并发布其外置 blockmap；发布后不改 metadata、不复用版本/tag，恢复只发更高 patch。 |
 | UP-11 | `quitAndInstall()` 只是安装 handoff 请求，不是成功终态。Main 在 `before-quit-for-update` 前临时放行 close-to-hide；若同步抛错、updater error 或 15 秒内进程未进入真实 `before-quit` teardown，必须撤销 `isQuitting`、恢复窗口/托盘并回到 downloaded + `install_failed`，允许用户重试。 |
 | UP-12 | chat 活动事实必须同时存在 active `runtime_status`（`running` / `streaming` / `waiting_permission`）与未过期 session lock；尤其不能漏掉正在输出 token 的 `streaming`。崩溃留下的裸 status/过期 owner 不得永久卡安装。一次只读 activity snapshot 不是跨请求原子准入栅栏；在 chat/bridge/task 共用带租约 fence 前，不得宣称“检查后绝无新任务启动”，残余竞态由 tech-debt #88 跟踪。 |
@@ -33,6 +33,7 @@
 ## 3. 关键文件 + 责任
 
 - `electron/updater.ts`：单一 Main 状态机、electron-updater 策略、IPC 与日志。
+- `electron/install-lifecycle-coordinator.ts`：与 CLI maintenance 共用的安装排他 owner；另一侧合同见 `CliMaintenance.md`。
 - `src/lib/updater-contract.ts`：support/error/backoff/snapshot 纯合同。
 - `electron/preload.ts`, `src/types/electron.d.ts`：窄 bridge 同形。
 - `src/hooks/useUpdateChecker.ts`, `UpdateDialog.tsx`, `AboutSection.tsx`：snapshot 消费与手工 fallback。
@@ -46,6 +47,9 @@
 - [ ] packaged/stable-or-preview/platform support 原因是否显式，local/fork 是否 no-op，Linux 是否未虚假宣称？
 - [ ] check/download 是否去重，错误退避，窗口重建是否能 `getStatus()`？auto-download 的 nested `downloadPromise` 是否被 Main 显式消费，且与 error emitter 不会双计失败？
 - [ ] 安装 handoff 失败/超时后是否撤销 quit latch、恢复 downloaded 与窗口，而不是永久隐藏旧版本？
+- [ ] CLI maintenance active 时是否保持 downloaded/retryable；app updater owning latch 时是否拒绝 CLI child？
+- [ ] install activity await 后是否重新确认 phase 仍是 downloaded；同一 app install 重复 invoke 不得被误报为 `cli_update_running`？
+- [ ] Release Notes 是否保持 `rehypeRaw → strict rehype-sanitize`、HTTP(S)-only、无图片/主动内容？
 - [ ] 安装前是否同时检查 chat/bridge/task，chat 是否要求 live owner、activity 查询失败是否拒绝退出？若改任务入口，是否评估 #88 的原子准入 fence？
 - [ ] raw URL、缓存路径、installer 命令、SDK error 是否都未进入日志/Sentry/IPC？
 - [ ] native 失败时 Settings 与 GitHub fallback 是否仍可用？最新 Release 没有当前平台资产时，是否展示 `platformAssetMissing` 而非假下载 CTA？
@@ -70,6 +74,8 @@
 ## 6. 测试覆盖
 
 - `updater-contract.test.ts`：平台/channel、错误分类、退避、Main-owned IPC、平台缺资产 UI 与下载中检查按钮 source contract。
+- `cli-maintenance-security.test.ts`：app updater/CLI updater 同一 latch、普通 quit coordinator 与 reciprocal source contract。
+- `release-notes-rendering.test.ts`：GitHub Atom HTML 正常结构、Markdown 兼容及 script/style/event/SVG/form/img/危险 scheme 反例。
 - `updater-contract.test.ts`：以可控 Promise 行为测试 emitter-first / Promise-first 两种竞态都只记录一次失败且没有 `unhandledRejection`；同时钉住生产接线、downloading check 互斥、install handoff latch 回滚、无更新时清空旧 snapshot 字段，以及 `running` / `streaming` + live owner 会阻断安装、stale runtime_status 不冒充 live owner。
 - `electron-packaging-hygiene.test.ts`：真实 Main→utilityProcess→SQLite package gate。
 - 发布资产合同测试：stable 要求 macOS metadata/blockmap、Windows metadata/blockmap 与三平台 installer/checksum 的 central audit；混入 Linux updater metadata 必须失败，preview 混入任一非 Mac 资产必须失败。
@@ -90,3 +96,4 @@
 - 2026-08-24：用户澄清目标是“Mac 自动更新 + Windows/Linux 手动包”，不是 Mac-only 分发。stable 同一 Release 恢复三平台安装包，API 继续按真实 platform/arch 选直链；只有 Mac 包带 official provenance 并消费 `latest-mac.yml`，Windows/Linux 不发布 updater feed。
 - 2026-08-26：用户再次明确先交付 Windows 自动更新、Linux 延后，并接受不申请 Microsoft/Azure/PFX 签名。Windows stable 改为 GitHub single-trust-root unsigned NSIS updater：`latest.yml` + EXE blockmap + SHA-512；客户端/UI 不宣称 publisher verification。发布前新增 Immutable Releases acknowledgement、active main no-delete/no-force、`v*` tag no-delete/no-update rulesets与全 workflow Action SHA pin 门禁；既有 `v0.67.7` 仍需手动 bootstrap。
 - 2026-08-27：生产 Sentry 证明 `checkForUpdates()` 本身 resolve 后，nested `downloadPromise` 的网络 rejection 会逃逸到全局。Main 现显式拥有该 Promise，并让 nested Promise 与 updater error emitter 共用基于 phase 的一次性失败 reporter；不通过全局 ignore 隐藏真实下载失败。Claude 复审后补 emitter-first / Promise-first 行为测试，证明两种竞态均 exactly-once 且不产生 `unhandledRejection`，不再只靠源码正则固定实现形状。
+- 2026-08-28：app updater 与 CLI maintenance 改为竞争同一 Main lifecycle latch；CLI 运行时应用更新保持 downloaded，普通 quit 走等待/取消/明确 force 风险的统一 coordinator。GitHub Atom Release Notes 改为 parse 后 strict sanitize，不再把 HTML 当源码显示，也不放开 raw HTML 信任边界。

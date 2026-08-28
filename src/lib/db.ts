@@ -77,7 +77,7 @@ const RUNTIME_OWNER_LOCK_PATH = `${DB_PATH}.runtime-owner.lock`;
 // replacing this module. Keep a code-owned revision beside that handle so a
 // newly loaded migration still runs without requiring the user to restart the
 // desktop client. Bump this value whenever initDb/migrateDb gains a migration.
-const DATABASE_SCHEMA_REVISION = '2026-08-06-provider-secret-envelope-v1';
+const DATABASE_SCHEMA_REVISION = '2026-08-28-native-notifications-v1';
 const LEGACY_NOTIFICATION_BACKLOG_MARKER = 'notification_delivery_legacy_backlog_v1';
 const LEGACY_NOTIFICATION_BACKLOG_MAX_AGE_MS = 60 * 60 * 1000;
 
@@ -1414,7 +1414,63 @@ function migrateDb(db: Database.Database): void {
   `);
 
   suppressLegacyQueuedNotificationBacklog(db);
+  migrateQueuedRendererNotificationsToNative(db);
   consolidateHeartbeatTasksAndEnsureUniqueIndex(db);
+}
+
+/**
+ * Renderer toast is no longer a product notification channel. Preserve all
+ * historical terminal rows, but move still-actionable queued work to the
+ * Electron Main-owned native channel. If an event already has a native row,
+ * close only the redundant renderer row as skipped to respect the UNIQUE
+ * `(event_id, channel)` constraint without deleting audit evidence.
+ */
+export function migrateQueuedRendererNotificationsToNative(
+  db: Database.Database,
+  now = new Date(),
+): { migrated: number; skippedDuplicates: number } {
+  const migrate = db.transaction(() => {
+    const ackedAt = now.toISOString();
+    const duplicateResult = db.prepare(`
+      UPDATE notification_deliveries AS renderer
+      SET status = 'skipped',
+          error = 'renderer_channel_retired_native_exists',
+          acked_at = ?,
+          claim_owner = NULL,
+          claimed_at = NULL,
+          next_attempt_at = NULL
+      WHERE renderer.channel = 'renderer-toast'
+        AND renderer.status = 'queued'
+        AND EXISTS (
+          SELECT 1
+          FROM notification_deliveries AS native
+          WHERE native.event_id = renderer.event_id
+            AND native.channel = 'electron-native'
+        )
+    `).run(ackedAt);
+
+    const migratedResult = db.prepare(`
+      UPDATE notification_deliveries AS renderer
+      SET channel = 'electron-native',
+          claim_owner = NULL,
+          claimed_at = NULL,
+          next_attempt_at = NULL
+      WHERE renderer.channel = 'renderer-toast'
+        AND renderer.status = 'queued'
+        AND NOT EXISTS (
+          SELECT 1
+          FROM notification_deliveries AS native
+          WHERE native.event_id = renderer.event_id
+            AND native.channel = 'electron-native'
+        )
+    `).run();
+
+    return {
+      migrated: migratedResult.changes,
+      skippedDuplicates: duplicateResult.changes,
+    };
+  });
+  return migrate();
 }
 
 /**
