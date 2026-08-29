@@ -1,8 +1,8 @@
 # 2026-08-27 Sentry 生产问题修复闭环
 
 > 创建时间：2026-08-27
-> 最后更新：2026-08-27
-> 当前状态：🟡 Code complete / Tests pass / Build pass / Claude review findings closed；发布后 stable cohort 待观察
+> 最后更新：2026-08-29
+> 当前状态：🟡 已随 `v0.67.11` Shipped；Code / Tests / Build / Review / package 门禁通过，stable Sentry cohort 停增仍待观察
 
 ## 状态
 
@@ -75,7 +75,7 @@
 | 2026-08-27 | local Node/Electron source | local checkout | current | 无真实用户凭据 | updater/utility/token/DB/media/sanitizer targeted | ✅ | `npx tsx --test ...`：91 tests pass；恢复原有 message persistence 覆盖后单文件 12 tests pass |
 | 2026-08-27 | local Node/Sentry SDK | local checkout | current | 无真实用户凭据 | Claude review：wrapped media zero-event、503 阳性、updater 双竞态、utility recovery | ✅ | 复审 targeted：83/83；真实 transport 按 envelope item type 统计 error event，handled wrapper 0、503 wrapper 1；updater 两种顺序均一次失败且无 `unhandledRejection` |
 | 2026-08-27 | local Node/Electron source | local checkout | current | 无真实用户凭据 | Claude review 后 Tier 2 final full + production build | ✅ | `npm run test`：5406 tests，5405 pass / 1 existing skip / 0 fail；`npm run build` 成功（1 条既有 NFT dynamic-path warning）；本轮全部 TS/TSX scoped ESLint 0 error / 7 个 `MessageItem.tsx` 既有 warning，`lint:hooks`、`lint:docs-drift`、`git diff --check` 通过 |
-| _待发布_ | official stable | Sentry production | next release | U0 opt-in | 新 release cohort 是否停止新增对应 Issue | ⏳ | 当前任务未 push/tag/发版，不冒充 packaged 或生产观察通过 |
+| 2026-08-29 | official stable | Sentry production | `codepilot@0.67.11` | U0 opt-in | 新 release cohort 是否停止新增对应 Issue | 🟡 Release 已发布；cohort 观察待进行 | [Actions](https://github.com/op7418/CodePilot/actions/runs/33230535883) / [Release](https://github.com/op7418/CodePilot/releases/tag/v0.67.11)；发布成功不等于对应 Issue 已停增，需等待生产事件窗口 |
 
 ## 决策日志
 
@@ -88,3 +88,4 @@
 - 2026-08-27：Claude P3-2/3/4/6 作为防回归一起收口：teardown code 不再独占 recovery 决策；模糊“aborted”文本不再等同用户取消；`retryExhausted:true` 文档化为 media tool 当前终态边界；updater 从源码正则升级为两种竞态的行为测试。P3-5 的路径尾部丢失是 ST-17 已明确接受的隐私优先取舍：普通 message 不保留本地项目/文件名，stack/debug_meta 仍走独立 canonicalization 保留 symbolication 结构。
 - 2026-08-27：final full 首次复跑在 typecheck 阶段发现新 transport 测试的 `reduce` accumulator 被推断为 `unknown`；仅为测试类型缺口，显式指定 `number` 后从头重跑 `npm run test`，最终 5406/0 fail。该失败不被从证据中省略，也不把修复前 targeted 通过冒充 final full。
 - 2026-08-28：代码与 guardrail 以 commit `424f566f` 提交；pre-commit 再次完成 code tier 门禁：5406 tests，5405 pass / 1 existing skip / 0 fail。Claude review 的 P2 与可执行 P3 均有实现或测试证据闭环；仍保留发布后 official stable cohort 观察，不把本地验证冒充生产停增。
+- 2026-08-29：修复随不可变 `v0.67.11` 正式发布；run `33230535883` 全绿，Latest Release 与 20 个公开资产完成独立复核。该证据把“待发布”推进为“stable cohort 可开始观察”，但在新的生产窗口形成前不宣称 Sentry Issue 已停增。

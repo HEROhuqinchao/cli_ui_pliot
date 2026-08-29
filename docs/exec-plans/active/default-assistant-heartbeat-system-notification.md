@@ -1,8 +1,8 @@
 # P0：先完成“默认助理 → 心跳 → 系统通知”纵向闭环
 
 > 创建时间：2026-08-03
-> 最后更新：2026-08-28
-> 状态：🟡 原 P0.0–P0.4 Code complete + Tests pass + Review passed；P0.5 全系统通知与交互任务完成/审批提醒已 Code complete + Tests/Build pass，独立复审待完成；三平台 packaged native/sound/click smoke 仍待验收
+> 最后更新：2026-08-29
+> 状态：🟡 P0.5 复审 accepted，已随 `v0.67.11` Shipped；三平台 package 门禁通过，packaged native show/sound/click smoke 仍待验收
 > 优先级：P0
 > 父方向：[Harness Home Umbrella](harness-home-user-owned-core.md)
 > 历史参考：[助理工作区](../completed/assistant-workspace.md)、[后台任务与通知归档](../completed/refactor-phase-3-background-tasks-notifications.md)、[Memory v3（deferred）](../deferred/memory-system-v3.md)
@@ -16,7 +16,7 @@
 | P0.2 | 心跳 desired-state / scheduler / run 纵向自愈 | ✅ Code + automated tests + Review passed | 开启后重启仍会按时检查；可看上次、下次和失败原因 |
 | P0.3 | Electron Main 独占的持久化系统通知 | 🟡 Code + automated tests + Review passed；packaged native smoke 待执行 | 软件在后台也能收到系统通知与系统提示音；点击回到对应助理会话 |
 | P0.4 | 三平台纵向 smoke、文档与 guardrail | 🟡 文档/自动化/build 完成；三平台真实 smoke 待执行 | macOS / Windows / Linux 的能力与限制都有真实证据，不以网页 toast 冒充系统通知 |
-| P0.5 | Notification Manager 全系统化 + 交互任务关键提醒 | 🟡 Code complete + Tests/Build pass；独立复审与 packaged smoke 待完成 | 页面右下角不再消费通知事件；任务完成和等待审批会收到可点击回原会话的系统通知 |
+| P0.5 | Notification Manager 全系统化 + 交互任务关键提醒 | 🟡 Review accepted + `v0.67.11` Shipped；packaged native smoke 待完成 | 页面右下角不再消费通知事件；任务完成和等待审批会收到可点击回原会话的系统通知 |
 
 ### Claude 首轮 review 回写状态
 
@@ -654,6 +654,7 @@ node scripts/verify-packaged-server.mjs <artifact>
 | 2026-08-04 | Review fix round | current isolated worktree | automated | no live Provider | Codex canonical rules 保守投递、mirror conflict/CRLF、model warm-up success memo；全量测试、Next production build、Electron bundle | PASS | 定向 74/74；Provider 生命周期失效点收口后复跑 62/62；最终 `npm run test`: 5036/5036；`npm run build` compiled 136 routes；`node scripts/build-electron.mjs` complete。仅既存 NFT dynamic-trace warning |
 | 2026-08-28 | P0.5 notification unification | current worktree + isolated Next dist | automated | no live Provider | 全 priority native、legacy renderer queued 迁移、交互审批/完成/stale owner/隐私反例 | PASS | 定向 22/22；`npm run test`: 5433 pass / 0 fail / 1 skip；隔离 production build compiled 137 routes。仅既存 NFT dynamic-trace warning；packaged show/sound/click 未执行 |
 | 2026-08-29 | P0.5 review fix | current worktree + isolated Next dist | automated | no live Provider | Codex interrupt/inProgress + usage sticky 非成功终态、自然 end_turn 对照、renderer claim/ack 退役 | PASS | 定向 23/23；`npm run test`: 5437 pass / 0 fail / 1 skip；隔离 production build compiled 137 routes。仅既存 NFT dynamic-trace warning；packaged show/sound/click 未执行 |
+| 2026-08-29 | P0.5 stable shipment | `v0.67.11` macOS/Windows/Linux package | automated packaging | no live Provider | 正式三平台构建、Mac 签名/公证/staple、双架构 ABI、公开资产完整性 | PASS（package / release） | [Actions](https://github.com/op7418/CodePilot/actions/runs/33230535883) / [Release](https://github.com/op7418/CodePilot/releases/tag/v0.67.11)；只证明承载代码的正式包已发布，不证明 OS 实际展示、声音、点击回会话，后者继续开放 |
 
 ## 13. Claude review 请求清单
 
@@ -688,6 +689,7 @@ node scripts/verify-packaged-server.mjs <artifact>
 
 - 2026-08-28：用户明确 Notification Manager 不再使用右下角 renderer toast，low/normal/urgent 全部改为 Main-owned system notification；同时补交互任务完成与审批通知。触发点选择服务端 collector 而非 ChatView，避免切会话/reload 导致漏发或重复；完成通知要求 successful result、terminal assistant 已落库和 current lock owner 三项同时成立。旧 queued renderer row 非删除迁到 native，真实 packaged show/sound/click 保持开放。
 - 2026-08-29：Claude follow-up review 指出 Codex Stop 会产生 `interrupted` result 后再产生 usage-only result，旧逻辑可能误报完成。修复将 `interrupted` / `inProgress` 设为 sticky 非成功终态，并抑制 native/Telegram completion 与标题生成；同时把 claim/ack HTTP 收口为 native-only，Settings 测试通知使用独立 same-origin policy。
+- 2026-08-29：Claude 完整复审沿 stream→collector→notification manager→DB→Main→点击路由核对后给出 `accepted`；上一轮四个 finding 均以行为测试和真实调用链证据关闭。实现随 `v0.67.11` 正式发布，发布 CI 与公开资产审计通过；三平台 packaged native show/sound/click 仍不以 package success 冒充 smoke passed。
 - 2026-08-03：用户拍板跨客户端兼容采用“一份 canonical + 两个 native 入口”。`instructions.md` 保持用户拥有的中立真源；CodePilot 生成带 hash 的 `CLAUDE.md` / `AGENTS.md`，只对 untouched mirror 自动同步，冲突时 freeze + Settings 告警。复核同时发现 Codex Runtime 虽收到 RuntimeStreamOptions.systemPrompt，但未把它送到 app-server；本轮补入 `developerInstructions`。2026-08-04 follow-up review 证明 Codex native owner 假设缺少非 git cwd / config disable POC，现保守改为 Codex 始终保留 canonical rules；未来只有真实 marker smoke 通过后才允许去重。
 - 2026-08-04：Claude review 的 1 P1 / 3 P2 已按保守路径收口：Codex 不再依赖未经证明的 native `AGENTS.md` owner，canonical rules 恒进 `developerInstructions`；冲突态明确为 freeze + canonical 注入 + 可能 native 双投递；warm-up 成功在 renderer memo，Codex login start/complete/logout 在 Settings 侧显式以 generation 失效并阻止 stale in-flight ready（不能依赖当时通常未挂载的 chat hook）。同期将 CRLF-only mirror 归一化为 synced，记录 managed stale write 的残余毫秒级 TOCTOU，并补本轮 production build / Electron bundle 证据。实现按风险面拆为 `49d900bf`（legacy notification backlog）、`0e20c891`（native instruction mirrors + Codex developer instructions）、`e67e08b9`（macOS unsigned notification fail-closed）、`1c8bdf52`（assistant Settings UI）、`e6cbc671`（Codex model catalog warm-up）。
 - 2026-08-03：macOS dev 验收发现侧栏助理提示沿用内容区重型 Card，与导航密度不一致；改为 sidebar token、紧凑层级和 ghost action。同期右下角连续 `Hi / There` 经 DB 复核为 137 条不同历史 `renderer-toast/queued`，不是同一 delivery 重试。修复采用一次性、非删除式 backlog migration：首次升级时只把超过 1 小时的 renderer/native 遗留 delivery 标记为 `skipped`，保留事件审计并保护新通知。

@@ -1,19 +1,19 @@
 # CLI 更新提醒、一键升级与 Release Notes 安全渲染
 
 > 创建时间：2026-08-28
-> 最后更新：2026-08-28
-> 当前状态：🟡 Claude Round 2 blocker 修复 Code complete + Tests/Build pass；Review 仍待复审，真实 UpdateDialog / CLI before→after / Windows clean VM smoke 待执行
+> 最后更新：2026-08-29
+> 当前状态：🟡 Review accepted，已随 `v0.67.11` Shipped；正式三平台 package / updater 资产门禁通过，真实 UpdateDialog / CLI before→after / Windows clean VM smoke 仍待执行
 
 ## 状态
 
 | Phase | 用户会看到什么变化 | 状态 | 本阶段明确不做什么 |
 |---|---|---|---|
-| Phase 0 | 无产品变化；Claude 能在完整上下文中审查范围、信任边界与验收线 | 🚧 Round 2 `fix_requested` 已修复并回写；待独立复审 | 不把用户授权或本地测试冒充 Claude review passed |
+| Phase 0 | 无产品变化；Claude 能在完整上下文中审查范围、信任边界与验收线 | ✅ Round 2 findings 修复后复审 `accepted` | 不把用户授权或本地测试冒充 Claude review passed |
 | Phase 1 | 应用更新弹窗把 GitHub Release Notes 正常渲染为安全富文本，不再显示 HTML 源码 | 🟡 Code complete + Tests pass；待真实 UI smoke | 不改 app updater feed、签名、发布拓扑，不执行未经清洗的远程 HTML |
 | Phase 2 | Settings 能分别显示 Claude Code / Codex CLI 的当前版本、渠道和可证明的更新状态 | 🟡 Code complete + Tests pass；真实渠道 smoke 待执行 | 不把 npm `latest` 冒充 Homebrew、WinGet、native 或 stable channel 的最新版本 |
 | Phase 3 | 无活动任务时可以一键更新受支持渠道；更新结果必须由实际版本复核 | 🟡 Code complete + Tests pass；真实 before→after 待执行 | 不允许 Renderer 选择命令/参数，不自动提权，不切换用户安装渠道，不静默后台安装 |
 | Phase 4 | 启动时按“Provider + 目标版本”提醒一次，并在 Runtime Settings 提供持续状态和恢复入口 | 🟡 Code complete + Tests pass；Runtime Settings browser smoke 与 Electron 真实版本提醒卡片视觉 smoke 通过，点击更新 before→after 待执行 | 无真实 latest source 时不显示“发现新版本”，未知渠道不显示假一键更新 |
-| Phase 5 | macOS / Windows 的真实渠道 smoke、完整测试、guardrail 与交接文档形成可审计闭环 | 🚧 Round 2 targeted 21/21、full 5428 pass / 1 skip、独立 dist production build 完成；Electron/平台 smoke 待执行 | 不用 source-pin、模拟输出或 exit code 0 冒充真实升级成功，不在本计划内 push/tag/release |
+| Phase 5 | macOS / Windows 的真实渠道 smoke、完整测试、guardrail 与交接文档形成可审计闭环 | 🟡 Review accepted；`v0.67.11` CI/package/资产审计通过并 Shipped，Electron/平台功能 smoke 待执行 | 不用 source-pin、模拟输出或 exit code 0 冒充真实升级成功；发布成功不冒充功能 smoke 通过 |
 
 ## 用户问题与争议
 
@@ -413,7 +413,7 @@ T3 为 Claude npm 安装增加了包级 `--allow-scripts=@anthropic-ai/claude-co
 - [x] 原实现 targeted 15/15、`npm run test`（5419 pass / 0 fail / 1 skip）与 `npm run build` 完成；Round 2 修复 targeted 21/21、`npm run test`（5428 pass / 0 fail / 1 skip）、tsc/ESLint 与独立 dist `next build` 通过。默认 `npm run build` 按安全合同因开发客户端占用 `.next/dev/lock` 拒绝，未停止用户正在使用的 dev client。Runtime Settings browser smoke 无 console error，真实 UpdateDialog 与必要 packaged server/Electron smoke 待执行。
 - [ ] macOS disposable prefix/测试账号验证 Claude npm、Codex npm 或 standalone 的 before→after；不改用户日常 CLI。
 - [ ] Windows clean VM 验证 npm.cmd、Claude WinGet executable lock、Codex standalone self-update/失败降级、active work 拦截与 after-version。
-- [ ] 回写状态表、执行清单、决策日志和 Smoke Ledger；真实平台矩阵未完成前不标 Smoke passed / Release ready。
+- [x] 回写状态表、执行清单、决策日志和 Smoke Ledger；真实平台矩阵未完成，因此仍不标 Smoke passed / Release ready。
 
 ## Required checks draft（供 Claude 审查）
 
@@ -481,6 +481,7 @@ T3 为 Claude npm 安装增加了包级 `--allow-scripts=@anthropic-ai/claude-co
 | 2026-08-28 | local Node/Electron Round 2 regression | Claude Code / Codex CLI / Homebrew | n/a | 无真实 CLI 更新 | 同/异 Provider concurrent `performUpdate`、same-owner latch、named-cask exit 1 JSON、probe failure→unknown、multi retry remainder、running dismiss/key/i18n source contract | ✅ 21/21 targeted；full 5428 pass / 0 fail / 1 skip；独立 dist production build 通过 | `cli-maintenance-concurrency/contract/security/runner`、channel 与 release-notes tests；默认 build 因真实 dev lock fail closed，改用 `.next-e2e-review-build` 验证后已清理；不冒充真实 Homebrew before→after 或 Review passed |
 | 2026-08-28 | local production build + browser dev UI | Runtime Settings | n/a | 无真实 CLI 更新 | Next production compile/typecheck/static generation；设置页 Claude/Codex CLI 维护行、按钮禁用态与布局 | ✅ build 通过；DOM/视觉 smoke 通过；console 0 error/warn | browser 环境无 Electron preload，因此不冒充 Main IPC、toast、真实 UpdateDialog 或一键更新 smoke |
 | 2026-08-28 | Electron dev UI | Codex CLI | n/a | 本机已安装 CLI；未执行更新 | 左下持久提醒卡片展示真实 `v0.149.1 → v0.150.1`；Provider brand、紧凑宽度、action/正文左对齐、右上浮层 close | ✅ AX 与视觉截图通过；targeted 4/4、tsc、ESLint 通过 | Computer Use 检查真实 Electron；只验证 advisory 卡片与布局，不冒充点击更新或 before→after smoke |
+| 2026-08-29 | GitHub Actions / official stable | CodePilot `v0.67.11` | n/a | 正式 Apple secrets；Windows signer 全缺 | 三平台 package、Mac Developer ID/公证/staple、arm64+x64 ABI、updater graph、checksum、attestation、draft→public | ✅ **Shipped**；7/7 jobs success，Latest immutable Release 公开 | [Actions](https://github.com/op7418/CodePilot/actions/runs/33230535883) / [Release](https://github.com/op7418/CodePilot/releases/tag/v0.67.11)；20 个资产、19/19 checksum 集合、20/20 provenance 公开复核通过。这里只证明正式产物链，不冒充 UpdateDialog 富文本、CLI 点击更新 before→after 或 Windows clean VM smoke |
 | _待执行_ | local UI | CodePilot updater | n/a | 无凭据 | GitHub Atom HTML + Markdown + malicious rich-text fixture | ⏳ | 不在实施前冒充通过 |
 | _待执行_ | macOS packaged/dev | Claude Code / Codex CLI | n/a | disposable install；模型 smoke 另记真实账号形态 | selected channel before→one-click→after version | ⏳ | 需记录渠道、before/after 与 UI 状态，不记录绝对路径 |
 | _待执行_ | Windows clean VM | Claude Code / Codex CLI | n/a | disposable install；模型 smoke 另记真实账号形态 | npm.cmd / WinGet lock / standalone updater / active work | ⏳ | 需真实 VM 证据 |
@@ -514,5 +515,6 @@ T3 为 Claude npm 安装增加了包级 `--allow-scripts=@anthropic-ai/claude-co
 - 2026-08-28：第二轮现场反馈指出 action 右对齐无对齐基准、close 作为第三个 flex child 独占一列；已将 action 改为随正文左对齐，close 改为右上角 absolute overlay，并加入 source-contract 防回归断言。
 - 2026-08-28：Claude Round 2 复审给出 `fix_requested`：确认 `performUpdate` admission 跨 await 与 same-owner latch 重入可导致双更新/提前 release；确认 Homebrew named-cask outdated 使用 exit 1 + JSON。已在首 await 前同步占 starting+latch、将 latch 改 strict non-reentrant，并以真实同/异 Provider 并发行为测试钉住；Homebrew 只接受 parseable exit 0/1 exact JSON，其他失败为 unknown。P3 卡片 retry/dismiss/key 与新增 i18n 同步收口。
 - 2026-08-28：Round 2 targeted 21/21、`npm run test`（5428 pass / 0 fail / 1 skip）、tsc/ESLint 与独立 dist production build 通过。默认 `npm run build` 因正在运行的 Electron dev client 持有 `.next/dev/lock` 按合同拒绝；未停止用户客户端，临时 build 目录验证后已删除。仍不标 Review passed / Smoke passed / Release ready。
+- 2026-08-29：Claude 完整复审确认四个上一轮 finding 全部关闭，定向 21/21 复跑通过，结论 `accepted`。正式 `v0.67.11` run `33230535883` 的 source、Windows unsigned package、Linux 双架构、Mac Developer ID/公证/staple、arm64+x64 ABI、单一信任根、精确资产审计、attestation 与 draft→public 全绿；公开 Release 为 Latest + immutable。真实 UpdateDialog 富文本、CLI selected-channel before→after 与 Windows clean VM 仍按 Smoke Ledger 保持开放。
 - 2026-08-28：计划文档通过 docs drift、diff whitespace、公开文档 private-marker 与项目测试门禁；这些证据只证明计划可交接，不替代实施后的单元、集成、UI 与真实平台 smoke。
 - 2026-08-28：本计划只进入 Claude plan review，不授予 push/tag/release，也不把计划完成标成产品 Code complete。
