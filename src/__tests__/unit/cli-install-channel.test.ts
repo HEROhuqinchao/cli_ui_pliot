@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { classifyCliInstallPath, pathIsInside } from '../../lib/cli-install-channel';
+import {
+  classifyCliInstallPath,
+  isCodexDesktopManagedPath,
+  pathIsInside,
+} from '../../lib/cli-install-channel';
 
 describe('CLI install channel path evidence', () => {
   it('keeps macOS Codex desktop bundles out of the standalone updater', () => {
@@ -19,6 +23,19 @@ describe('CLI install channel path evidence', () => {
       platform: 'darwin',
       homeDir: '/Users/tester',
     }), { channel: 'desktop_bundle', confidence: 'proven' });
+
+    assert.deepEqual(classifyCliInstallPath({
+      provider: 'codex',
+      binaryPath: '/usr/local/bin/codex',
+      realPath: '/Applications/ChatGPT.app/Contents/Resources/bin/codex',
+      platform: 'darwin',
+      homeDir: '/Users/tester',
+    }), { channel: 'desktop_bundle', confidence: 'proven' });
+
+    assert.equal(isCodexDesktopManagedPath(
+      '/Applications/ChatGPT.app/Contents/Frameworks/ChatGPT Helper.app/Contents/MacOS/codex',
+      'darwin',
+    ), true);
   });
 
   it('keeps Windows Store Codex bundles out of the standalone updater', () => {
@@ -26,6 +43,22 @@ describe('CLI install channel path evidence', () => {
       provider: 'codex',
       binaryPath: 'C:\\Program Files\\WindowsApps\\OpenAI.Codex_1.0.0_x64__abc\\codex.exe',
       realPath: 'C:\\Program Files\\WindowsApps\\OpenAI.Codex_1.0.0_x64__abc\\codex.exe',
+      platform: 'win32',
+      homeDir: 'C:\\Users\\tester',
+    }), { channel: 'desktop_bundle', confidence: 'proven' });
+
+    assert.deepEqual(classifyCliInstallPath({
+      provider: 'codex',
+      binaryPath: 'C:\\Users\\tester\\AppData\\Local\\Programs\\ChatGPT\\resources\\bin\\codex.exe',
+      realPath: 'C:\\Users\\tester\\AppData\\Local\\Programs\\ChatGPT\\resources\\bin\\codex.exe',
+      platform: 'win32',
+      homeDir: 'C:\\Users\\tester',
+    }), { channel: 'desktop_bundle', confidence: 'proven' });
+
+    assert.deepEqual(classifyCliInstallPath({
+      provider: 'codex',
+      binaryPath: 'C:\\Users\\tester\\AppData\\Local\\Microsoft\\WindowsApps\\codex.exe',
+      realPath: 'C:\\Users\\tester\\AppData\\Local\\Microsoft\\WindowsApps\\codex.exe',
       platform: 'win32',
       homeDir: 'C:\\Users\\tester',
     }), { channel: 'desktop_bundle', confidence: 'proven' });
@@ -38,6 +71,14 @@ describe('CLI install channel path evidence', () => {
       realPath: '/Users/tester/.local/bin/codex',
       platform: 'darwin',
       homeDir: '/Users/tester',
+    }), { channel: 'standalone', confidence: 'proven' });
+
+    assert.deepEqual(classifyCliInstallPath({
+      provider: 'codex',
+      binaryPath: 'C:\\Users\\tester\\AppData\\Local\\Programs\\OpenAI\\Codex\\bin\\codex.exe',
+      realPath: 'C:\\Users\\tester\\AppData\\Local\\Programs\\OpenAI\\Codex\\bin\\codex.exe',
+      platform: 'win32',
+      homeDir: 'C:\\Users\\tester',
     }), { channel: 'standalone', confidence: 'proven' });
   });
 

@@ -50,6 +50,7 @@ import {
   assertCliProviderLaunchAllowed,
   isCliMaintenanceActive,
 } from '../cli-maintenance-lease';
+import { isCodexDesktopManagedPath } from '../cli-install-channel';
 
 interface SpawnedTransport extends CodexTransport {
   readonly proc: ChildProcessWithoutNullStreams;
@@ -473,9 +474,7 @@ export function getWindowsCodexCandidates(
 
 /** Paths managed by the Windows app installer are not assumed executable. */
 export function isWindowsDesktopCodexPath(candidatePath: string): boolean {
-  const normalized = candidatePath.replace(/\//g, '\\').toLowerCase();
-  return normalized.includes('\\program files\\windowsapps\\')
-    || normalized.includes('\\microsoft\\windowsapps\\codex');
+  return isCodexDesktopManagedPath(candidatePath, 'win32');
 }
 
 /** Cheap existence-only candidate scan. No subprocesses are spawned here. */

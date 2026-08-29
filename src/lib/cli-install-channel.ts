@@ -6,6 +6,26 @@ export interface CliPathClassification {
   confidence: 'proven' | 'ambiguous' | 'unknown';
 }
 
+/** A Codex binary nested inside another desktop application's installation is
+ * owned by that application even when its filename looks like standalone. */
+export function isCodexDesktopManagedPath(
+  candidatePath: string,
+  platform: NodeJS.Platform,
+): boolean {
+  const normalized = candidatePath.replace(/\\/g, '/').toLowerCase();
+  if (platform === 'darwin') {
+    return /(?:^|\/)[^/]+\.app\/contents\//.test(normalized);
+  }
+  if (platform !== 'win32') return false;
+  if (normalized.includes('/program files/windowsapps/')) return true;
+  if (normalized.includes('/microsoft/windowsapps/codex')) return true;
+
+  // Future unpackaged/NSIS desktop layouts remain app-owned when the binary
+  // sits below a known ChatGPT/Codex application Resources root. Keep the
+  // official standalone .../OpenAI/Codex/bin path outside this match.
+  return /\/(?:program files(?: \(x86\))?|appdata\/local\/programs)\/(?:openai\/)?(?:chatgpt|codex)(?: desktop)?\/(?:app\/)?resources\//.test(normalized);
+}
+
 /** Path evidence is only the first stage; package-manager channels remain
  * ambiguous until their root/cask/package ownership is proven separately. */
 export function classifyCliInstallPath(input: {
@@ -22,11 +42,9 @@ export function classifyCliInstallPath(input: {
 
   if (input.provider === 'codex') {
     const selectedPaths = [normalized, real];
-    const isDesktopBundle = input.platform === 'darwin'
-      ? selectedPaths.some((candidate) => /\.app\/contents\/resources\/codex$/.test(candidate))
-      : input.platform === 'win32'
-        ? selectedPaths.some((candidate) => candidate.includes('/program files/windowsapps/'))
-        : false;
+    const isDesktopBundle = selectedPaths.some((candidate) => (
+      isCodexDesktopManagedPath(candidate, input.platform)
+    ));
     if (isDesktopBundle) {
       // This binary is lifecycle-owned by the desktop application. Treating
       // its extensionless/.exe shape as standalone would offer a self-update

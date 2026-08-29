@@ -79,8 +79,10 @@ describe('CLI maintenance trust and lifecycle wiring', () => {
     const service = read('electron/cli-maintenance.ts');
     const row = read('src/components/settings/CliMaintenanceRow.tsx');
 
-    assert.match(classifier, /\.app\\\/contents\\\/resources\\\/codex\$/);
+    assert.match(classifier, /\.app\\\/contents\\\//);
     assert.match(classifier, /program files\/windowsapps/);
+    assert.match(classifier, /appdata\\\/local\\\/programs/);
+    assert.match(classifier, /microsoft\/windowsapps\/codex/);
     assert.match(classifier, /channel: 'desktop_bundle', confidence: 'proven'/);
     assert.match(service, /target\.channel === 'desktop_bundle'[\s\S]{0,240}latestVersion: null, availability: 'managed_auto'/);
     assert.doesNotMatch(service, /channel === 'desktop_bundle'[\s\S]{0,240}updateCommand\s*=/);

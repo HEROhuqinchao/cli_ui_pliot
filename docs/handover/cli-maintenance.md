@@ -43,7 +43,7 @@ Main 是 executor 和状态 owner；utility 只提供 safe-for-same-origin 的 i
 
 Windows package-manager shim 不通过 `shell=true` 执行。Main 读取已证明 package 的 `package.json#bin`，用真实 Node executable + argv 启动脚本；路径中的空格或元字符不进入 shell 解析。
 
-macOS 的 `*.app/Contents/Resources/codex` 与 Windows Store app package 内 binary 必须先于通用 standalone 文件形状识别。Runtime 诊断的 `desktop_bundle` 与 maintenance channel 保持同一语义；CodePilot 不改写 owner app、也不把 public standalone release 当作其可执行更新目标。
+macOS 的任意 `*.app/Contents/**/codex`，以及 Windows Store/alias、已知 ChatGPT/Codex desktop `Resources/**` 内 binary 必须先于通用 standalone 文件形状识别。Runtime discovery 与 maintenance 复用 `isCodexDesktopManagedPath()`，避免一侧随布局演进而另一侧重新误判；Windows 官方 standalone `.../OpenAI/Codex/bin/codex.exe` 是固定反例。CodePilot 不改写 owner app、也不把 public standalone release 当作其可执行更新目标。
 
 ## 生命周期与恢复
 
