@@ -29,6 +29,7 @@ import { saveMediaToLibrary } from '@/lib/media-saver';
 import type { SSEEvent, TokenUsage, MessageContentBlock, MediaBlock, ExternalSource } from '@/types';
 
 const ASSISTANT_CHECKPOINT_INTERVAL_MS = 120;
+const NON_SUCCESSFUL_TERMINAL_FINISH_REASONS = new Set(['interrupted', 'inProgress']);
 /**
  * Serialize assistant blocks with the same shape used by historical rendering.
  * Checkpoints and terminal persistence must share this helper so refreshing
@@ -114,6 +115,7 @@ export async function collectStreamResponse(
   let hasError = false;
   let errorMessage = '';
   let sawSuccessfulResult = false;
+  let sawNonSuccessfulTerminalResult = false;
   let lastSavedAssistantMsgId: string | null = null;
   let checkpointMessageId: string | null = null;
   let lastCheckpointAt = 0;
@@ -352,6 +354,19 @@ export async function collectStreamResponse(
             } else if (event.type === 'result') {
               try {
                 const resultData = JSON.parse(event.data);
+                const finishReason = typeof resultData.finish_reason === 'string'
+                  ? resultData.finish_reason
+                  : null;
+                if (
+                  finishReason
+                  && NON_SUCCESSFUL_TERMINAL_FINISH_REASONS.has(finishReason)
+                ) {
+                  // Codex emits a second usage-only result after the terminal
+                  // interrupted/inProgress result. Keep this sticky so that
+                  // follow-up accounting cannot turn a stopped turn back into
+                  // a successful completion.
+                  sawNonSuccessfulTerminalResult = true;
+                }
                 if (resultData.usage) {
                   tokenUsage = resultData.usage;
                   persistCheckpoint(true);
@@ -367,7 +382,7 @@ export async function collectStreamResponse(
                         ? resultData.errors.join('\n')
                         : resultData.subtype) || 'The conversation ended with an error';
                   }
-                } else {
+                } else if (!sawNonSuccessfulTerminalResult) {
                   sawSuccessfulResult = true;
                 }
                 // Also capture session_id from result if we missed it from init.
@@ -526,13 +541,19 @@ export async function collectStreamResponse(
     // Preconditions, all required:
     //   - the route marked this as the session's first real user turn,
     //   - the turn ended cleanly (`hasError` covers thrown errors AND inline
-    //     `error` SSE events; an aborted/Stopped turn lands here too),
+    //     `error` SSE events; interrupted/inProgress terminal results are
+    //     tracked separately because they are not provider errors),
     //   - the assistant row actually persisted (a turn dropped by the DP1 owner
     //     gate is a superseded turn — it must not name the new owner's chat).
     // Not awaited: `collectStreamResponse` is itself detached from the streaming
     // Response, and nothing downstream of here may wait on a provider call.
     // `generateSessionTitle` never throws; `.catch` is belt-and-braces.
-    if (opts?.titleGeneration && !hasError && lastSavedAssistantMsgId !== null) {
+    if (
+      opts?.titleGeneration
+      && !hasError
+      && !sawNonSuccessfulTerminalResult
+      && lastSavedAssistantMsgId !== null
+    ) {
       const gen = opts.titleGeneration;
 
       import('@/lib/title-generation')
@@ -569,6 +590,7 @@ export async function collectStreamResponse(
     if (
       !opts?.suppressNotifications
       && !hasError
+      && !sawNonSuccessfulTerminalResult
       && sawSuccessfulResult
       && lastSavedAssistantMsgId !== null
       && isLockOwner(sessionId, lockId)
@@ -591,7 +613,7 @@ export async function collectStreamResponse(
     if (!opts?.suppressNotifications) {
       if (hasError) {
         notifySessionError(errorMessage, telegramOpts).catch(() => {});
-      } else {
+      } else if (!sawNonSuccessfulTerminalResult) {
         const textSummary = contentBlocks
           .filter((b): b is Extract<MessageContentBlock, { type: 'text' }> => b.type === 'text')
           .map((b) => b.text)

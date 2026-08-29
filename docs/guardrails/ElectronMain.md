@@ -40,7 +40,7 @@
 | 16 | AI 输出的本地路径不得进入通用 `shell.openPath`。`/api/files/inspect` 只接受绝对路径 + `sessionId` 或固定 `home` scope，由服务端推导根并返回 canonical `realPath`；主进程在 OS 调用前再次 realpath/stat。目录只能 `showItemInFolder`，bundle 目录拒绝；文件只允许 workspace `.html/.htm` 走专用 open IPC | `local-path-security` + DevOutput / PreviewPanel / DiffSummary + inspect route + main IPC |
 | 17 | `/api/files/open` fallback 不得拼 shell 字符串；可执行文件固定、路径只能作为单个 argv，`shell: false`，且 scope/realpath/bundle 规则与主进程一致 | files/open route + tests |
 | 18 | 默认助理路径 IPC 无输入，只返回 `path.join(app.getPath('documents'), 'CodePilot', 'Assistant')`；不得演变成 Renderer 可控的通用路径 resolver | `default-assistant-home.ts` + main/preload |
-| 19 | `electron-native` 只有 Main 一个 consumer，visible/hidden/tray 不切 owner；所有新 notification event 无论 priority 都只创建 native delivery，Renderer 不再挂载 delivery consumer。`renderer-toast` 仅保留为历史审计/迁移 literal | notification manager + native delivery service + AppShell |
+| 19 | `electron-native` 只有 Main 一个 consumer，visible/hidden/tray 不切 owner；所有新 notification event 无论 priority 都只创建 native delivery，Renderer 不再挂载 delivery consumer，claim/ack HTTP 面也只接受 Electron Main 的 `electron-native`。`renderer-toast` 仅保留为历史审计/迁移 literal；Settings 测试动作走独立 same-origin policy | notification manager + claim policy + native delivery service + AppShell |
 | 20 | native delivery 只有收到 `show` event 才 ack delivered；共同 throw/unsupported/timeout 收口 error，Windows 额外监听 `failed`，macOS/Linux 不等待不存在的事件 | `notification-lifecycle.ts` |
 | 21 | 提示音服从系统 policy：macOS 使用 `sound:'default'` 且 `silent:false`，Windows/Linux 使用平台默认且不自播放音频；最终能力必须由对应 packaged smoke 证明 | native options builder + release smoke |
 | 22 | 已 show 的 Notification 对象在 click/close 前由有界 retention 保活；点击在 Renderer ready 前进入有界队列，ready handshake 后按 event id 幂等投递。action 只能解析为应用内 route 或已验证的 task/session fallback | `notification-lifecycle.ts` + `notification-click-queue.ts` + main/preload/hooks |
@@ -195,6 +195,7 @@
 - 2026-08-28 — CLI maintenance child 改由 Main 持有，并与 app updater/quit 共用 lifecycle latch。utility recovery fork 前注入 provider lease bootstrap，healthy 后立即 reconcile，避免 heartbeat 间隔内新 Runtime 抢跑；详细执行合同集中在 `CliMaintenance.md`。
 - 2026-08-28 — Round 2 并发审查确认 owner label 不能代表单次 acquire：latch 改为严格非重入，CLI 在任何 active-work/target/latest await 前同步占 starting slot 与 latch，避免双安装、activeOperation 覆盖和提前 release。
 - 2026-08-28 — 用户明确右下角 notification event 不再作为产品通知面。所有 priority 统一创建 `electron-native` delivery，AppShell 移除 Renderer consumer；交互任务完成与审批请求由服务端 collector 写 durable event，点击回原会话。普通按钮反馈/错误提示仍可使用 toast，它们不是 Notification Manager delivery。
+- 2026-08-29 — follow-up review 后关闭遗留 `renderer-toast` claim/ack HTTP 能力；Settings 测试通知保留独立 same-origin Renderer 边界，不再把历史 channel 当作调用方身份。
 - 2026-08-27 — 生产样本证明 utility unexpected-exit Issue 是异质集合，不支持统一归为 OOM。Main 现把 `0x40010004` / `0xC000026B` 识别为 Windows teardown 并保持 zero telemetry；Claude 复审指出外部终止也可能复用相同 code，因此退出码不再单独关闭恢复，app 未 quit 时仍走既有 bounded recovery。其余退出保留 generation one-shot 并按稳定 exit class 分组。
 - 2026-08-24 — 本轮 tag/prerelease 发布范围收窄为 macOS。Windows/Linux 原生构建 job 保留作手工 artifact 验证，但 `CODEPILOT_OFFICIAL_UPDATE_BUILD=0` 且 central Release 明确排除其资产。
 - 2026-08-24 — 用户随后澄清 stable 仍需全平台分发：tag 恢复 Windows/Linux 手动安装包，保持 `CODEPILOT_OFFICIAL_UPDATE_BUILD=0`；preview 与原生 updater 仍只有 macOS。

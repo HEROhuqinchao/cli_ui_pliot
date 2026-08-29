@@ -183,7 +183,7 @@
 
 - 所有 Notification Manager 事件无论 low / normal / urgent 都只创建 `electron-native` delivery；Renderer 不再挂载 delivery consumer。普通按钮反馈、表单错误等仍可用页面 toast，但它们不是 notification event。
 - Electron Main 无论窗口 visible / hidden 都负责领取 `electron-native`，不按可见性切换 owner。
-- `renderer-toast` 只作为旧库审计 literal 保留；仍 queued 且可执行的旧行启动时迁到 native，已有 native peer 时冗余 renderer row 收口 skipped，不删除历史。
+- `renderer-toast` 只作为旧库审计/迁移 literal 保留；claim/ack HTTP 面明确拒绝。仍 queued 且可执行的旧行启动时迁到 native，已有 native peer 时冗余 renderer row 收口 skipped，不删除历史。
 - 对 heartbeat 不再创建“页面 toast 已显示 = 已提醒”的假成功；系统通知失败时，chat message 和 run log 仍在，但 UI 必须显示 native delivery error。
 - 交互聊天的 `permission_request` 和真实成功完成由服务端 collector 单点创建 durable event。完成必须有 successful result、已持久化 terminal assistant row、当前 session lock owner；失败/停止/autoTrigger/stale owner 不得误报。
 
@@ -448,7 +448,7 @@
 ### 执行清单
 
 - [x] additive migration 扩展 delivery claim/retry 字段、bootstrap schema、on-touch migration、TS type 与 CRUD；现有 delivery status CHECK 枚举完全不变，claim 不引入新 status。
-- [x] 用 channel-scoped POST claim/ack 取代 destructive drain GET；mutation 校验 loopback Host、Origin/consumer boundary、JSON content type、channel enum。
+- [x] 用 native-only POST claim/ack 取代 destructive drain GET；mutation 校验 loopback Host、Electron Main consumer、JSON content type，明确拒绝退役 `renderer-toast`。Settings 测试通知使用独立 same-origin Renderer policy。
 - [x] Electron Main 启动单一 native delivery service，visible/hidden 不切 owner。
 - [x] 所有 priority 只创建 `electron-native`；AppShell 删除 Renderer notification poll，heartbeat/native 失败不得被页面 toast 掩盖。
 - [x] queued legacy renderer delivery 事务迁到 native；native peer duplicate 收口 skipped，历史 event/delivery 不删除，migration 可重入且 schema revision 已 bump。
@@ -633,7 +633,7 @@ node scripts/verify-packaged-server.mjs <artifact>
 
 - `sendNotification` 的 low/normal/urgent 全部创建 `electron-native`；urgent 仍按既有策略额外考虑 Bridge，non-urgent 不产生 Bridge row。
 - AppShell 移除 `useNotificationPoll`，页面 Toaster 继续服务操作反馈与 CLI maintenance card，不再消费 notification delivery。
-- `collectStreamResponse` 是三 Runtime 单一触发点：审批按 `permissionRequestId` 去重；完成只在 successful result + terminal assistant persisted + current lock owner 成立时发出。
+- `collectStreamResponse` 是三 Runtime 单一触发点：审批按 `permissionRequestId` 去重；完成只在 successful result + terminal assistant persisted + current lock owner 成立时发出。Codex `interrupted` / `inProgress` 为 sticky 非成功终态，后续 usage-only result 不得恢复成功。
 - native copy 按持久化 locale 生成并限制会话/tool 字段长度、清除控制字符；不包含 tool input、路径或模型答案。event 保存 session/action，点击回 `/chat/<sessionId>`。
 - DB revision bump 后事务迁移仍 queued 的 renderer row：无 native peer 原位改 channel；有 peer 只把 renderer duplicate 标 skipped；terminal 历史不改、不删。
 - 自动化：`interactive-chat-notifications.test.ts` 覆盖审批重复 frame、成功完成、失败/autoTrigger/stale owner 反例与参数不泄露；`notification-channel-retirement.test.ts` 覆盖迁移正反例与幂等；channel/Main owner 既有测试同步改为全 native。
@@ -653,6 +653,7 @@ node scripts/verify-packaged-server.mjs <artifact>
 | 2026-08-03 | P0.1–P0.3 | isolated worktree + APFS build copy | automated | no live Provider | 全量测试、Next production build、Electron main/preload bundle | PASS | `npm run test`: 5019/5019；`npm run build` compiled 136 routes；`node scripts/build-electron.mjs` complete。既存 NFT dynamic-trace warning 仍存在 |
 | 2026-08-04 | Review fix round | current isolated worktree | automated | no live Provider | Codex canonical rules 保守投递、mirror conflict/CRLF、model warm-up success memo；全量测试、Next production build、Electron bundle | PASS | 定向 74/74；Provider 生命周期失效点收口后复跑 62/62；最终 `npm run test`: 5036/5036；`npm run build` compiled 136 routes；`node scripts/build-electron.mjs` complete。仅既存 NFT dynamic-trace warning |
 | 2026-08-28 | P0.5 notification unification | current worktree + isolated Next dist | automated | no live Provider | 全 priority native、legacy renderer queued 迁移、交互审批/完成/stale owner/隐私反例 | PASS | 定向 22/22；`npm run test`: 5433 pass / 0 fail / 1 skip；隔离 production build compiled 137 routes。仅既存 NFT dynamic-trace warning；packaged show/sound/click 未执行 |
+| 2026-08-29 | P0.5 review fix | current worktree + isolated Next dist | automated | no live Provider | Codex interrupt/inProgress + usage sticky 非成功终态、自然 end_turn 对照、renderer claim/ack 退役 | PASS | 定向 23/23；`npm run test`: 5437 pass / 0 fail / 1 skip；隔离 production build compiled 137 routes。仅既存 NFT dynamic-trace warning；packaged show/sound/click 未执行 |
 
 ## 13. Claude review 请求清单
 
@@ -686,6 +687,7 @@ node scripts/verify-packaged-server.mjs <artifact>
 ## 15. 决策日志
 
 - 2026-08-28：用户明确 Notification Manager 不再使用右下角 renderer toast，low/normal/urgent 全部改为 Main-owned system notification；同时补交互任务完成与审批通知。触发点选择服务端 collector 而非 ChatView，避免切会话/reload 导致漏发或重复；完成通知要求 successful result、terminal assistant 已落库和 current lock owner 三项同时成立。旧 queued renderer row 非删除迁到 native，真实 packaged show/sound/click 保持开放。
+- 2026-08-29：Claude follow-up review 指出 Codex Stop 会产生 `interrupted` result 后再产生 usage-only result，旧逻辑可能误报完成。修复将 `interrupted` / `inProgress` 设为 sticky 非成功终态，并抑制 native/Telegram completion 与标题生成；同时把 claim/ack HTTP 收口为 native-only，Settings 测试通知使用独立 same-origin policy。
 - 2026-08-03：用户拍板跨客户端兼容采用“一份 canonical + 两个 native 入口”。`instructions.md` 保持用户拥有的中立真源；CodePilot 生成带 hash 的 `CLAUDE.md` / `AGENTS.md`，只对 untouched mirror 自动同步，冲突时 freeze + Settings 告警。复核同时发现 Codex Runtime 虽收到 RuntimeStreamOptions.systemPrompt，但未把它送到 app-server；本轮补入 `developerInstructions`。2026-08-04 follow-up review 证明 Codex native owner 假设缺少非 git cwd / config disable POC，现保守改为 Codex 始终保留 canonical rules；未来只有真实 marker smoke 通过后才允许去重。
 - 2026-08-04：Claude review 的 1 P1 / 3 P2 已按保守路径收口：Codex 不再依赖未经证明的 native `AGENTS.md` owner，canonical rules 恒进 `developerInstructions`；冲突态明确为 freeze + canonical 注入 + 可能 native 双投递；warm-up 成功在 renderer memo，Codex login start/complete/logout 在 Settings 侧显式以 generation 失效并阻止 stale in-flight ready（不能依赖当时通常未挂载的 chat hook）。同期将 CRLF-only mirror 归一化为 synced，记录 managed stale write 的残余毫秒级 TOCTOU，并补本轮 production build / Electron bundle 证据。实现按风险面拆为 `49d900bf`（legacy notification backlog）、`0e20c891`（native instruction mirrors + Codex developer instructions）、`e67e08b9`（macOS unsigned notification fail-closed）、`1c8bdf52`（assistant Settings UI）、`e6cbc671`（Codex model catalog warm-up）。
 - 2026-08-03：macOS dev 验收发现侧栏助理提示沿用内容区重型 Card，与导航密度不一致；改为 sidebar token、紧凑层级和 ghost action。同期右下角连续 `Hi / There` 经 DB 复核为 137 条不同历史 `renderer-toast/queued`，不是同一 delivery 重试。修复采用一次性、非删除式 backlog migration：首次升级时只把超过 1 小时的 renderer/native 遗留 delivery 标记为 `skipped`，保留事件审计并保护新通知。

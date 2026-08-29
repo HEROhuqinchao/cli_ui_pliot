@@ -134,6 +134,64 @@ describe('interactive chat native notifications', () => {
     assert.equal(notificationEvents(background.id).length, 0);
   });
 
+  it('does not turn a Codex interrupt plus usage frame into completion', async () => {
+    const interrupted = createSession('codex-interrupted-notify');
+    const interruptedLock = 'codex-interrupted-notify-lock';
+    assert.equal(acquireSessionLock(interrupted.id, interruptedLock, 'test', 600), true);
+    await collectStreamResponse(
+      streamOf([
+        sse('text', 'partial response before Stop'),
+        sse('result', { finish_reason: 'interrupted' }),
+        sse('result', { usage: { input_tokens: 4, output_tokens: 2 } }),
+      ]),
+      interrupted.id,
+      interruptedLock,
+      { sessionId: interrupted.id, sessionTitle: interrupted.title },
+    );
+    assert.equal(
+      notificationEvents(interrupted.id).length,
+      0,
+      'usage accounting after an interrupted terminal result must not restore success',
+    );
+
+    const stillRunning = createSession('codex-in-progress-notify');
+    const stillRunningLock = 'codex-in-progress-notify-lock';
+    assert.equal(acquireSessionLock(stillRunning.id, stillRunningLock, 'test', 600), true);
+    await collectStreamResponse(
+      streamOf([
+        sse('text', 'non-terminal snapshot'),
+        sse('result', { finish_reason: 'inProgress' }),
+        sse('result', { usage: { input_tokens: 3, output_tokens: 1 } }),
+      ]),
+      stillRunning.id,
+      stillRunningLock,
+      { sessionId: stillRunning.id, sessionTitle: stillRunning.title },
+    );
+    assert.equal(
+      notificationEvents(stillRunning.id).length,
+      0,
+      'a conservative inProgress mapping is not a successful terminal result',
+    );
+
+    const completed = createSession('codex-completed-notify');
+    const completedLock = 'codex-completed-notify-lock';
+    assert.equal(acquireSessionLock(completed.id, completedLock, 'test', 600), true);
+    await collectStreamResponse(
+      streamOf([
+        sse('text', 'natural completion'),
+        sse('result', { finish_reason: 'end_turn' }),
+        sse('result', { usage: { input_tokens: 4, output_tokens: 2 } }),
+      ]),
+      completed.id,
+      completedLock,
+      { sessionId: completed.id, sessionTitle: completed.title },
+    );
+    assert.deepEqual(
+      notificationEvents(completed.id).map((event) => event.title),
+      ['任务已完成'],
+    );
+  });
+
   it('drops notifications from a superseded lock owner', async () => {
     const session = createSession('stale-notify');
     const staleLock = 'stale-notify-lock';
