@@ -2284,9 +2284,11 @@ export interface ScheduledTask {
  * typos.
  */
 export type NotificationChannel =
+  // Legacy audit/migration literal. New notification events never target the
+  // renderer; every priority is owned by Electron Main's native channel.
   | 'renderer-toast'
   // `electron-native` is exclusively claimed and displayed by Electron Main,
-  // independent of BrowserWindow visibility.
+  // independent of BrowserWindow visibility and notification priority.
   // The retired `electron-bg-native` literal is intentionally NOT
   // listed here so a future regression can't smuggle it back in.
   | 'electron-native'

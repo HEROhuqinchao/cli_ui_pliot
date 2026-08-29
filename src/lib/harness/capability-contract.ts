@@ -323,7 +323,7 @@ const tasksAndNotify: CapabilityContract = {
   systemPromptFragment: NOTIFICATION_MCP_SYSTEM_PROMPT,
   toolResultShape: 'text',
   canonicalEventTypes: ['tool_started', 'tool_completed'],
-  uiRenderPath: 'Inline text; system notifications via NotificationManager.sendNotification (renderer toast + Electron + Telegram per priority)',
+  uiRenderPath: 'Inline text; system notifications via NotificationManager.sendNotification (Electron native for every priority; Telegram additionally for urgent)',
 };
 
 const assistantBuddy: CapabilityContract = {

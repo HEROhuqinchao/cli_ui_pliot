@@ -36,6 +36,7 @@ import { sanitizeClaudeModelOptions } from './claude-model-options';
 import { buildSamplingIgnoredNotice } from './anthropic-sampling-notice';
 import { buildEffortAdjustmentNotice } from './anthropic-effort-adjustment-notice';
 import { findClaudeBinary, invalidateClaudePathCache } from './platform';
+import { assertCliProviderLaunchAllowed } from './cli-maintenance-lease';
 import { notifyPermissionRequest, notifyGeneric } from './telegram-bot';
 import { classifyError, formatClassifiedError, isSessionStateResultError } from './error-classifier';
 import { resolveWorkingDirectory } from './working-directory';
@@ -650,6 +651,7 @@ export async function generateTextViaSdk(params: GenerateTextViaSdkParams): Prom
       }
     }
 
+    assertCliProviderLaunchAllowed('claude');
     const conversation = query({
       prompt: params.prompt,
       options: queryOptions,
@@ -2193,6 +2195,7 @@ export function streamClaudeSdk(options: ClaudeStreamOptions): ReadableStream<st
         // Try to start the conversation. If resuming a previous session fails
         // (e.g. stale/corrupt session file, CLI version mismatch), automatically
         // fall back to starting a fresh conversation without resume.
+        assertCliProviderLaunchAllowed('claude');
         let conversation = query({
           prompt: finalPrompt,
           options: queryOptions,
@@ -2243,6 +2246,7 @@ export function streamClaudeSdk(options: ClaudeStreamOptions): ReadableStream<st
             }));
             // Remove resume and try again as a fresh conversation with history context
             delete queryOptions.resume;
+            assertCliProviderLaunchAllowed('claude');
             conversation = query({
               prompt: buildFinalPrompt(true),
               options: queryOptions,
@@ -2972,6 +2976,7 @@ export function streamClaudeSdk(options: ClaudeStreamOptions): ReadableStream<st
               retryOptions.systemPrompt = { type: 'preset', preset: 'claude_code', append: systemPrompt };
             }
 
+            assertCliProviderLaunchAllowed('claude');
             const retryConversation = query({ prompt: retryPrompt, options: retryOptions });
 
             // Forward retry stream events (simplified — covers the critical path)

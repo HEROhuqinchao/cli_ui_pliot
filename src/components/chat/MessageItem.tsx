@@ -41,6 +41,7 @@ import {
   collapseLogicalSubagentRuns,
   isSubagentToolCall,
 } from '@/lib/subagent-view';
+import { parseDisplayTokenUsage } from '@/lib/token-usage-display';
 
 interface ImageGenRequest {
   prompt: string;
@@ -690,15 +691,12 @@ export const MessageItem = memo(function MessageItem({ message, sessionId, isAss
     }
   }, [isUser, displayText]);
 
-  // Memoize token usage JSON parsing
-  const tokenUsage = useMemo<TokenUsage | null>(() => {
-    if (!message.token_usage) return null;
-    try {
-      return JSON.parse(message.token_usage);
-    } catch {
-      return null;
-    }
-  }, [message.token_usage]);
+  // token_usage is persisted by multiple runtimes and historical releases.
+  // Treat it as untrusted DB input instead of relying on a TypeScript cast.
+  const tokenUsage = useMemo(
+    () => parseDisplayTokenUsage(message.token_usage),
+    [message.token_usage],
+  );
 
   // Hide image-gen system notices — they exist in DB for Claude's context but shouldn't render
   if (isUser && message.content.startsWith('[__IMAGE_GEN_NOTICE__')) {

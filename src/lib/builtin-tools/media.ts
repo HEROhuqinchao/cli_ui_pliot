@@ -45,6 +45,7 @@ import type { MediaBlock } from '@/types';
 import { emitBuiltinEvent } from '@/lib/harness/builtin-event-bus';
 import { makeToolCompleted } from '@/lib/runtime/event-adapter';
 import { isXaiOAuthUsable } from '@/lib/xai-oauth-manager';
+import { prepareMediaFailureForRethrow } from '@/lib/telemetry/media-failure';
 
 export const MEDIA_SYSTEM_PROMPT = MEDIA_CAPABILITY_SYSTEM_PROMPT;
 
@@ -110,7 +111,8 @@ export function createMediaTools(options?: MediaToolOptions) {
       // `toolCallId` so the side-channel emit can be paired back to
       // the exact tool-result event in agent-loop.
       execute: async ({ filePath, title, prompt, source, model, tags }, execOptions) => {
-        const toolCallId = (execOptions as { toolCallId?: string } | undefined)?.toolCallId ?? '';
+        const execution = execOptions as { toolCallId?: string; abortSignal?: AbortSignal } | undefined;
+        const toolCallId = execution?.toolCallId ?? '';
         try {
           const { importFileToLibrary } = await import('@/lib/media-saver');
           const result = importFileToLibrary(filePath, {
@@ -164,7 +166,9 @@ export function createMediaTools(options?: MediaToolOptions) {
           }
           return `Media imported: ${localPath} (type=${mediaType})`;
         } catch (err) {
-          throw err instanceof Error ? err : new Error('Media import failed');
+          throw prepareMediaFailureForRethrow(err, 'Media import failed', {
+            userCancelled: execution?.abortSignal?.aborted === true,
+          });
         }
       },
     }),
@@ -243,7 +247,9 @@ export function createMediaTools(options?: MediaToolOptions) {
           }
           return text;
         } catch (err) {
-          throw err instanceof Error ? err : new Error('Image generation failed');
+          throw prepareMediaFailureForRethrow(err, 'Image generation failed', {
+            userCancelled: execution?.abortSignal?.aborted === true,
+          });
         }
       },
     }),
@@ -299,7 +305,9 @@ export function createMediaTools(options?: MediaToolOptions) {
           }
           return text;
         } catch (err) {
-          throw err instanceof Error ? err : new Error('Video generation failed');
+          throw prepareMediaFailureForRethrow(err, 'Video generation failed', {
+            userCancelled: execution?.abortSignal?.aborted === true,
+          });
         }
       },
     });
