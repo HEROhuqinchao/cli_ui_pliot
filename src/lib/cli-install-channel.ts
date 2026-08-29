@@ -20,6 +20,21 @@ export function classifyCliInstallPath(input: {
   const home = input.homeDir.replace(/\\/g, '/').toLowerCase();
   const combined = `${normalized}\n${real}`;
 
+  if (input.provider === 'codex') {
+    const selectedPaths = [normalized, real];
+    const isDesktopBundle = input.platform === 'darwin'
+      ? selectedPaths.some((candidate) => /\.app\/contents\/resources\/codex$/.test(candidate))
+      : input.platform === 'win32'
+        ? selectedPaths.some((candidate) => candidate.includes('/program files/windowsapps/'))
+        : false;
+    if (isDesktopBundle) {
+      // This binary is lifecycle-owned by the desktop application. Treating
+      // its extensionless/.exe shape as standalone would offer a self-update
+      // against a signed or package-managed app bundle.
+      return { channel: 'desktop_bundle', confidence: 'proven' };
+    }
+  }
+
   if (combined.includes('/caskroom/') || combined.includes('/cellar/') || combined.includes('/homebrew/')) {
     return { channel: 'homebrew', confidence: 'ambiguous' };
   }

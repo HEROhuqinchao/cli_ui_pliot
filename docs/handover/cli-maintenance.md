@@ -39,8 +39,11 @@ Main 是 executor 和状态 owner；utility 只提供 safe-for-same-origin 的 i
 | Codex npm/bun/pnpm | exact package registry | exact selected package bin `codex update` | manual-only；exit 0 同版本为 unchanged |
 | Codex Homebrew | exact cask state；named cask 过期时接受可解析的 exit 1 JSON | `brew upgrade --cask codex` | parse/process failure 为 unknown/manual-only，不伪装 current |
 | Codex standalone | official release | exact selected `codex update` | manual recovery |
+| Codex desktop bundle | 无独立 latest；随 ChatGPT/Codex Desktop 更新 | 无 CLI 一键更新 | `managed_auto`，Settings 说明 owner app；不与 standalone release 比较 |
 
 Windows package-manager shim 不通过 `shell=true` 执行。Main 读取已证明 package 的 `package.json#bin`，用真实 Node executable + argv 启动脚本；路径中的空格或元字符不进入 shell 解析。
+
+macOS 的 `*.app/Contents/Resources/codex` 与 Windows Store app package 内 binary 必须先于通用 standalone 文件形状识别。Runtime 诊断的 `desktop_bundle` 与 maintenance channel 保持同一语义；CodePilot 不改写 owner app、也不把 public standalone release 当作其可执行更新目标。
 
 ## 生命周期与恢复
 

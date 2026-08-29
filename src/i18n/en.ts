@@ -760,6 +760,7 @@ const en = {
   'cliMaintenance.card.settings': 'Settings',
   'cliMaintenance.settings.sectionLabel': 'CLI maintenance',
   'cliMaintenance.settings.verifiedLatest': 'verified latest',
+  'cliMaintenance.settings.managedByDesktopApp': 'updated with the ChatGPT/Codex desktop app',
   'cliMaintenance.settings.managedAuto': 'managed by the official CLI',
   'cliMaintenance.settings.sameChannelRequired': 'same-channel check required',
   'cliMaintenance.settings.belowMinimum': 'Below the Runtime minimum v{version}',

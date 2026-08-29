@@ -16,6 +16,7 @@ import type { CliMaintenanceSnapshot } from "@/lib/cli-maintenance-contract";
 const CHANNEL_LABELS: Record<CliMaintenanceSnapshot["installChannel"], string> = {
   native: "Native",
   standalone: "Standalone",
+  desktop_bundle: "Desktop App",
   homebrew: "Homebrew",
   npm: "npm",
   bun: "bun",
@@ -72,11 +73,13 @@ export function CliMaintenanceRow({
               {channel}
               {snapshot.latestVersion
                 ? ` · ${t("cliMaintenance.settings.verifiedLatest")} v${snapshot.latestVersion}`
-                : snapshot.updateAvailability === "managed_auto"
-                  ? ` · ${t("cliMaintenance.settings.managedAuto")}`
-                  : snapshot.updateAvailability === "manual_check"
-                    ? ` · ${t("cliMaintenance.settings.sameChannelRequired")}`
-                    : ""}
+                : snapshot.installChannel === "desktop_bundle"
+                  ? ` · ${t("cliMaintenance.settings.managedByDesktopApp")}`
+                  : snapshot.updateAvailability === "managed_auto"
+                    ? ` · ${t("cliMaintenance.settings.managedAuto")}`
+                    : snapshot.updateAvailability === "manual_check"
+                      ? ` · ${t("cliMaintenance.settings.sameChannelRequired")}`
+                      : ""}
             </span>
           )}
           {snapshot.compatibility === "below_minimum" && snapshot.minimumVersion && (

@@ -74,6 +74,19 @@ describe('CLI maintenance trust and lifecycle wiring', () => {
     assert.match(snapshot, /installChannel/);
   });
 
+  it('treats desktop-bundled Codex as app-managed instead of self-updatable standalone', () => {
+    const classifier = read('src/lib/cli-install-channel.ts');
+    const service = read('electron/cli-maintenance.ts');
+    const row = read('src/components/settings/CliMaintenanceRow.tsx');
+
+    assert.match(classifier, /\.app\\\/contents\\\/resources\\\/codex\$/);
+    assert.match(classifier, /program files\/windowsapps/);
+    assert.match(classifier, /channel: 'desktop_bundle', confidence: 'proven'/);
+    assert.match(service, /target\.channel === 'desktop_bundle'[\s\S]{0,240}latestVersion: null, availability: 'managed_auto'/);
+    assert.doesNotMatch(service, /channel === 'desktop_bundle'[\s\S]{0,240}updateCommand\s*=/);
+    assert.match(row, /installChannel === "desktop_bundle"[\s\S]{0,160}managedByDesktopApp/);
+  });
+
   it('keeps the update card persistent at bottom-left and only auto-dismisses success', () => {
     const maintenance = read('src/hooks/useCliMaintenance.ts');
     const row = read('src/components/settings/CliMaintenanceRow.tsx');

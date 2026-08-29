@@ -747,6 +747,7 @@ const zh: Record<TranslationKey, string> = {
   'cliMaintenance.card.settings': '设置',
   'cliMaintenance.settings.sectionLabel': 'CLI 维护',
   'cliMaintenance.settings.verifiedLatest': '可验证最新版',
+  'cliMaintenance.settings.managedByDesktopApp': '随 ChatGPT/Codex 桌面应用更新',
   'cliMaintenance.settings.managedAuto': '官方 CLI 自管理更新',
   'cliMaintenance.settings.sameChannelRequired': '需同渠道检查',
   'cliMaintenance.settings.belowMinimum': '低于 Runtime 最低版本 v{version}',
