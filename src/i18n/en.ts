@@ -121,7 +121,6 @@ const en = {
   'chat.providerCredentialsUnavailable.action': 'Open provider settings',
   'chat.codexRecoverySafeMode': 'CodePilot recovered its local service in safe mode. Codex Runtime and automatic background tasks are paused; restart the app to return to normal mode.',
   'chat.runtime.recoveryRequired': 'This older chat has conflicting Runtime history. Choose a Runtime, provider, and model once to recover it before sending.',
-  'chat.runtime.ownerFixed': 'This chat is owned by {runtime}, so its Runtime is locked. Start a new chat to use another Runtime.',
   'chat.runtime.routeChangeFailed': 'The Runtime, provider, and model change was not saved. Refresh the chat and try again.',
   'chat.runtime.routeConflictReconciled': 'This chat changed in another window. The latest Runtime and model are loaded; try sending again.',
   'chat.runtime.handoffFailed': 'The new Runtime chat could not be created. The original chat was not changed.',

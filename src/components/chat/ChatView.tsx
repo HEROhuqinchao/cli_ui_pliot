@@ -59,7 +59,6 @@ import { toWireEffort, resolveModelSwitchEffortEffect } from '@/lib/effort-level
 // `src/lib/chat-runtime-shared.ts` doc-block for the full rationale.
 import { effectiveChatRuntime } from '@/lib/chat-runtime-shared';
 import { isInternalRuntimeSwitchMarker } from '@/lib/runtime/thread-execution-binding';
-import { isRuntimeId } from '@/lib/runtime/runtime-id';
 import { runtimeDisplayLabelKey } from '@/lib/runtime/runtime-display';
 import { useContextUsage } from '@/hooks/useContextUsage';
 import {
@@ -287,9 +286,6 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
   const [runtimeBindingState, setRuntimeBindingState] = useState<RuntimeBindingState>(initialRuntimeBindingState);
   const [, setRouteRevision] = useState(initialRouteRevision);
   const routeRevisionRef = useRef(initialRouteRevision);
-  const [ownerRuntime, setOwnerRuntime] = useState<string>(
-    initialRuntimeBindingState === 'bound' ? initialRuntimePin || '' : '',
-  );
   const hasAcceptedExecutionMessage = useMemo(
     () => messages.some((message) =>
       !message.id.startsWith('cmd-') && !isInternalRuntimeSwitchMarker(message.content)),
@@ -714,9 +710,6 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
     const nextState = session.runtime_binding_state;
     if (nextState === 'unbound' || nextState === 'bound' || nextState === 'legacy_unbound') {
       setRuntimeBindingState(nextState);
-      setOwnerRuntime(nextState === 'bound' && isRuntimeId(session.runtime_pin)
-        ? session.runtime_pin
-        : '');
     }
     window.dispatchEvent(new CustomEvent('session-updated'));
   }, []);
@@ -1652,13 +1645,6 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
       {runtimeRecoveryRequired && (
         <div className="border-b border-status-warning-border bg-status-warning-muted px-4 py-2 text-xs text-status-warning-foreground" role="alert">
           {t('chat.runtime.recoveryRequired' as TranslationKey)}
-        </div>
-      )}
-      {runtimeBindingState === 'bound' && ownerRuntime && (
-        <div className="border-b border-border/60 bg-muted/30 px-4 py-2 text-xs text-muted-foreground" role="status">
-          {t('chat.runtime.ownerFixed' as TranslationKey, {
-            runtime: t(runtimeDisplayLabelKey(ownerRuntime)),
-          })}
         </div>
       )}
       {initialHandoff && (

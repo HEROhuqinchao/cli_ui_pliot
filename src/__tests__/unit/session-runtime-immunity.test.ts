@@ -1239,7 +1239,7 @@ describe('RED — known global-runtime hazard sites Phase 2 Step 2 must replace'
     }
   });
 
-  it('ChatView keeps same-Runtime CAS but locks the Runtime lane after execution starts', () => {
+  it('ChatView locks the Runtime lane after execution starts without a redundant status banner', () => {
     const src = fs.readFileSync(
       path.join(repoRoot, 'components/chat/ChatView.tsx'),
       'utf8',
@@ -1271,6 +1271,11 @@ describe('RED — known global-runtime hazard sites Phase 2 Step 2 must replace'
       src,
       /runtimeSelectionLocked\s*=\s*runtimeBindingState\s*===\s*'bound'[\s\S]{0,160}hasAcceptedExecutionMessage/,
       'the UI lock must also cover the accepted-first-message window before a server-prop reload.',
+    );
+    assert.doesNotMatch(
+      src,
+      /chat\.runtime\.ownerFixed/,
+      'the disabled Runtime lane is sufficient feedback; ChatView must not add a persistent ownership banner.',
     );
     assert.match(
       messageInputSrc,

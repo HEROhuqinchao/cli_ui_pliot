@@ -118,7 +118,6 @@ const zh: Record<TranslationKey, string> = {
   'chat.providerCredentialsUnavailable.action': '前往服务商设置',
   'chat.codexRecoverySafeMode': 'CodePilot 已用安全模式恢复本地服务。Codex Runtime 和自动后台任务已暂停；重启应用后可恢复正常模式。',
   'chat.runtime.recoveryRequired': '这个旧聊天留下了互相冲突的 Runtime 记录。发送前，请重新选择一次 Runtime、服务商和模型来完成恢复。',
-  'chat.runtime.ownerFixed': '这个聊天已由 {runtime} 接管，Runtime 已锁定。如需使用其它 Runtime，请新建聊天。',
   'chat.runtime.routeChangeFailed': 'Runtime、服务商和模型没有保存成功。请刷新聊天后重试。',
   'chat.runtime.routeConflictReconciled': '这个聊天已在另一个窗口发生变化。已载入最新 Runtime 和模型，请重新发送。',
   'chat.runtime.handoffFailed': '无法创建新 Runtime 聊天；原聊天没有被修改。',
