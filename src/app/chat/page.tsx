@@ -903,6 +903,7 @@ function NewChatPageInner() {
           mode,
           working_directory: workingDir.trim(),
           permission_profile: permissionProfile,
+          runtime_id: sessionRuntimeParam,
           model: currentModel,
           provider_id: currentProviderId,
         };
@@ -927,24 +928,6 @@ function NewChatPageInner() {
         // output instead of waiting for the /chat/[id] navigation.
         setPanelSessionId(sessionId);
         setPanelWorkingDirectory(session.working_directory || workingDir.trim());
-
-        // Phase 2 Step 4c — if the user explicitly picked a runtime in
-        // the composer's unified Runtime/model picker before sending, persist it now
-        // (before the chat POST runs). This way the chat route's
-        // lazy-seed sees `session.runtime_pin` already set and skips the
-        // global-default fallback. Awaited so we don't race with /api/chat.
-        if (runtimePin) {
-          try {
-            await fetch(`/api/chat/sessions/${sessionId}`, {
-              method: 'PATCH',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ runtime_pin: runtimePin }),
-            });
-          } catch {
-            // Non-fatal — the lazy-seed will still pin to the global
-            // default; the user can re-pick from /chat/[id] after redirect.
-          }
-        }
 
         // Notify ChatListPanel to refresh immediately
         window.dispatchEvent(new CustomEvent('session-created'));
@@ -1351,7 +1334,7 @@ function NewChatPageInner() {
         firstSendInFlightRef.current = false;
       }
     },
-    [isStreaming, router, workingDir, mode, currentModel, currentProviderId, runtimePin, permissionProfile, selectedEffort, thinkingMode, effectiveContext1m, setPendingApprovalSessionId, setPanelSessionId, setPanelWorkingDirectory, t, canSendWithCurrentProvider, modelReady, noCompatibleProvider, invalidDefault]
+    [isStreaming, router, workingDir, mode, currentModel, currentProviderId, sessionRuntimeParam, permissionProfile, selectedEffort, thinkingMode, effectiveContext1m, setPendingApprovalSessionId, setPanelSessionId, setPanelWorkingDirectory, t, canSendWithCurrentProvider, modelReady, noCompatibleProvider, invalidDefault]
   );
 
   const handleCommand = useCallback((command: string) => {

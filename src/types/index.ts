@@ -33,6 +33,18 @@ export type { SessionPermissionProfile };
  */
 export type ChatSessionSource = 'user' | 'task';
 
+export type RuntimeBindingState = 'unbound' | 'bound' | 'legacy_unbound';
+
+export type RuntimeBindingSource =
+  | 'first_execution'
+  | 'assistant_session_create'
+  | 'bridge_create'
+  | 'inherited_owner'
+  | 'handoff_create'
+  | 'legacy_pin'
+  | 'legacy_runtime_ref'
+  | 'user_recovery';
+
 export interface ChatSession {
   id: string;
   title: string;
@@ -95,6 +107,18 @@ export interface ChatSession {
    * `resolveRuntimeForSession` wrapper read it.
    */
   runtime_pin: string;
+  /**
+   * Runtime ownership state. Ordinary chats start unbound and become bound in
+   * the same transaction that accepts their first real execution. Ambiguous
+   * legacy cross-runtime chats are fail-closed until the user recovers them.
+   */
+  runtime_binding_state?: RuntimeBindingState;
+  /** Real binding time when known. Legacy rows may be null. */
+  runtime_bound_at?: string | null;
+  /** Low-cardinality provenance; null when a legacy source cannot be proved. */
+  runtime_binding_source?: RuntimeBindingSource | null;
+  /** Dedicated compare-and-swap version for route/binding mutations only. */
+  route_revision?: number;
   sdk_cwd: string;
   runtime_status: string;
   runtime_updated_at: string;
@@ -889,12 +913,34 @@ export interface RuntimeContextAccountingSnapshot {
   providerBackend?: 'codex_account' | 'codepilot_proxy' | 'native_app_server' | string;
 }
 
+export interface NormalizedTurnUsage {
+  schemaVersion: 2;
+  runtimeId: import('@/lib/runtime/runtime-id').RuntimeId;
+  providerInstanceId?: string;
+  modelId?: string;
+  source: 'runtime_reported' | 'provider_reported';
+  /** Input tokens that were not served from a cache. Omitted when unknown. */
+  uncachedInputTokens?: number;
+  cacheReadInputTokens?: number;
+  cacheWriteInputTokens?: number;
+  outputTokens?: number;
+  costUsd?: number;
+  costSource?: 'provider_reported' | 'versioned_price_snapshot';
+  priceSnapshotId?: string;
+}
+
 export interface TokenUsage {
   input_tokens: number;
   output_tokens: number;
   cache_read_input_tokens?: number;
   cache_creation_input_tokens?: number;
   cost_usd?: number;
+  /**
+   * Versioned billing/cache facts. Historical top-level counters remain for
+   * compatibility and context-capacity UI; new cost/cache-rate UI consumes
+   * this object so a missing bucket cannot silently become zero.
+   */
+  normalized?: NormalizedTurnUsage;
   /**
    * Phase 1 — per-turn RuntimeContextAccountingSnapshot. Source of
    * truth for the popover breakdown. Older rows that carry the
@@ -967,6 +1013,7 @@ export interface CreateSessionRequest {
   working_directory?: string;
   mode?: string;
   provider_id?: string;
+  runtime_id?: import('@/lib/runtime/runtime-id').RuntimeId;
   permission_profile?: SessionPermissionProfile;
 }
 

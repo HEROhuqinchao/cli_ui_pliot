@@ -20,6 +20,7 @@
 | [dashboard-generative-ui.md](./dashboard-generative-ui.md) | [handover/dashboard.md](../handover/dashboard.md) | 生成式 UI 持久化、AI-first 项目看板、系统级渲染层构想、实现后复盘 |
 | [buddy-gamification.md](./buddy-gamification.md) | [handover/buddy-gamification.md](../handover/buddy-gamification.md) | Buddy 宠物伙伴设计：从工具到伙伴的用户旅程、稀有度/进化/心跳、视觉体系、审查修复决策 |
 | [context-management.md](./context-management.md) | [handover/context-management.md](../handover/context-management.md) | 上下文管理：长对话失忆/PTL 问题、分级压缩策略、Claude Code 参考与取舍、Codex 审计驱动的优先级 |
+| [runtime-thread-ownership-and-handoff.md](./runtime-thread-ownership-and-handoff.md) | [handover/runtime-thread-ownership-and-handoff.md](../handover/runtime-thread-ownership-and-handoff.md) | 为什么低频原地跨 Runtime 的收益不抵静默丢上下文、缓存重建和维护成本；稳定 owner、显式新聊天交接与真实费用口径的取舍 |
 | [cli-upgrade-proxy.md](./cli-upgrade-proxy.md) | [handover/cli-upgrade-proxy.md](../handover/cli-upgrade-proxy.md) | CLI 升级 + 代理透传：P0 版本问题、分渠道升级策略、系统代理无感透传、Git 依赖引导 |
 | [cli-maintenance.md](./cli-maintenance.md) | [handover/cli-maintenance.md](../handover/cli-maintenance.md) | 为什么 CLI 更新的核心是 selected-target ownership 与 same-channel truth；Windows 宁可 manual-only 也不能更新错安装，执行窗口为何需要 Runtime lease 与 app lifecycle latch |
 | [tool-call-ux.md](./tool-call-ux.md) | [handover/tool-call-ux.md](../handover/tool-call-ux.md) | 工具调用 UX：thinking 展示设计决策、注册表 vs if/else、归组阈值、缓冲旁路、竞品对比 |

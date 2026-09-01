@@ -330,7 +330,7 @@ export const codexRuntime: AgentRuntime = {
         // chat/route.ts collectStreamResponse picks it up via the
         // standard `tokenUsage = resultData.usage` path.
         let codexUsageCache:
-          | { inputTokens: number; outputTokens: number; contextWindow: number | null }
+          | { inputTokens: number; cachedInputTokens: number | null; outputTokens: number; contextWindow: number | null }
           | null = null;
 
         // Phase 7 — per-turn ToolInvocationAccumulator. Wired in the
@@ -937,6 +937,7 @@ export const codexRuntime: AgentRuntime = {
               if (event.type === 'usage_updated') {
                 codexUsageCache = {
                   inputTokens: event.inputTokens ?? 0,
+                  cachedInputTokens: event.cachedInputTokens ?? null,
                   outputTokens: event.outputTokens ?? 0,
                   contextWindow: event.contextWindow ?? null,
                 };
@@ -1003,6 +1004,9 @@ export const codexRuntime: AgentRuntime = {
                   const usage: Record<string, unknown> = {};
                   if (codexUsageCache) {
                     usage.input_tokens = codexUsageCache.inputTokens;
+                    if (codexUsageCache.cachedInputTokens !== null) {
+                      usage.cache_read_input_tokens = codexUsageCache.cachedInputTokens;
+                    }
                     usage.output_tokens = codexUsageCache.outputTokens;
                     if (codexUsageCache.contextWindow !== null) {
                       usage.context_window = codexUsageCache.contextWindow;

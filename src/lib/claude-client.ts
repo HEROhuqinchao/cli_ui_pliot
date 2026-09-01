@@ -311,8 +311,12 @@ function extractTokenUsage(
   const base: TokenUsage = {
     input_tokens: msg.usage.input_tokens,
     output_tokens: msg.usage.output_tokens,
-    cache_read_input_tokens: msg.usage.cache_read_input_tokens ?? 0,
-    cache_creation_input_tokens: msg.usage.cache_creation_input_tokens ?? 0,
+    ...(msg.usage.cache_read_input_tokens !== undefined
+      ? { cache_read_input_tokens: msg.usage.cache_read_input_tokens }
+      : {}),
+    ...(msg.usage.cache_creation_input_tokens !== undefined
+      ? { cache_creation_input_tokens: msg.usage.cache_creation_input_tokens }
+      : {}),
     cost_usd: 'total_cost_usd' in msg ? msg.total_cost_usd : undefined,
   };
   // Pull contextWindow / maxOutputTokens straight from the SDK when available.
@@ -2902,7 +2906,7 @@ export function streamClaudeSdk(options: ClaudeStreamOptions): ReadableStream<st
             controller.enqueue(formatSSE({ type: 'status', data: JSON.stringify({ notification: true, message: 'context_compressing_retry' }) }));
 
             const { compressConversation, resolveReactiveCompactBoundaryRowid } = await import('./context-compressor');
-            const { updateSessionSummary: updateSummary, getSessionSummary } = await import('@/lib/db');
+            const { commitSessionCompaction, getSessionSummary } = await import('@/lib/db');
             const compResult = await compressConversation({
               sessionId,
               messages: conversationHistory,
@@ -2932,7 +2936,18 @@ export function streamClaudeSdk(options: ClaudeStreamOptions): ReadableStream<st
               history: conversationHistory,
               existingBoundaryRowid: existingBoundary,
             });
-            updateSummary(sessionId, compResult.summary, reactiveBoundaryRowid);
+            commitSessionCompaction({
+              sessionId,
+              summary: compResult.summary,
+              boundaryRowid: reactiveBoundaryRowid,
+              trigger: 'reactive',
+              messagesCompressed: compResult.messagesCompressed,
+              estimatedTokensSaved: compResult.estimatedTokensSaved,
+              auxiliaryProviderId: compResult.auxiliaryProviderId,
+              auxiliaryModelId: compResult.auxiliaryModelId,
+              auxiliaryRouteSource: compResult.auxiliaryRouteSource,
+              recreatedUnderlyingSession: true,
+            });
             options.sessionSummary = compResult.summary;
             // Recalculate fallback budget with new summary size
             const newSummaryTokens = roughTokenEstimate(compResult.summary);
@@ -3180,6 +3195,9 @@ export function streamClaudeSdk(options: ClaudeStreamOptions): ReadableStream<st
                     data: JSON.stringify(buildContextCompressedStatus({
                       messagesCompressed: compResult.messagesCompressed,
                       tokensSaved: compResult.estimatedTokensSaved,
+                      trigger: 'reactive',
+                      sourceBoundaryRowid: reactiveBoundaryRowid,
+                      recreatedUnderlyingSession: true,
                     })),
                   }));
                   break;

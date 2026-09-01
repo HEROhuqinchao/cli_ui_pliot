@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import fs from 'fs';
 import { getSetting } from '@/lib/db';
 import { getLatestSessionByWorkingDirectory, createSession } from '@/lib/db';
+import { resolveAutomaticSessionRoute } from '@/lib/runtime/automatic-session-route';
 
 export async function POST(request: NextRequest) {
   try {
@@ -34,7 +35,26 @@ export async function POST(request: NextRequest) {
     if (!session) {
       const model = typeof body.model === 'string' ? body.model : '';
       const provider_id = typeof body.provider_id === 'string' ? body.provider_id : '';
-      session = createSession(undefined, model, undefined, workspacePath, 'code', provider_id);
+      const route = resolveAutomaticSessionRoute('user_checkin', {
+        modelId: model || undefined,
+        providerId: provider_id || undefined,
+      });
+      session = createSession(
+        undefined,
+        route.modelId,
+        undefined,
+        workspacePath,
+        'code',
+        route.providerId,
+        undefined,
+        undefined,
+        undefined,
+        {
+          runtimeId: route.runtimeId,
+          state: 'bound',
+          source: 'assistant_session_create',
+        },
+      );
     }
 
     return NextResponse.json({ session, isNew: !session.sdk_session_id });

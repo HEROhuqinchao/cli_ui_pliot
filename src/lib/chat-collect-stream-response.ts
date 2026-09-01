@@ -27,6 +27,8 @@ import {
 import { extractCompletion } from '@/lib/onboarding-completion';
 import { saveMediaToLibrary } from '@/lib/media-saver';
 import type { SSEEvent, TokenUsage, MessageContentBlock, MediaBlock, ExternalSource } from '@/types';
+import { isRuntimeId } from '@/lib/runtime/runtime-id';
+import { attachNormalizedTurnUsage } from '@/lib/runtime/turn-usage';
 
 const ASSISTANT_CHECKPOINT_INTERVAL_MS = 120;
 const NON_SUCCESSFUL_TERMINAL_FINISH_REASONS = new Set(['interrupted', 'inProgress']);
@@ -368,7 +370,15 @@ export async function collectStreamResponse(
                   sawNonSuccessfulTerminalResult = true;
                 }
                 if (resultData.usage) {
-                  tokenUsage = resultData.usage;
+                  const rawUsage = resultData.usage as TokenUsage;
+                  const routeSession = getSession(sessionId);
+                  tokenUsage = routeSession && isRuntimeId(routeSession.runtime_pin)
+                    ? attachNormalizedTurnUsage(rawUsage, {
+                        runtimeId: routeSession.runtime_pin,
+                        providerInstanceId: routeSession.provider_id || undefined,
+                        modelId: routeSession.model || undefined,
+                      })
+                    : rawUsage;
                   persistCheckpoint(true);
                 }
                 if (resultData.is_error) {

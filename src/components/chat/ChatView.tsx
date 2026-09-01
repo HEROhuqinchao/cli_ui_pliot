@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
-import type { Message, MessagesResponse, FileAttachment, SessionStreamSnapshot, MentionRef, TaskRunSummary } from '@/types';
+import type { Message, MessagesResponse, FileAttachment, SessionStreamSnapshot, MentionRef, TaskRunSummary, RuntimeBindingState, ChatSession } from '@/types';
 import type { SessionPermissionProfile } from '@/lib/permission/profile';
 import { MessageList } from './MessageList';
 import { NewChatWelcome } from './NewChatWelcome';
@@ -58,6 +58,9 @@ import { toWireEffort, resolveModelSwitchEffortEffect } from '@/lib/effort-level
 // types and is safe for client components. See
 // `src/lib/chat-runtime-shared.ts` doc-block for the full rationale.
 import { effectiveChatRuntime } from '@/lib/chat-runtime-shared';
+import { isInternalRuntimeSwitchMarker } from '@/lib/runtime/thread-execution-binding';
+import { isRuntimeId } from '@/lib/runtime/runtime-id';
+import { runtimeDisplayLabelKey } from '@/lib/runtime/runtime-display';
 import { useContextUsage } from '@/hooks/useContextUsage';
 import {
   startStream,
@@ -85,9 +88,38 @@ interface ChatViewProps {
    * cascade. Empty / undefined = "follow global" (today's behavior).
    */
   runtimePin?: string;
+  initialRuntimeBindingState?: RuntimeBindingState;
+  initialRouteRevision?: number;
+  initialHandoff?: {
+    sourceSessionId: string | null;
+    sourceTitle: string;
+    sourceRuntimeId: string;
+    targetRuntimeId: string;
+    sourceBoundaryRowid: number;
+    payloadSource: string;
+    truncated: boolean;
+  };
+  initialCompaction?: {
+    trigger: 'manual' | 'automatic' | 'reactive';
+    sourceBoundaryRowid: number;
+    messagesCompressed: number;
+    estimatedTokensSaved: number;
+    recreatedUnderlyingSession: boolean;
+    auxiliaryProviderId: string | null;
+    auxiliaryModelId: string | null;
+    createdAt: string;
+  };
   initialPermissionProfile?: SessionPermissionProfile;
   initialMode?: 'code' | 'plan' | 'ask';
   initialHasSummary?: boolean;
+}
+
+type RouteCommitOutcome = 'committed' | 'reconciled' | 'failed';
+
+interface RouteMutationResponse {
+  code?: string;
+  route_revision?: number;
+  session?: Partial<ChatSession>;
 }
 
 /** Maximum messages kept in React state. Older messages are trimmed and reloaded on scroll. */
@@ -103,7 +135,7 @@ const CONFIRM_REQUIRED = new Set<import('./TerminalReasonChip').TerminalActionId
   'retry_simple',
 ]);
 
-export function ChatView({ sessionId, initialMessages = [], initialHasMore = false, modelName, providerId, runtimePin: initialRuntimePin, initialPermissionProfile, initialMode, initialHasSummary }: ChatViewProps) {
+export function ChatView({ sessionId, initialMessages = [], initialHasMore = false, modelName, providerId, runtimePin: initialRuntimePin, initialRuntimeBindingState = 'unbound', initialRouteRevision = 0, initialHandoff, initialCompaction, initialPermissionProfile, initialMode, initialHasSummary }: ChatViewProps) {
   const { setStreamingSessionId, workingDirectory, setPendingApprovalSessionId, setIsAssistantWorkspace } = usePanel();
   const { t } = useTranslation();
   const router = useRouter();
@@ -252,6 +284,23 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
   // session swaps. handleRuntimePinChange (declared with the other
   // handlers below) PATCHes the row and updates this state.
   const [runtimePin, setRuntimePin] = useState<string>(initialRuntimePin || '');
+  const [runtimeBindingState, setRuntimeBindingState] = useState<RuntimeBindingState>(initialRuntimeBindingState);
+  const [, setRouteRevision] = useState(initialRouteRevision);
+  const routeRevisionRef = useRef(initialRouteRevision);
+  const [ownerRuntime, setOwnerRuntime] = useState<string>(
+    initialRuntimeBindingState === 'bound' ? initialRuntimePin || '' : '',
+  );
+  const hasAcceptedExecutionMessage = useMemo(
+    () => messages.some((message) =>
+      !message.id.startsWith('cmd-') && !isInternalRuntimeSwitchMarker(message.content)),
+    [messages],
+  );
+  // Normal new chats become bound in POST /api/chat before the optimistic
+  // message appears. Keep the lane locked even if this mounted ChatView has
+  // not yet reloaded the newly committed binding row. legacy_unbound stays
+  // editable because recovery explicitly requires a Runtime choice.
+  const runtimeSelectionLocked = runtimeBindingState === 'bound'
+    || (runtimeBindingState === 'unbound' && hasAcceptedExecutionMessage);
   useEffect(() => {
     if (initialRuntimePin !== undefined) setRuntimePin(initialRuntimePin);
   }, [initialRuntimePin]);
@@ -603,6 +652,9 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
   // → DB id swap doesn't always happen — once a stream completes the
   // optimistic message stays in `messages` until the next reload).
   const pendingOptimisticUserIdRef = useRef<string | null>(null);
+  // A pre-created sidebar chat has no route until its first explicit send.
+  // Keep duplicate clicks from racing two bind-for-execution CAS mutations.
+  const firstRouteCommitInFlightRef = useRef(false);
 
   // Pending image generation notices
   const pendingImageNoticesRef = useRef<string[]>([]);
@@ -628,11 +680,91 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
     }
   }, [sessionId]);
 
+  const showRouteError = useCallback((message: string) => {
+    import('@/hooks/useToast').then(({ showToast }) => {
+      showToast({ type: 'error', message, duration: 5000 });
+    });
+  }, []);
+
+  const adoptAuthoritativeRoute = useCallback((
+    session: Partial<ChatSession> | undefined,
+    fallbackRevision?: number,
+  ) => {
+    const nextRevision = Number.isSafeInteger(session?.route_revision)
+      ? session?.route_revision
+      : Number.isSafeInteger(fallbackRevision)
+        ? fallbackRevision
+        : undefined;
+    if (typeof nextRevision === 'number') {
+      routeRevisionRef.current = nextRevision;
+      setRouteRevision(nextRevision);
+    }
+    if (!session) return;
+
+    if (typeof session.runtime_pin === 'string') {
+      setRuntimePin(session.runtime_pin);
+    }
+    if (typeof session.provider_id === 'string') {
+      setCurrentProviderId(session.provider_id);
+    }
+    if (typeof session.model === 'string') {
+      setCurrentModel(session.model);
+    }
+
+    const nextState = session.runtime_binding_state;
+    if (nextState === 'unbound' || nextState === 'bound' || nextState === 'legacy_unbound') {
+      setRuntimeBindingState(nextState);
+      setOwnerRuntime(nextState === 'bound' && isRuntimeId(session.runtime_pin)
+        ? session.runtime_pin
+        : '');
+    }
+    window.dispatchEvent(new CustomEvent('session-updated'));
+  }, []);
+
+  const commitRoute = useCallback(async (
+    targetRuntime: ChatRuntime,
+    targetProviderId: string,
+    targetModel: string,
+    options: { bindForExecution?: boolean } = {},
+  ): Promise<RouteCommitOutcome> => {
+    try {
+      const res = await fetch(`/api/chat/sessions/${sessionId}/route`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          runtime_id: targetRuntime,
+          provider_instance_id: targetProviderId,
+          model_id: targetModel,
+          expected_route_revision: routeRevisionRef.current,
+          recovery: runtimeBindingState === 'legacy_unbound',
+          ...(options.bindForExecution ? { bind_for_execution: true } : {}),
+        }),
+      });
+      const data = await res.json().catch(() => ({})) as RouteMutationResponse;
+      if (!res.ok) {
+        if (res.status === 409 && data.code === 'ROUTE_REVISION_CONFLICT' && data.session) {
+          adoptAuthoritativeRoute(data.session, data.route_revision);
+          showRouteError(t('chat.runtime.routeConflictReconciled' as TranslationKey));
+          return 'reconciled';
+        }
+        showRouteError(t('chat.runtime.routeChangeFailed' as TranslationKey));
+        return 'failed';
+      }
+      adoptAuthoritativeRoute(data.session, data.route_revision);
+      return 'committed';
+    } catch {
+      showRouteError(t('chat.runtime.routeChangeFailed' as TranslationKey));
+      return 'failed';
+    }
+  }, [adoptAuthoritativeRoute, runtimeBindingState, sessionId, showRouteError, t]);
+
   const handleProviderModelChange = useCallback((
     newProviderId: string,
     model: string,
     opts?: { isAuto?: boolean; supportedEffortLevels?: string[] },
   ) => {
+    const previousProviderId = currentProviderId;
+    const previousModel = currentModel;
     setCurrentProviderId(newProviderId);
     setCurrentModel(model);
 
@@ -644,7 +776,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
     // send, making the composer button lie about what actually reaches the wire.
     // The reset does NOT depend on isAuto (an auto-correct that leaves an illegal
     // transient tier is exactly the inconsistency this guards); isAuto only gates
-    // the session-pin persist below. Prefer the levels MessageInput resolved from
+    // the route persist below. Prefer the levels MessageInput resolved from
     // the SAME feed the picker renders (opts.supportedEffortLevels); fall back to
     // our own useProviderModels lookup if a caller omitted them.
     const newGroup = providerGroups.find(g => g.provider_id === (newProviderId || 'env'));
@@ -670,21 +802,19 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
       });
     }
 
-    // Phase 6 P0 (2026-05-15) — only persist to the session row on a
-    // MANUAL user pick. An auto-correct fallback (when the saved
-    // model isn't in the active runtime's compatible set) must NOT
-    // overwrite the session's stored (provider, model) — that would
-    // make the silent fallback survive a reload + permanently lose
-    // the user's last intended pin, which is exactly the kind of
-    // hidden state mutation the picker is supposed to avoid.
+    // Automatic catalog/model reconciliation updates only local composer state.
+    // For an unbound chat, the first manual Send persists the complete chosen
+    // route and owner atomically; letting a later catalog refresh write here
+    // would create an unrelated revision before the user executes anything.
     if (opts?.isAuto) return;
 
-    fetch(`/api/chat/sessions/${sessionId}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model, provider_id: newProviderId }),
-    }).catch(() => {});
-  }, [sessionId, providerGroups, selectedEffort, t]);
+    void commitRoute(sessionRuntimeParam, newProviderId, model).then((outcome) => {
+      if (outcome === 'failed') {
+        setCurrentProviderId(previousProviderId);
+        setCurrentModel(previousModel);
+      }
+    });
+  }, [commitRoute, currentModel, currentProviderId, providerGroups, selectedEffort, sessionRuntimeParam, t]);
 
   const handleContext1mChange = useCallback((enabled: boolean) => {
     setContext1m(enabled);
@@ -703,56 +833,11 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
     });
   }, [currentProviderId]);
 
-  // Phase 2 Step 4c — unified Runtime/model picker callback. Optimistic local update
-  // (so the picker filter and other consumers see the new pin
-  // immediately) then PATCH to persist. Errors are swallowed for parity
-  // with handleProviderModelChange — the next page load would surface
-  // any drift via the existing 409 banner path. The PATCH route's
-  // sdk_session_id cleanup logic (Step 4c track 1) handles the
-  // SDK-session-can't-survive-runtime-swap case server-side.
-  //
-  // Step 4c R6 — when the switch happens **mid-conversation** (i.e.
-  // there's already at least one user message in the transcript),
-  // also append a `[__RUNTIME_SWITCH__ from=X to=Y]` marker message
-  // so future scroll-back can answer "where did we change engines?".
-  // We persist via the same `/api/chat/messages` POST that the
-  // image-gen notice path already uses (line ~1191), and append
-  // optimistically so the marker shows up before the round-trip.
   const handleRuntimePinChange = useCallback((pin: ChatRuntime) => {
-    const previousPin = runtimePin;
+    if (runtimeSelectionLocked) return;
+    if (pin === runtimePin) return;
     setRuntimePin(pin);
-    fetch(`/api/chat/sessions/${sessionId}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ runtime_pin: pin }),
-    }).catch(() => {});
-    // Mid-conversation marker — only when there's prior content. A
-    // brand-new session pre-first-message doesn't need a "switched
-    // FROM something" marker.
-    const hasUserTurn = messages.some((m) => m.role === 'user' && !m.id.startsWith('temp-'));
-    if (!hasUserTurn) return;
-    const fromPart =
-      previousPin === 'claude_code'
-      || previousPin === 'codepilot_runtime'
-      || previousPin === 'codex_runtime'
-        ? ` from=${previousPin}`
-        : '';
-    const markerContent = `[__RUNTIME_SWITCH__${fromPart} to=${pin}]`;
-    const markerMessage: Message = {
-      id: 'temp-' + Date.now(),
-      session_id: sessionId,
-      role: 'user',
-      content: markerContent,
-      created_at: new Date().toISOString(),
-      token_usage: null,
-    };
-    cappedSetMessages((prev) => [...prev, markerMessage]);
-    fetch('/api/chat/messages', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ session_id: sessionId, role: 'user', content: markerContent }),
-    }).catch(() => {});
-  }, [sessionId, runtimePin, messages, cappedSetMessages]);
+  }, [runtimePin, runtimeSelectionLocked]);
 
   // ── Extracted hooks ──
 
@@ -1292,6 +1377,37 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
         return;
       }
 
+      // Sidebar/project compose entries pre-create a zero-message `unbound`
+      // session without guessing a partial route from localStorage. The user's
+      // first Send is the explicit execution attempt: atomically persist the
+      // complete Runtime + provider + model route and bind the owner before an
+      // optimistic bubble or /api/chat request exists. The chat route then sees
+      // a complete bound identity instead of returning RUNTIME_OWNER_REQUIRED.
+      if (runtimeBindingState === 'unbound') {
+        if (firstRouteCommitInFlightRef.current) return false;
+        const sendModel = providerFetchState === 'loaded'
+          ? resolvedModel
+          : (resolvedModel || currentModel);
+        const sendProviderId = providerFetchState === 'loaded'
+          ? resolvedProviderId
+          : (resolvedProviderId || currentProviderId);
+        if (!sendModel || !sendProviderId) return false;
+
+        firstRouteCommitInFlightRef.current = true;
+        let routeOutcome: RouteCommitOutcome = 'failed';
+        try {
+          routeOutcome = await commitRoute(
+            sessionRuntimeParam,
+            sendProviderId,
+            sendModel,
+            { bindForExecution: true },
+          );
+        } finally {
+          firstRouteCommitInFlightRef.current = false;
+        }
+        if (routeOutcome !== 'committed') return false;
+      }
+
       const userMessage: Message = {
         id: 'temp-' + Date.now(),
         session_id: sessionId,
@@ -1304,7 +1420,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
       cappedSetMessages((prev) => [...prev, userMessage]);
       doStartStream(content, files, systemPromptAppend, displayOverride, mentions, selectedSkills);
     },
-    [sessionId, isStreaming, doStartStream, cappedSetMessages, noCompatibleProvider, providerFetchState, sessionProviderRuntimeIncompatible, codexRuntimeRecoveryBlocked]
+    [sessionId, isStreaming, doStartStream, cappedSetMessages, noCompatibleProvider, providerFetchState, sessionProviderRuntimeIncompatible, codexRuntimeRecoveryBlocked, runtimeBindingState, resolvedModel, currentModel, resolvedProviderId, currentProviderId, commitRoute, sessionRuntimeParam]
   );
 
   sendMessageRef.current = sendMessage;
@@ -1480,6 +1596,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
   // "clicked + in the assistant workspace" — both create an empty
   // session and land here.
   const isNewChat = displayedMessages.length === 0 && !isStreaming;
+  const runtimeRecoveryRequired = runtimeBindingState === 'legacy_unbound';
   const composerPermissionControl = (
     <ChatPermissionSelector
       sessionId={sessionId}
@@ -1532,6 +1649,58 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
           {t('chat.codexRecoverySafeMode' as TranslationKey)}
         </div>
       )}
+      {runtimeRecoveryRequired && (
+        <div className="border-b border-status-warning-border bg-status-warning-muted px-4 py-2 text-xs text-status-warning-foreground" role="alert">
+          {t('chat.runtime.recoveryRequired' as TranslationKey)}
+        </div>
+      )}
+      {runtimeBindingState === 'bound' && ownerRuntime && (
+        <div className="border-b border-border/60 bg-muted/30 px-4 py-2 text-xs text-muted-foreground" role="status">
+          {t('chat.runtime.ownerFixed' as TranslationKey, {
+            runtime: t(runtimeDisplayLabelKey(ownerRuntime)),
+          })}
+        </div>
+      )}
+      {initialHandoff && (
+        <div className="border-b border-border bg-primary/5 px-4 py-3 text-xs">
+          <div className="font-medium text-foreground">
+            {t('chat.runtime.handoffCardTitle' as TranslationKey, { title: initialHandoff.sourceTitle })}
+          </div>
+          <div className="mt-1 text-muted-foreground">
+            {t('chat.runtime.handoffCardDescription' as TranslationKey, {
+              from: t(runtimeDisplayLabelKey(initialHandoff.sourceRuntimeId)),
+              to: t(runtimeDisplayLabelKey(initialHandoff.targetRuntimeId)),
+              boundary: initialHandoff.sourceBoundaryRowid,
+            })}
+          </div>
+          {initialHandoff.sourceSessionId && (
+            <Button
+              variant="link"
+              className="mt-1 h-auto p-0 text-xs"
+              onClick={() => router.push(`/chat/${initialHandoff.sourceSessionId}`)}
+            >
+              {t('chat.runtime.openSourceChat' as TranslationKey)}
+            </Button>
+          )}
+        </div>
+      )}
+      {initialCompaction && (
+        <div className="border-b border-border bg-muted/20 px-4 py-2 text-xs" role="status">
+          <div className="font-medium text-foreground">
+            {t('chat.compaction.cardTitle' as TranslationKey)}
+          </div>
+          <div className="mt-1 text-muted-foreground">
+            {t('chat.compaction.cardDescription' as TranslationKey, {
+              count: initialCompaction.messagesCompressed,
+              boundary: initialCompaction.sourceBoundaryRowid,
+            })}
+            {' '}
+            {initialCompaction.recreatedUnderlyingSession
+              ? t('chat.compaction.cacheRebuild' as TranslationKey)
+              : t('chat.compaction.cachePreserved' as TranslationKey)}
+          </div>
+        </div>
+      )}
       {isNewChat ? (
         // Centered hero — welcome row + composer as one vertically
         // centered max-w-3xl block. Skips MessageList and all the
@@ -1551,6 +1720,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
                 || providerFetchState === 'idle'
                 || sessionProviderRuntimeIncompatible
                 || codexRuntimeRecoveryBlocked
+                || runtimeRecoveryRequired
               }
               isStreaming={isStreaming}
               sessionId={sessionId}
@@ -1559,6 +1729,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
               providerId={currentProviderId}
               runtime={sessionRuntimeParam}
               onRuntimeChange={handleRuntimePinChange}
+              runtimeChangeDisabled={runtimeSelectionLocked}
               onProviderModelChange={handleProviderModelChange}
               workingDirectory={workingDirectory}
               onAssistantTrigger={checkAssistantTrigger}
@@ -1816,6 +1987,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
           || providerFetchState === 'idle'
           || sessionProviderRuntimeIncompatible
           || codexRuntimeRecoveryBlocked
+          || runtimeRecoveryRequired
         }
         isStreaming={isStreaming}
         sessionId={sessionId}
@@ -1824,6 +1996,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
         providerId={currentProviderId}
         runtime={sessionRuntimeParam}
         onRuntimeChange={handleRuntimePinChange}
+        runtimeChangeDisabled={runtimeSelectionLocked}
         onProviderModelChange={handleProviderModelChange}
         workingDirectory={workingDirectory}
         onAssistantTrigger={checkAssistantTrigger}

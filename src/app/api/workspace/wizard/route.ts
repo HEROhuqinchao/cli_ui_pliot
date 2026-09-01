@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { resolveAutomaticSessionRoute } from '@/lib/runtime/automatic-session-route';
 
 export async function POST(request: NextRequest) {
   try {
@@ -115,7 +116,23 @@ ${userName ? `I address the user as ${userName}.` : 'I use a friendly, respectfu
 
     // Create session
     const { addMessage } = await import('@/lib/db');
-    const session = createSession(undefined, '', undefined, workspacePath, 'code', '');
+    const route = resolveAutomaticSessionRoute('user_onboarding');
+    const session = createSession(
+      undefined,
+      route.modelId,
+      undefined,
+      workspacePath,
+      'code',
+      route.providerId,
+      undefined,
+      undefined,
+      undefined,
+      {
+        runtimeId: route.runtimeId,
+        state: 'bound',
+        source: 'assistant_session_create',
+      },
+    );
 
     // Insert celebration message into the newly created session
     try {
