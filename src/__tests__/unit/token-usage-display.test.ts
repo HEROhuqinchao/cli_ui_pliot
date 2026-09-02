@@ -39,4 +39,30 @@ describe('token usage display validation', () => {
       output_tokens: 4,
     });
   });
+
+  it('keeps only sourced v2 cost/cache facts and drops malformed normalized data', () => {
+    const parsed = parseDisplayTokenUsage({
+      input_tokens: 20,
+      output_tokens: 4,
+      normalized: {
+        schemaVersion: 2,
+        runtimeId: 'codex_runtime',
+        source: 'runtime_reported',
+        uncachedInputTokens: 15,
+        cacheReadInputTokens: 5,
+        outputTokens: 4,
+        costUsd: 0,
+        costSource: 'provider_reported',
+      },
+    });
+    assert.equal(parsed?.normalized?.cacheReadInputTokens, 5);
+    assert.equal(parsed?.normalized?.costUsd, 0);
+
+    const malformed = parseDisplayTokenUsage({
+      input_tokens: 20,
+      output_tokens: 4,
+      normalized: { schemaVersion: 2, runtimeId: 'bogus', source: 'runtime_reported' },
+    });
+    assert.equal(malformed?.normalized, undefined);
+  });
 });

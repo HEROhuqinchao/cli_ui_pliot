@@ -51,6 +51,7 @@ import {
   XAI_X_SEARCH_SYSTEM_GUIDANCE,
   XAI_X_SEARCH_TOOL_NAME,
 } from './xai-hosted-search';
+import { getExplicitNativeCacheDetails } from './runtime/turn-usage';
 
 // ── Types ───────────────────────────────────────────────────────
 
@@ -379,6 +380,10 @@ export function runAgentLoop(options: AgentLoopOptions): ReadableStream<string> 
         timeoutCtl.onRunStart();
         let step = 0;
         const totalUsage: TokenUsage = { input_tokens: 0, output_tokens: 0 };
+        let cacheDetailsComplete = true;
+        let sawUsageStep = false;
+        let totalCacheRead = 0;
+        let totalCacheWrite = 0;
         let lastToolNames: string[] = []; // for doom loop detection
         const distinctTools = new Set<string>(); // for skill-nudge heuristic
         let messages = historyMessages;
@@ -615,8 +620,23 @@ export function runAgentLoop(options: AgentLoopOptions): ReadableStream<string> 
             // onStepFinish: token tracking per step
             onStepFinish: ({ usage: stepUsage, finishReason, toolCalls }) => {
               if (stepUsage) {
+                sawUsageStep = true;
                 totalUsage.input_tokens += stepUsage.inputTokens || 0;
                 totalUsage.output_tokens += stepUsage.outputTokens || 0;
+                const cacheDetails = getExplicitNativeCacheDetails(stepUsage);
+                if (cacheDetails) {
+                  totalCacheRead += cacheDetails.cacheRead;
+                  totalCacheWrite += cacheDetails.cacheWrite;
+                } else {
+                  cacheDetailsComplete = false;
+                }
+                if (sawUsageStep && cacheDetailsComplete) {
+                  totalUsage.cache_read_input_tokens = totalCacheRead;
+                  totalUsage.cache_creation_input_tokens = totalCacheWrite;
+                } else {
+                  delete totalUsage.cache_read_input_tokens;
+                  delete totalUsage.cache_creation_input_tokens;
+                }
               }
               // Emit step progress for frontend token display
               controller.enqueue(formatSSE({

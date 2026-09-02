@@ -462,6 +462,11 @@ async function probeLatest(target: ResolvedCliTarget): Promise<{
       availability: resolveCliUpdateAvailability(target.currentVersion, latestVersion),
     };
   }
+  if (target.channel === 'desktop_bundle') {
+    // The selected Codex is shipped inside ChatGPT/Codex Desktop. Its owner
+    // application, not CodePilot or the standalone feed, controls updates.
+    return { latestVersion: null, availability: 'managed_auto' };
+  }
   if (target.provider === 'codex' && target.channel === 'standalone') {
     const latestVersion = await fetchCodexStandaloneLatest();
     return {

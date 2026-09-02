@@ -19,11 +19,9 @@ import {
   releaseSessionLock,
   setSessionRuntimeStatus,
   updateSdkSessionId,
-  updateSessionModel,
   syncSdkTasks,
   getSession,
   getSetting,
-  getDefaultProviderId,
   isLockOwner,
 } from '../db';
 import { createSessionLockSettler } from '../session-lock-settle';
@@ -34,13 +32,13 @@ import {
 } from '../permission/profile';
 import { isAutoReviewSupported } from '../permission/sdk-capability';
 import { evaluateRenewal } from '../session-lock-renewal';
-import { resolveProvider as resolveProviderUnified } from '../provider-resolver';
-import { getActiveChatRuntime } from '../chat-runtime';
+import { resolveProviderForSession } from '../provider-resolver';
 import { loadCodePilotMcpServers, loadAllMcpServers } from '../mcp-loader';
 import { assembleContext } from '../context-assembler';
 import { predictNativeRuntime } from '../runtime';
 import crypto from 'crypto';
 import { resolveWorkingDirectory } from '../working-directory';
+import { isRuntimeId } from '../runtime/runtime-id';
 
 export interface PermissionRequestInfo {
   permissionRequestId: string;
@@ -146,6 +144,17 @@ export async function processMessage(
   try {
     // Resolve session early — needed for workingDirectory and provider resolution
     const session = getSession(sessionId);
+    if (!session
+      || session.runtime_binding_state !== 'bound'
+      || !isRuntimeId(session.runtime_pin)
+      || !session.provider_id
+      || !session.model) {
+      throw new Error('Bridge session has no bound Runtime route. Recover the session before sending again.');
+    }
+    if ((binding.providerId && binding.providerId !== session.provider_id)
+      || (binding.model && binding.model !== session.model)) {
+      throw new Error('Bridge route is stale. Reconnect the channel before sending again.');
+    }
 
     // Save user message — persist file attachments to disk using the same
     // <!--files:JSON--> format as the desktop chat route, so the UI can render them.
@@ -164,7 +173,7 @@ export async function processMessage(
             const safeName = path.basename(f.name)
               // Preserve Unicode names; replace only characters that are
               // invalid on Windows or unsafe as control characters.
-              // eslint-disable-next-line no-control-regex
+               
               .replace(/[<>:"/\\|?*\x00-\x1f]/g, '_')
               .replace(/[. ]+$/g, '_')
               .slice(0, 180) || 'attachment';
@@ -193,22 +202,23 @@ export async function processMessage(
     // 2. Session's provider_id (if the DB column exists)
     // 3. Global default provider (getDefaultProviderId)
     // 4. 'env' mode fallback
-    const effectiveProviderId = binding.providerId || session?.provider_id || getDefaultProviderId() || undefined;
+    const effectiveProviderId = session.provider_id;
 
     // Same runtime gate as the main /api/chat route — bridge sessions go
     // through the same SDK / ai-sdk paths, so the default-model fallback
     // must respect the active runtime's compat constraints.
-    const activeRuntime = getActiveChatRuntime();
-    const resolved = resolveProviderUnified({
-      providerId: effectiveProviderId,
-      model: binding.model || undefined,
-      sessionModel: session?.model || undefined,
-      runtime: activeRuntime,
-    });
+    const activeRuntime = session.runtime_pin;
+    const resolved = resolveProviderForSession({
+      provider_id: effectiveProviderId,
+      model: session.model,
+    }, { runtime: activeRuntime, callScene: 'bridge' });
+    if (resolved.invalidReason) {
+      throw new Error(`Bridge route is unavailable: ${resolved.invalidReason}`);
+    }
     const resolvedProvider = resolved.provider;
 
     // Use upstream model from unified resolver (same chain as chat route)
-    const effectiveModel = resolved.upstreamModel || resolved.model || binding.model || session?.model || getSetting('default_model') || undefined;
+    const effectiveModel = resolved.upstreamModel || resolved.model || session.model;
 
     // Guard: protocol/model mismatch — e.g. google protocol with model 'sonnet'
     // would silently send a wrong request. Fail fast with a clear error.
@@ -516,9 +526,8 @@ export async function consumeStream(
                   if (statusData.session_id) {
                     updateSdkSessionId(sessionId, statusData.session_id);
                   }
-                  if (statusData.model) {
-                    updateSessionModel(sessionId, statusData.model);
-                  }
+                  // Runtime-reported model is an observation, not permission to
+                  // mutate the session's atomic route identity.
                 }
               }
               // Skill-nudge: agent loop emits this at end-of-run when the

@@ -621,17 +621,41 @@ function CopyButton({ text }: { text: string }) {
 }
 
 function TokenUsageDisplay({ usage }: { usage: TokenUsage }) {
+  const { t } = useTranslation();
   const totalTokens = usage.input_tokens + usage.output_tokens;
-  const costStr = usage.cost_usd !== undefined && usage.cost_usd !== null
-    ? ` · $${usage.cost_usd.toFixed(4)}`
+  const verifiedCost = usage.normalized?.costSource ? usage.normalized.costUsd : undefined;
+  const legacyCost = usage.normalized ? undefined : usage.cost_usd;
+  const displayCost = verifiedCost ?? legacyCost;
+  const costStr = displayCost !== undefined && displayCost !== null
+    ? ` · $${displayCost.toFixed(4)}`
     : '';
+  const normalized = usage.normalized;
 
   return (
     <span className="group/tokens relative cursor-default text-xs text-muted-foreground/50">
-      <span>{totalTokens.toLocaleString()} tokens{costStr}</span>
+      <span>
+        {totalTokens.toLocaleString()} tokens{costStr}
+        {!normalized ? ` · ${t('usage.legacy')}` : ''}
+      </span>
       <span className="pointer-events-none absolute bottom-full left-0 mb-1.5 whitespace-nowrap rounded-md bg-popover px-2.5 py-1.5 text-[11px] text-popover-foreground shadow-md border border-border/50 opacity-0 group-hover/tokens:opacity-100 transition-opacity duration-150 z-50">
-        In: {usage.input_tokens.toLocaleString()} · Out: {usage.output_tokens.toLocaleString()}
-        {usage.cache_read_input_tokens ? ` · Cache: ${usage.cache_read_input_tokens.toLocaleString()}` : ''}
+        {normalized ? (
+          <>
+            {normalized.uncachedInputTokens !== undefined
+              ? `${t('usage.uncachedInput')} ${normalized.uncachedInputTokens.toLocaleString()}`
+              : t('usage.uncachedInputUnknown')}
+            {normalized.cacheReadInputTokens !== undefined
+              ? ` · ${t('usage.cacheRead')} ${normalized.cacheReadInputTokens.toLocaleString()}`
+              : ''}
+            {normalized.cacheWriteInputTokens !== undefined
+              ? ` · ${t('usage.cacheWrite')} ${normalized.cacheWriteInputTokens.toLocaleString()}`
+              : ''}
+            {normalized.outputTokens !== undefined
+              ? ` · ${t('usage.output')} ${normalized.outputTokens.toLocaleString()}`
+              : ''}
+          </>
+        ) : (
+          <>{t('usage.input')} {usage.input_tokens.toLocaleString()} · {t('usage.output')} {usage.output_tokens.toLocaleString()}</>
+        )}
         {costStr}
       </span>
     </span>

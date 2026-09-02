@@ -7,6 +7,8 @@
 > 父方向：[Harness Home Umbrella](harness-home-user-owned-core.md)
 > 历史参考：[助理工作区](../completed/assistant-workspace.md)、[后台任务与通知归档](../completed/refactor-phase-3-background-tasks-notifications.md)、[Memory v3（deferred）](../deferred/memory-system-v3.md)
 
+> Runtime binding 职责补充（2026-09-01）：[Runtime 会话所有权计划](runtime-thread-ownership-and-handoff.md) 负责“auto-trigger 只能消费已绑定 owner”的通用服务端门禁；本计划负责默认助理 / heartbeat / task session 的创建时机、明确 route 来源、创建 transaction 内原子绑定和 durable blocked 展示。调度执行时不得再按当时的全局默认 Runtime 临时选 route。
+
 ## 状态
 
 | Phase | 内容 | 状态 | 用户结果 |

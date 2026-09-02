@@ -3,6 +3,7 @@ export type CliProvider = 'claude' | 'codex';
 export type CliInstallChannel =
   | 'native'
   | 'standalone'
+  | 'desktop_bundle'
   | 'homebrew'
   | 'npm'
   | 'bun'
