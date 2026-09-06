@@ -1,3 +1,4 @@
+import { isTokenDanceBaseUrl, TOKENDANCE_RECOVERY_ERRORS } from './tokendance';
 /**
  * Error Classifier — structured error categorization for Claude Code process errors.
  *
@@ -491,6 +492,24 @@ export function classifyError(ctx: ErrorContext): ClassifiedError {
   const stderrContent = ctx.stderr || '';
   const cause = error instanceof Error ? (error as { cause?: unknown }).cause : undefined;
   const extraDetail = stderrContent || (cause instanceof Error ? cause.message : cause ? String(cause) : '');
+
+  // The relay preserves an upstream recovery header as a stable marker.
+  // Keep its precise user action instead of collapsing balance/quota into auth.
+  if (isTokenDanceBaseUrl(ctx.baseUrl)) {
+    const combined = `${rawMessage}\n${stderrContent}\n${extraDetail}`;
+    for (const [action, message] of Object.entries(TOKENDANCE_RECOVERY_ERRORS)) {
+      if (combined.includes(message)) {
+        return {
+          category: action === 'reauthorize_api_key' ? 'AUTH_REJECTED' : 'UNKNOWN',
+          userMessage: message, actionHint: '', rawMessage, providerName: ctx.providerName,
+          retryable: false,
+          recoveryActions: action === 'top_up_balance'
+            ? [{ label: 'TokenDance', url: 'https://tokendance.space/' }]
+            : [{ label: 'TokenDance', action: 'open_settings' }],
+        };
+      }
+    }
+  }
 
   // Combined text to search through
   const searchText = `${rawMessage}\n${stderrContent}\n${extraDetail}`.toLowerCase();

@@ -10,6 +10,7 @@
  * compatible with the existing frontend contract (useSSEStream.ts).
  */
 
+import { buildOpenAIOAuthOptions } from './openai-oauth-models';
 import { streamText, type LanguageModel, type ToolSet, type ModelMessage } from 'ai';
 import type { SSEEvent, TokenUsage, MediaBlock, ExternalSource } from '@/types';
 import { subscribeBuiltinEvents } from './harness/builtin-event-bus';
@@ -557,8 +558,9 @@ export function runAgentLoop(options: AgentLoopOptions): ReadableStream<string> 
               ...providerOptions,
               openai: {
                 ...(effectiveSystemPrompt ? { instructions: effectiveSystemPrompt } : {}),
-                store: false,
-                reasoningEffort: 'medium',
+                ...(config.responsesApiAuth === 'codex_oauth'
+                  ? buildOpenAIOAuthOptions(config.modelId, effort)
+                  : { store: false, reasoningEffort: 'medium' }),
                 textVerbosity: 'medium',
               },
             };

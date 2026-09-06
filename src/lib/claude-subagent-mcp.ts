@@ -264,6 +264,7 @@ export function listClaudeSubagentRoutes(): ClaudeSubagentRoute[] {
 
     for (const model of availableModels) {
       const compat = getModelCompat({
+          providerBaseUrl: resolved.provider?.base_url,
         modelId: model.modelId,
         upstreamModelId: model.upstreamModelId,
         providerCompat: candidate.providerCompat,

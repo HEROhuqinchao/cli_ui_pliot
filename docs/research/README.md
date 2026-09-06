@@ -8,6 +8,10 @@
 
 | 文件 | 主题 |
 |------|------|
+| astra-fable51-adaptation-2026-09-05.md | **Astra / Fable 5.1 与最新 OpenCode OAuth 对照**：Codex 默认 272K、有效 258.4K，区别 API 1.05M；新拉 OpenCode v1.18.29，离线复现刷新并发/网络失败清凭据及 SDK 丢 Astra reasoning，核对动态公共目录和账号区域路由；Fable 5.1 补精确目录与多轮协议回归  后续 Fable 5.1 基础适配与审查修复已落地，验证见执行计划 |
+| gpt56-fixes-review-2026-09-05.md | **GPT-5.6 昨晚修复复审及修复闭环**：确认两项 P2（预算充足丢文本、历史图片丢失），用户授权后已补预算分页和附件恢复；最终 5485 pass / 1 skip、E2E 3/3；真实视觉 smoke 与独立复审未完成 |
+| old-chat-model-switch-diagnosis-2026-09-05.md | **旧聊天模型切换修复**：实机确认 Codex 跨 Provider 误拦截、目录未落库与 Codex 冷缓存误拒绝；保留原聊天切换与历史承接，完整单测、三引擎 E2E 和真实 Dev 旧聊天 smoke 通过 |
+| windows-model-feedback-diagnosis-2026-09-04.md | **Windows 模型反馈诊断与确定性 UI 修复**：Codex CLI 0.139.0 成功返回五项，缺 5.6 未最终定因；GLM 旧 haiku 冲突已隔离复现。获授权后仅修冲突查看清筛选、定位与双语说明，保留数据保护；页面 2/2、全量 5459 通过/1 跳过，用户真实旧行来源与添加恢复仍待确认 |
 | t3code-runtime-adaptation-and-switching-2026-09-01.md | **T3 Code 最新 Runtime 适配复盘 + CodePilot 会话内切换取舍**：更新到 `pingdotgg/t3code@8b033de48`（最新 main，较 `v0.0.38-nightly.20260901.1245` 多 4 提交），核验稳定 ProviderAdapter / Driver-instance / continuation group / 服务端切换校验 / 用量与自动压缩；确认 T3 已开始线程锁定 Driver，只在同 continuation group 且 adapter 明示支持时换模型或账号。对照 CodePilot 三 Runtime 发现 Claude 走历史重包装、Native 走 DB 重放、Codex 只续自己的 thread，当前原地切换存在 Codex 首次丢历史与回切旧分支。建议保留多 Runtime，但第一轮后锁定会话所有者，跨 Runtime 改为带明确交接包的新聊天分支；区分受影响长 API 会话的缓存收益与全产品平均收益，不虚报 78.5% 为整站降本 |
 | glm-5-3-flash-codeplan-adaptation-2026-08-26.md | **GLM-5.3-Flash Coding Plan 适配核验**：当前目录收敛为 5.3 + 5.3-Flash；Flash 1M/vision/always-thinking/Low-High-Max default Max；Claude `[1m]` 与 Codex bare ID 分流；旗舰默认保持 5.3、稳定 haiku 槽升级 Flash；存量 Turbo/4.7 行非破坏保留；synthetic 双 Runtime wire 已验证，真实套餐 smoke 待跑 |
 | browser-webcontentsview-poc/ | **Browser WebContentsView 隔离 POC（BLOCKED / INCONCLUSIVE；路线已取代）**：Electron 40.10.6 / macOS arm64 的 9 项局部安全基线通过；首轮 SIGTRAP 因 observer 内 `loadURL()` 的非 canonical 序列而失效，修订 harness 又停在 `app.whenReady()` 前；Windows/Linux、IME、focus、packaged 均未执行。2026-08-26 用户选择 hardened `<webview>` MVP；本研究不再阻塞产品，也不伪造 GO |

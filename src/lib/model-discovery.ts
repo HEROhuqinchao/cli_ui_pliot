@@ -1,3 +1,5 @@
+import { isTokenDanceBaseUrl, parseTokenDanceModels } from './tokendance';
+import { tokenDanceFetch } from './tokendance-fetch';
 /**
  * Model-discovery probe layer.
  *
@@ -335,7 +337,10 @@ export async function discoverModels(input: DiscoveryInput): Promise<DiscoveryRe
 
   try {
     let probe: Partial<DiscoveryResult>;
-    switch (effectiveProtocol) {
+    if (isTokenDanceBaseUrl(baseUrl)) {
+      probe = await fetchAndParse('https://tokendance.space/gateway/v1/models', {}, timeoutMs,
+        (json) => parseTokenDanceModels(json, input.protocol), tokenDanceFetch);
+    } else switch (effectiveProtocol) {
       case 'ollama':
         probe = await probeOllama(baseUrl, timeoutMs);
         break;
@@ -489,9 +494,10 @@ async function fetchAndParse(
   init: RequestInit,
   timeoutMs: number,
   parser: (json: unknown) => { ids: string[] },
+  fetchImpl: typeof fetch = fetch,
 ): Promise<Partial<DiscoveryResult>> {
   try {
-    const res = await fetch(url, {
+    const res = await fetchImpl(url, {
       ...init,
       signal: AbortSignal.timeout(timeoutMs),
     });

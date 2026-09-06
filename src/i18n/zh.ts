@@ -1,6 +1,15 @@
 import type { TranslationKey } from './en';
 
 const zh: Record<TranslationKey, string> = {
+  'chat.error.oauthEffortUnavailable': '当前 OpenAI 账号已不支持所选推理档位。请在模型选择器中重新选择可用档位后重试。',
+  'provider.tokenDanceMessagesUnavailable': '内置 TokenDance 目录尚未确认此模型支持 Anthropic Messages；请使用 Native 或 Codex。',
+  'provider.tokenDanceCompatLabel': '多协议 · 按模型支持',
+  'provider.tokenDanceCompatTooltip': 'Native/Codex 使用 Chat Completions；Claude Code 对支持的模型使用 Messages。可用性按模型判断。',
+  'provider.tokenDanceAnthropicCompatTooltip': '此连接在 Native/Codex 使用 Messages；Claude Code 按各模型已确认的 Messages 支持情况显示。',
+  'chat.error.tokenDanceTopUp': 'TokenDance 余额不足。请前往 https://tokendance.space/ 充值后重试，当前 API Key 仍有效。',
+  'chat.error.tokenDanceReauthorize': 'TokenDance API Key 已不可用。请到设置 → 服务商，编辑此 TokenDance 连接，重新授权或替换 API Key。',
+  'chat.error.tokenDanceQuota': 'TokenDance API Key 已达到周期额度。请等待额度重置，或到设置 → 服务商编辑此连接并重新授权。',
+  'chat.error.oauthCatalogEmpty': '当前 OpenAI 账号的模型列表为空。请刷新模型列表或重新登录，然后选择模型。',
   // ── Navigation ──────────────────────────────────────────────
   'nav.chats': '对话',
   'nav.extensions': '扩展',
@@ -2136,7 +2145,7 @@ const zh: Record<TranslationKey, string> = {
   'provider.search.openrouter.upgradeButton': '升级目录',
   'provider.search.openrouter.upgrading': '正在升级…',
   'provider.search.openrouter.identityConflict': '需处理身份冲突',
-  'provider.search.openrouter.identityConflictDetail': '模型行 {ids} 占用了这个身份，请先在模型列表中核对后再试。',
+  'provider.search.openrouter.identityConflictDetail': '已有模型记录 {ids} 占用了这个 ID，与角色映射是否设置无关。可查看对应记录（包含已隐藏项）。',
   'provider.search.openrouter.mutationIdentityConflict': '模型行 {ids} 在提交期间占用了这个身份。候选列表已重新加载，请先在模型列表中核对。',
   'provider.search.openrouter.reviewModels': '查看模型列表',
   'provider.search.openrouter.adding': '正在添加…',

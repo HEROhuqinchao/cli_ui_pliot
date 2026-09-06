@@ -1,5 +1,6 @@
 'use client';
 
+import { localizeModelSelectionError } from '@/lib/model-selection-error-i18n';
 import { Suspense, useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import type { Message, SSEEvent, SessionResponse, TokenUsage, PermissionRequestEvent, FileAttachment, MentionRef, ExternalSource } from '@/types';
@@ -1251,7 +1252,7 @@ function NewChatPageInner() {
                   } catch {
                     errorDisplay = event.data;
                   }
-                  accumulated += '\n\n**Error:** ' + errorDisplay;
+                  accumulated += '\n\n**Error:** ' + localizeModelSelectionError(errorDisplay);
                   setStreamingContent(accumulated);
                   break;
                 }

@@ -1,3 +1,5 @@
+import { isTokenDanceBaseUrl } from './tokendance';
+import { tokenDanceFetch } from './tokendance-fetch';
 /**
  * ai-provider.ts — Unified AI model factory for the native Agent Loop.
  *
@@ -31,6 +33,7 @@ import {
   resolveProvider,
   toAiSdkConfig,
 } from './provider-resolver';
+import { extractComputeResidency } from './openai-oauth';
 import { ensureTokenFresh } from './openai-oauth-manager';
 import { createXaiOAuthFetch } from './xai-oauth-manager';
 import { hasClaudeSettingsCredentials } from './claude-settings';
@@ -252,6 +255,7 @@ function createLanguageModel(config: AiSdkConfig, isThirdPartyProxy: boolean): L
           : { apiKey: config.apiKey }),
         baseURL,
         headers,
+        ...(isTokenDanceBaseUrl(config.baseUrl) ? { fetch: tokenDanceFetch } : {}),
       });
       return anthropic(config.modelId);
     }
@@ -307,12 +311,16 @@ function createLanguageModel(config: AiSdkConfig, isThirdPartyProxy: boolean): L
           apiKey: 'codex-oauth',  // placeholder — overridden by custom fetch
           // Keep default baseURL so SDK constructs valid paths
           fetch: async (url: RequestInfo | URL, init?: RequestInit) => {
+            const reqUrl = url instanceof URL ? url : new URL(typeof url === 'string' ? url : url.url);
+            if (new URL(codexEndpoint).href !== 'https://chatgpt.com/backend-api/codex/responses'
+              || reqUrl.origin !== 'https://api.openai.com' || reqUrl.pathname !== '/v1/responses') {
+              throw new Error('OpenAI OAuth requires the ChatGPT Codex endpoint');
+            }
             const creds = await ensureTokenFresh();
             if (!creds) {
               throw new Error('OpenAI OAuth token expired or not available. Please log in again in Settings.');
             }
             // Rewrite URL to Codex endpoint
-            const reqUrl = url instanceof URL ? url : new URL(url as string);
             const targetUrl = reqUrl.pathname.includes('/responses')
               ? new URL(codexEndpoint)
               : reqUrl;
@@ -327,6 +335,9 @@ function createLanguageModel(config: AiSdkConfig, isThirdPartyProxy: boolean): L
               headers.set('chatgpt-account-id', creds.accountId);
             }
 
+            const residency = extractComputeResidency(creds.accessToken);
+            if (residency) headers.set('x-openai-internal-codex-residency', residency);
+
             // Timeout: 30s default, configurable via CODEX_TIMEOUT_MS
             const timeoutMs = parseInt(process.env.CODEX_TIMEOUT_MS || '30000', 10);
             const timeoutCtl = new AbortController();
@@ -336,7 +347,7 @@ function createLanguageModel(config: AiSdkConfig, isThirdPartyProxy: boolean): L
               : timeoutCtl.signal;
 
             try {
-              const resp = await fetch(targetUrl, { ...init, headers, signal: combinedSignal });
+              const resp = await fetch(targetUrl, { ...init, headers, signal: combinedSignal, redirect: 'error' });
               clearTimeout(timer);
               if (!resp.ok) {
                 const body = await resp.clone().text().catch(() => '');
@@ -368,7 +379,7 @@ function createLanguageModel(config: AiSdkConfig, isThirdPartyProxy: boolean): L
         // wire. The wrapper sniffs the real MIME (png/jpeg/webp/gif/svg) and
         // prefixes it; already-schemed URLs pass through verbatim, so an
         // upstream fix cannot double-prefix.
-        fetch: withChatImageDataUrlFetch(),
+        fetch: withChatImageDataUrlFetch(isTokenDanceBaseUrl(config.baseUrl) ? tokenDanceFetch : undefined),
       });
       // Chat Completions, NOT the Responses API. In @ai-sdk/openai v3 the bare
       // `openai(modelId)` call defaults to `.responses()` (/v1/responses), but

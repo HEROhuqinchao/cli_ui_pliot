@@ -985,6 +985,7 @@ export function ProviderManager() {
                     ? (isZh ? '请选择套餐类型' : 'Choose plan type')
                     : undefined,
                   compat: getProviderCompat(provider),
+                  provider: {base_url: provider.base_url, protocol: provider.protocol},
                   info,
                 }}
                 onEdit={() => handleEdit(provider)}
@@ -1420,7 +1421,7 @@ export function ProviderManager() {
                 p => p.category !== 'media' && CODING_PLAN_KEYS.has(p.key),
               );
               const thirdpartyPresets = QUICK_PRESETS.filter(
-                p => p.category !== 'media'
+                p => p.category !== 'media' && p.key !== 'tokendance-anthropic'
                   && !OFFICIAL_DIRECT_API_KEYS.has(p.key)
                   && !CODING_PLAN_KEYS.has(p.key),
               );
@@ -1758,6 +1759,11 @@ export function ProviderManager() {
         }}
         onSave={presetEditProvider ? handleEditSave : handlePresetAdd}
         editProvider={presetEditProvider}
+        onAuthorized={(providerId) => {
+          void fetchProviders();
+          window.dispatchEvent(new Event('provider-changed'));
+          void runAutoDiscoverForProvider({ providerId, providerName: 'TokenDance', t });
+        }}
       />
 
       {/* Model discovery result — read-only spike. The result is shown so the

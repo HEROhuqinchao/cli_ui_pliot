@@ -1,5 +1,6 @@
 'use client';
 
+import { localizeModelSelectionError } from '@/lib/model-selection-error-i18n';
 import { useState, useCallback, useRef, useEffect, useMemo, memo } from 'react';
 import { motion } from 'motion/react';
 import { cn } from '@/lib/utils';
@@ -684,8 +685,8 @@ export const MessageItem = memo(function MessageItem({ message, sessionId, isAss
   const { text, pairedTools, thinking } = useMemo(() => {
     const { text, tools, thinking } = parseToolBlocks(message.content);
     const pairedTools = pairTools(tools);
-    return { text, pairedTools, thinking };
-  }, [message.content]);
+    return { text: isUser ? text : localizeModelSelectionError(text, t), pairedTools, thinking };
+  }, [message.content, isUser, t]);
   const subagentTools = pairedTools.filter(tool => (
     isSubagentToolCall(tool.name, tool.input, tool.result)
   ));

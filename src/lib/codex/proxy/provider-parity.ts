@@ -24,6 +24,8 @@
  */
 
 import type { ApiProvider, ProviderRuntimeCompat } from '@/types';
+import { isTokenDanceBaseUrl } from '@/lib/tokendance';
+import { getEffectiveProviderProtocol } from '@/lib/provider-catalog';
 import { getProviderCompat } from '@/lib/runtime-compat';
 
 /**
@@ -97,7 +99,11 @@ export interface ProviderParityEntry {
  */
 export function getProxyParityEntry(provider: ApiProvider): ProviderParityEntry {
   const compat = getProviderCompat(provider);
-  const family = ADAPTER_FAMILY_BY_COMPAT[compat];
+  // Provider reach includes Claude Code; Codex's actual wire still follows
+  // the connection protocol. Do not label TokenDance Chat Completions CodePlan.
+  const family = isTokenDanceBaseUrl(provider.base_url) && compat !== 'media_only'
+    ? (getEffectiveProviderProtocol(provider.provider_type, provider.protocol, provider.base_url, provider.preset_key) === 'anthropic' ? 'anthropic_compatible' : 'openai_compatible')
+    : ADAPTER_FAMILY_BY_COMPAT[compat];
   const status = ADAPTER_STATUS_BY_COMPAT[compat];
   return {
     provider_id: provider.id,

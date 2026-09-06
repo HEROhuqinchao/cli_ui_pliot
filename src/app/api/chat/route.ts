@@ -560,8 +560,9 @@ export async function POST(request: NextRequest) {
       : undefined;
 
     // Load conversation history from DB as fallback context.
-    // Fetch up to 200 messages (DB query is cheap); actual truncation is done
-    // by buildFallbackContext using a token budget, not a fixed message count.
+    // This recent page seeds context assembly and Claude's emergency fallback.
+    // A replacement Codex thread pages backward from these rowids on demand
+    // until its history budget or summary boundary, rather than stopping here.
     const { messages: recentMsgs } = getMessages(session_id, { limit: 200, excludeHeartbeatAck: true });
     // Load session summary for compression-aware fallback (needed before the
     // compact-boundary filter below).
@@ -666,9 +667,14 @@ export async function POST(request: NextRequest) {
       // Pass upstream explicitly so alias lookups (e.g. 'opus') resolve to
       // the correct per-provider window — first-party opus → 4.7 (1M) vs
       // Bedrock/Vertex opus → 4.6 (200K).
-      const contextWindow = getContextWindow(modelForWindow, {
+      const selectedCapabilities = resolved.availableModels.find(m => (m.upstreamModelId || m.modelId) === modelForWindow)?.capabilities;
+      const runtimeContextWindow = resolved._codexAccount
+        ? await (await import('@/lib/codex/models')).getCodexContextBudget(modelForWindow, session.working_directory || undefined)
+        : null;
+      const contextWindow = runtimeContextWindow || selectedCapabilities?.contextWindow || getContextWindow(modelForWindow, {
         context1m: context_1m,
         upstream: resolved.upstreamModel,
+        channel: resolved._codexAccount || resolved._openaiOAuth ? 'codex' : 'api',
       }) || 200000;
 
       // Estimate using normalized content (matches what buildFallbackContext actually sends).

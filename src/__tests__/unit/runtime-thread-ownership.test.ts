@@ -214,6 +214,12 @@ describe('route CAS and continuation capability', () => {
     assert.equal(routeChangeMode(
       { runtimeId: 'codex_runtime', providerId: 'a', modelId: 'm1' },
       { runtimeId: 'codex_runtime', providerId: 'b', modelId: 'm1' },
+    ), 'replay_context');
+    assert.equal(runtimeRefToClearForRouteChange('codex_runtime', 'replay_context'), undefined,
+      'retain the previous provider ref until the replacement turn is accepted');
+    assert.equal(routeChangeMode(
+      { runtimeId: 'codex_runtime', providerId: 'a', modelId: 'm1' },
+      { runtimeId: 'claude_code', providerId: 'a', modelId: 'm1' },
     ), 'new_session');
     assert.match(getRuntimeContinuationPolicy('codex_runtime').continuationKey, /^codex_runtime:/);
   });

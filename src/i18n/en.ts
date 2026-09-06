@@ -4,6 +4,15 @@
  * Other locale files must implement `Record<TranslationKey, string>`.
  */
 const en = {
+  'chat.error.oauthEffortUnavailable': 'This OpenAI account no longer offers the selected reasoning effort. Choose an available effort in the model selector and retry.',
+  'provider.tokenDanceMessagesUnavailable': 'The bundled TokenDance catalog has not confirmed Anthropic Messages support for this model. Use Native or Codex.',
+  'provider.tokenDanceCompatLabel': 'Multi-protocol · per model',
+  'provider.tokenDanceCompatTooltip': 'Native/Codex use Chat Completions; Claude Code uses Messages for supported models. Availability varies by model.',
+  'provider.tokenDanceAnthropicCompatTooltip': 'This connection uses Messages in Native/Codex. Claude Code availability follows each model’s confirmed Messages support.',
+  'chat.error.tokenDanceTopUp': 'TokenDance balance is insufficient. Top up your account at https://tokendance.space/ and retry; your API key is still valid.',
+  'chat.error.tokenDanceReauthorize': 'TokenDance API key is unavailable. Open Settings → Providers, edit this TokenDance connection and authorize again or replace its API key.',
+  'chat.error.tokenDanceQuota': 'TokenDance API key has reached its periodic limit. Wait for the quota to reset, or edit this connection in Settings → Providers and authorize a new key.',
+  'chat.error.oauthCatalogEmpty': 'The OpenAI account model list is empty. Refresh the model list or sign in again, then select a model.',
   // ── Navigation ──────────────────────────────────────────────
   'nav.chats': 'Chats',
   'nav.extensions': 'Extensions',
@@ -2165,7 +2174,7 @@ const en = {
   'provider.search.openrouter.upgradeButton': 'Upgrade catalog',
   'provider.search.openrouter.upgrading': 'Upgrading...',
   'provider.search.openrouter.identityConflict': 'Review identity conflict',
-  'provider.search.openrouter.identityConflictDetail': 'Rows {ids} claim this model identity. Review them in Models before retrying.',
+  'provider.search.openrouter.identityConflictDetail': 'Existing model rows {ids} claim this ID, independently of role mappings. Review the rows, including hidden ones.',
   'provider.search.openrouter.mutationIdentityConflict': 'Rows {ids} claimed this identity during the update. Candidates were reloaded; review Models before retrying.',
   'provider.search.openrouter.reviewModels': 'Review models',
   'provider.search.openrouter.adding': 'Adding...',

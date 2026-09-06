@@ -7,6 +7,7 @@ import {
 } from '@/lib/permission/review-event';
 import { resolveStatusNoticeKeys } from '@/lib/status-notice-i18n';
 import { translateActive } from '@/i18n';
+import { localizeModelSelectionError } from '@/lib/model-selection-error-i18n';
 
 interface ToolUseInfo {
   id: string;
@@ -580,7 +581,7 @@ export function handleSSEEvent(
         // Plain text error (backward compatible)
         errorDisplay = event.data;
       }
-      const next = accumulated + '\n\n**Error:** ' + errorDisplay;
+      const next = accumulated + '\n\n**Error:** ' + localizeModelSelectionError(errorDisplay);
       callbacks.onError(next);
       return next;
     }

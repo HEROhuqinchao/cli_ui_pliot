@@ -23,6 +23,7 @@
  * error via `classifyUpstreamError` / `makeFailureStream`.
  */
 
+import { buildOpenAIOAuthOptions } from '../../openai-oauth-models';
 import {
   streamText,
   generateText,
@@ -382,6 +383,13 @@ export function createUnifiedAdapter(family: string): ResponsesAdapter {
           : {}),
       },
     );
+    if (modelConfig.responsesApiAuth === 'codex_oauth' && providerOptions) {
+      try {
+        providerOptions.openai = { ...providerOptions.openai, ...buildOpenAIOAuthOptions(modelConfig.modelId, input.body.reasoning?.effort) };
+      } catch (err) {
+        return makeErrorResult('invalid_request', err instanceof Error ? err.message : String(err), { family });
+      }
+    }
     const wantsStream = input.body.stream !== false;
 
     // Phase 5d Phase 3 review fix #1 (2026-05-17) — Path inputs read

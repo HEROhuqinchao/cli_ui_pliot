@@ -20,7 +20,7 @@ import { pickModelUsage } from './sdk-model-usage';
 import { registerPendingPermission, buildPermissionResolvedEvent } from './permission-registry';
 import { registerConversation, unregisterConversation } from './conversation-registry';
 import { captureCapabilities, isCacheFresh, setCachedPlugins } from './agent-sdk-capabilities';
-import { normalizeMessageContent, microCompactMessage } from './message-normalizer';
+import { buildFallbackContext } from './fallback-context';
 import { roughTokenEstimate } from './context-estimator';
 import {
   getSetting,
@@ -384,78 +384,6 @@ function getUploadedFilePaths(files: FileAttachment[], workDir: string): string[
     }
   }
   return paths;
-}
-
-// Message normalization is in message-normalizer.ts (shared with context-compressor.ts).
-// Imported dynamically in buildFallbackContext to avoid circular deps at module level.
-
-/**
- * Build fallback context from conversation history with token-budget awareness.
- *
- * Instead of a fixed message count, walks backward from the newest message
- * and includes as many as fit within the token budget. Optionally prepends
- * a session summary as a context skeleton for the full conversation.
- */
-function buildFallbackContext(params: {
-  prompt: string;
-  history?: Array<{ role: 'user' | 'assistant'; content: string }>;
-  sessionSummary?: string;
-  tokenBudget?: number;
-}): string {
-  const { prompt, history, sessionSummary, tokenBudget } = params;
-  if (!history || history.length === 0) {
-    if (sessionSummary) {
-      return `<session-summary>\n${sessionSummary}\n</session-summary>\n\n${prompt}`;
-    }
-    return prompt;
-  }
-
-  // Normalize + microcompact: strip metadata, summarize tool blocks, truncate old messages
-  const normalized = history.map((msg, i) => ({
-    role: msg.role,
-    content: microCompactMessage(
-      msg.role,
-      normalizeMessageContent(msg.role, msg.content),
-      history.length - 1 - i, // ageFromEnd: 0 = newest
-    ),
-  }));
-
-  // Select messages within token budget (walk backward from newest).
-  // Floor at 10K tokens so even extreme sessions keep some recent context.
-  const effectiveBudget = tokenBudget != null ? Math.max(tokenBudget, 10000) : undefined;
-  let selected: typeof normalized;
-  if (effectiveBudget) {
-    selected = [];
-    let accumulated = 0;
-    for (let i = normalized.length - 1; i >= 0; i--) {
-      const msgTokens = roughTokenEstimate(normalized[i].content) + 10; // role label overhead
-      if (accumulated + msgTokens > effectiveBudget) break;
-      selected.unshift(normalized[i]);
-      accumulated += msgTokens;
-    }
-  } else {
-    selected = normalized;
-  }
-
-  // Build the output
-  const lines: string[] = [];
-
-  if (sessionSummary) {
-    lines.push('<session-summary>');
-    lines.push(sessionSummary);
-    lines.push('</session-summary>');
-    lines.push('');
-  }
-
-  lines.push('<conversation_history>');
-  lines.push('(This is a summary of earlier conversation turns for context. <prior-tool-call .../> and <prior-reasoning>...</prior-reasoning> are metadata markers describing what already happened — they are NOT assistant output format. Do not reproduce these tags. To call a tool, emit a real tool_use block; do not write tool calls as prose or as these markers.)');
-  for (const msg of selected) {
-    lines.push(`${msg.role === 'user' ? 'Human' : 'Assistant'}: ${msg.content}`);
-  }
-  lines.push('</conversation_history>');
-  lines.push('');
-  lines.push(prompt);
-  return lines.join('\n');
 }
 
 export interface GenerateTextViaSdkParams {
@@ -929,6 +857,7 @@ export function streamClaude(options: ClaudeStreamOptions): ReadableStream<strin
       files: options.files,
       conversationHistory: options.conversationHistory,
       sessionSummary: options.sessionSummary,
+      sessionSummaryBoundaryRowid: options.sessionSummaryBoundaryRowid,
       fallbackTokenBudget: options.fallbackTokenBudget,
       toolTimeoutSeconds: options.toolTimeoutSeconds,
       outputFormat: options.outputFormat,
@@ -1039,6 +968,7 @@ export function streamClaudeSdk(options: ClaudeStreamOptions): ReadableStream<st
         : 'claude_code_ready';
       const subagentModelCompatible = (candidate: typeof resolved.availableModels[number]) => {
         const compatibility = getModelCompat({
+          providerBaseUrl: resolved.provider?.base_url,
           modelId: candidate.modelId,
           upstreamModelId: candidate.upstreamModelId,
           providerCompat: subagentProviderCompat,
@@ -1053,6 +983,7 @@ export function streamClaudeSdk(options: ClaudeStreamOptions): ReadableStream<st
         availableModels: resolved.availableModels.filter(subagentModelCompatible),
         roleModels: resolved.roleModels,
         providerCompatible: !resolved.provider || getModelCompat({
+          providerBaseUrl: resolved.provider?.base_url,
           modelId: model || resolved.model || 'inherit',
           upstreamModelId: resolved.upstreamModel,
           providerCompat: subagentProviderCompat,
@@ -3303,6 +3234,11 @@ export async function testProviderConnection(config: {
   providerName?: string;
   providerMeta?: { apiKeyUrl?: string; docsUrl?: string; pricingUrl?: string };
 }): Promise<ConnectionTestResult> {
+  const { isTokenDanceBaseUrl } = await import('./tokendance');
+  if (isTokenDanceBaseUrl(config.baseUrl)) {
+    const { testTokenDanceConnection } = await import('./tokendance-fetch');
+    return testTokenDanceConnection(config);
+  }
   const { getPreset, findPresetForLegacy } = await import('./provider-catalog');
 
   // Look up preset for default model

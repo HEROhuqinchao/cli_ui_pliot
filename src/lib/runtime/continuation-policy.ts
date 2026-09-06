@@ -34,9 +34,9 @@ export const RUNTIME_CONTINUATION_POLICIES: Readonly<Record<RuntimeId, RuntimeCo
   codex_runtime: {
     continuationKey: 'codex_runtime:thread_provider',
     modelChange: 'in_session',
-    // A Codex thread is provider-proxy bound. Starting another thread without
-    // importing canonical history is not an in-place provider change.
-    providerInstanceChange: 'new_session',
+    // The product chat stays put. The adapter rebuilds its provider-bound
+    // native thread with the chat summary/history on the next send.
+    providerInstanceChange: 'replay_context',
     contextImport: 'canonical_handoff',
     source: 'adapter',
   },
