@@ -8,6 +8,10 @@
 
 | 文件 | 主题 |
 |------|------|
+| [jev-openrouter-adaptation-2026-09-18.md](jev-openrouter-adaptation-2026-09-18.md) | 用户决定暂不接入；Jev 属于 text→decisions：公开 endpoints 与当前 SDK 核验；建议独立辅助决策能力，目录输出类型缺口记为 tech-debt #95；OpenRouter 推理协议与真实效果待验证，未改产品代码 |
+| [gemini-ai-studio-three-runtimes-2026-09-18.md](gemini-ai-studio-three-runtimes-2026-09-18.md) | Gemini 3.8 Flash 经 AI Studio 接入 Native / Codex / Claude Code：源码核验、签名丢失离线 POC、generateContent 与 Interactions 取舍；未调用真实 API、未改产品代码 |
+| [issue-685-message-route-mismatch-2026-09-14.md](issue-685-message-route-mismatch-2026-09-14.md) | #685 SDK 实测模型覆盖 picker 路由别名；已实施保持 route 与旧会话兼容，targeted 27/27、发版 full 5584 pass / 1 skip；Shipped v0.67.16，Windows 会话真机待验 |
+| [feedback-sentry-scan-2026-09-14.md](feedback-sentry-scan-2026-09-14.md) | 近期 GitHub 3 条反馈与 Sentry 增量：0.67.15 新增 643 错误事件、3 个新分组；权限/续聊路由及 Windows 服务退出待核实 |
 | astra-fable51-adaptation-2026-09-05.md | **Astra / Fable 5.1 与最新 OpenCode OAuth 对照**：Codex 默认 272K、有效 258.4K，区别 API 1.05M；新拉 OpenCode v1.18.29，离线复现刷新并发/网络失败清凭据及 SDK 丢 Astra reasoning，核对动态公共目录和账号区域路由；Fable 5.1 补精确目录与多轮协议回归  后续 Fable 5.1 基础适配与审查修复已落地，验证见执行计划 |
 | gpt56-fixes-review-2026-09-05.md | **GPT-5.6 昨晚修复复审及修复闭环**：确认两项 P2（预算充足丢文本、历史图片丢失），用户授权后已补预算分页和附件恢复；最终 5485 pass / 1 skip、E2E 3/3；真实视觉 smoke 与独立复审未完成 |
 | old-chat-model-switch-diagnosis-2026-09-05.md | **旧聊天模型切换修复**：实机确认 Codex 跨 Provider 误拦截、目录未落库与 Codex 冷缓存误拒绝；保留原聊天切换与历史承接，完整单测、三引擎 E2E 和真实 Dev 旧聊天 smoke 通过 |

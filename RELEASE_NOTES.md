@@ -1,52 +1,59 @@
-## CodePilot v0.67.15
+## CodePilot v0.67.16
 
-> 加入 TokenDance：一次连接即可在受支持的 Runtime 中选择精选模型，并提供授权、模型发现和凭据恢复入口。
+> 新增 Gemini AI Studio 的 Native 接入，修复部分模型续聊时的路由不匹配，并改进消息保存失败提示。
 
 ### 新增功能
 
-- **TokenDance 接入** — 在设置的服务商页面添加 TokenDance，可通过浏览器授权、一次性授权码或手动 API Key 连接。
-- **六款默认精选模型** — 默认启用 GLM 5.3、Kimi K3、MiniMax M3、DeepSeek V4 Flash、DeepSeek V4 Pro 与 GLM 5.3 Flash；模型刷新保留用户手动隐藏、启用和编辑的选择。
-- **同一连接跨 Runtime 使用** — CodePilot 与 Codex 使用聊天协议，Claude Code 使用模型明确支持的 Messages 协议，无需重复授权。Kimi K3 当前仅在 CodePilot 与 Codex 中显示。
-- **授权与额度恢复提示** — 区分余额不足、Key 不可用与周期额度限制，提供充值或重新授权的明确指引。
+- **Gemini AI Studio** — 在官方 API 服务中添加 AI Studio API Key，即可在 Native（CodePilot）中选择 Gemini 3.8 Flash；本次不开放到 Claude Code 或 Codex。
+- **Gemini 思考深度** — 支持低、中、高三档思考深度，默认中档；支持工具调用历史的保存与同模型续聊。
+
+### 修复问题
+
+- 修复部分第三方模型首轮回复后，续聊出现模型路由不匹配的问题；覆盖 Windows 用户反馈的同类场景。
+- 修复 Native 长对话压缩后重复带入旧消息，以及摘要可能产生连续用户消息的问题，保留原有图片附件。
+- 回复达到输出长度上限时保留已生成正文并显示提示，避免误认为回答已经完整结束。
+- 消息未确认保存时提供明确提示，保留当前正文，避免重试或后台刷新覆盖尚未保存的内容。
+- 保存完成后的后台处理不再延迟前台回复结束；快捷建议失败后短暂退避，减少重复请求。
 
 ### 优化改进
 
-- 服务商、模型页与聊天选择器统一使用 TokenDance 官方 Logo，并显示多协议能力和对应 Runtime 的模型筛选结果。
-- 授权支持取消与超时，重新授权沿用原连接；Key 仅在服务端加密保存，不返回页面。
+- TokenDance 添加卡片移到授权登录区域，方便找到浏览器授权入口。
+- 改进 Gemini 连接检查和模型发现，支持分页读取并过滤不支持文本生成的模型。
 
 ### 已知问题
 
-- 真实 TokenDance 授权和本机模型目录已验证；上游生成、Claude CLI 多步工具调用、计费与打包后的授权流程仍待实机验证。
-- Claude Code 的模型协议支持使用已核对的目录快照；未知模型不会自动宣称兼容。
-- 此前版本保留的真实账号、运行期恢复与 Codex 长时间稳定性验证缺口仍在跟踪。
+- Gemini 已通过本地协议、历史持久化及界面回归；真实 AI Studio 账号下的写作、工具调用、压缩后续聊与签名校验仍待实测。
+- Windows 正式安装包上的多模型连续对话及重开会话仍待真机验证；本次不宣称所有 Windows 模型问题均已解决。
+- 少量旧会话若无法唯一匹配原模型，升级后仍需手动重选一次模型。
+- 最初的数据库异常、Windows 服务退出原因，以及此前版本记录的真实账号、运行期恢复和长时间稳定性验证缺口继续跟踪。
 - Windows 安装包未配置 Authenticode 证书，请只从本 Release 下载并核对 SHA-256。
 
 ## 下载地址
 
-> macOS v0.67.5 及更高正式版、Windows v0.67.10 及更高正式版可在应用内检查并升级。更早的 Windows 版本请手动安装 v0.67.15；Linux 继续手动下载安装。
+> macOS v0.67.5 及更高正式版、Windows v0.67.10 及更高正式版可在应用内检查并升级。更早的 Windows 版本请手动安装 v0.67.16；Linux 继续手动下载安装。
 
 ### macOS
 
-- [Apple Silicon (M1/M2/M3/M4)](https://github.com/op7418/CodePilot/releases/download/v0.67.15/CodePilot-0.67.15-arm64.dmg)
-- [Intel](https://github.com/op7418/CodePilot/releases/download/v0.67.15/CodePilot-0.67.15-x64.dmg)
+- [Apple Silicon (M1/M2/M3/M4)](https://github.com/op7418/CodePilot/releases/download/v0.67.16/CodePilot-0.67.16-arm64.dmg)
+- [Intel](https://github.com/op7418/CodePilot/releases/download/v0.67.16/CodePilot-0.67.16-x64.dmg)
 
 ### Windows
 
-- [Windows x64 安装包](https://github.com/op7418/CodePilot/releases/download/v0.67.15/CodePilot.Setup.0.67.15.exe)
+- [Windows x64 安装包](https://github.com/op7418/CodePilot/releases/download/v0.67.16/CodePilot.Setup.0.67.16.exe)
 - Windows 安装包未配置 Authenticode 证书，可能显示 SmartScreen。仅从本 Release 下载并核对 SHA-256；应用内也会在安装更新前再次明确提示未签名状态。
 
 ### Linux
 
-- [x64 AppImage](https://github.com/op7418/CodePilot/releases/download/v0.67.15/CodePilot-0.67.15-x86_64.AppImage)
-- [arm64 AppImage](https://github.com/op7418/CodePilot/releases/download/v0.67.15/CodePilot-0.67.15-arm64.AppImage)
-- [amd64 DEB](https://github.com/op7418/CodePilot/releases/download/v0.67.15/CodePilot-0.67.15-amd64.deb)
-- [arm64 DEB](https://github.com/op7418/CodePilot/releases/download/v0.67.15/CodePilot-0.67.15-arm64.deb)
-- [x86_64 RPM](https://github.com/op7418/CodePilot/releases/download/v0.67.15/CodePilot-0.67.15-x86_64.rpm)
-- [aarch64 RPM](https://github.com/op7418/CodePilot/releases/download/v0.67.15/CodePilot-0.67.15-aarch64.rpm)
+- [x64 AppImage](https://github.com/op7418/CodePilot/releases/download/v0.67.16/CodePilot-0.67.16-x86_64.AppImage)
+- [arm64 AppImage](https://github.com/op7418/CodePilot/releases/download/v0.67.16/CodePilot-0.67.16-arm64.AppImage)
+- [amd64 DEB](https://github.com/op7418/CodePilot/releases/download/v0.67.16/CodePilot-0.67.16-amd64.deb)
+- [arm64 DEB](https://github.com/op7418/CodePilot/releases/download/v0.67.16/CodePilot-0.67.16-arm64.deb)
+- [x86_64 RPM](https://github.com/op7418/CodePilot/releases/download/v0.67.16/CodePilot-0.67.16-x86_64.rpm)
+- [aarch64 RPM](https://github.com/op7418/CodePilot/releases/download/v0.67.16/CodePilot-0.67.16-aarch64.rpm)
 
 ### 完整性验证
 
-- [SHA-256 Checksums](https://github.com/op7418/CodePilot/releases/download/v0.67.15/SHA256SUMS.txt)
+- [SHA-256 Checksums](https://github.com/op7418/CodePilot/releases/download/v0.67.16/SHA256SUMS.txt)
 - GitHub Release 页面可验证每个安装包的 build-provenance attestation；`latest-mac.yml`、`latest.yml` 与 blockmap 是自动更新器资产，不需要手工下载。
 
 ## 安装说明
@@ -55,7 +62,7 @@
 
 已安装的 macOS 正式版会通过同一 GitHub Release 的 `latest-mac.yml` 检查更新，并使用签名、公证后的 universal ZIP 完成应用内下载与重启安装。
 
-**Windows**：v0.67.10 及更高版本会通过 `latest.yml` 优先差分下载未签名 NSIS，失败时回退完整安装包。更早版本需手动安装 v0.67.15。出现 SmartScreen 时请核对下载来源与 SHA-256；安装前仍会明确提示没有独立发布者签名。
+**Windows**：v0.67.10 及更高版本会通过 `latest.yml` 优先差分下载未签名 NSIS，失败时回退完整安装包。更早版本需手动安装 v0.67.16。出现 SmartScreen 时请核对下载来源与 SHA-256；安装前仍会明确提示没有独立发布者签名。
 
 **Linux**：继续手动下载新版安装包，不会静默运行包管理器或提权安装。
 

@@ -1,11 +1,13 @@
 'use client';
 
+import { CHAT_SAVE_UNCONFIRMED } from '@/lib/chat-collection-response';
 import { localizeModelSelectionError } from '@/lib/model-selection-error-i18n';
 import { Suspense, useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import type { Message, SSEEvent, SessionResponse, TokenUsage, PermissionRequestEvent, FileAttachment, MentionRef, ExternalSource } from '@/types';
 import type { SessionPermissionProfile } from '@/lib/permission/profile';
 import { MessageList } from '@/components/chat/MessageList';
+import { ChatView } from '@/components/chat/ChatView';
 import { MessageInput, composerDraftKey } from '@/components/chat/MessageInput';
 import { ChatPermissionSelector } from '@/components/chat/ChatPermissionSelector';
 import { effectiveChatRuntime } from '@/lib/chat-runtime-shared';
@@ -335,6 +337,7 @@ function NewChatPageInner() {
     }
   }, []);
   const [createdSessionId, setCreatedSessionId] = useState<string | undefined>();
+  const [recoverySession, setRecoverySession] = useState<SessionResponse['session'] | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   // Phase 2 ③ — first-turn navigation guard. The inline first-turn stream
   // router.push()es to the new session on completion; if the user navigated
@@ -1039,6 +1042,7 @@ function NewChatPageInner() {
 
         const decoder = new TextDecoder();
         let accumulated = '';
+        let saveUnconfirmed = false;
         let tokenUsage: TokenUsage | null = null;
         let buffer = '';
 
@@ -1228,6 +1232,7 @@ function NewChatPageInner() {
                   break;
                 }
                 case 'error': {
+                  if (event.data === CHAT_SAVE_UNCONFIRMED) saveUnconfirmed = true;
                   // Try to parse structured error JSON from classifier
                   let errorDisplay: string;
                   try {
@@ -1272,6 +1277,7 @@ function NewChatPageInner() {
             session_id: session.id,
             role: 'assistant',
             content: accumulated.trim(),
+            saveUnconfirmed,
             created_at: new Date().toISOString(),
             token_usage: tokenUsage ? JSON.stringify(tokenUsage) : null,
           };
@@ -1282,7 +1288,20 @@ function NewChatPageInner() {
         // if the user is still on this new-chat page. If they switched away
         // mid-stream (navGuard deactivated on unmount), suppress the push so
         // we don't drag them back to the just-created session (Phase 2 ③).
-        navGuardRef.current?.navigate(() => router.push(`/chat/${session.id}`));
+        // Keep the in-memory reply and warning visible if the history write
+        // failed; navigating would replace them with the incomplete DB transcript.
+        if (saveUnconfirmed) {
+          // Reuse the standard bound-session composer without a history reload.
+          // It owns subsequent sends, route CAS and Stop, retaining this reply.
+          // POST /api/chat may have advanced the route binding/revision since
+          // session creation. Reload metadata only, never the missing transcript.
+          const latest = await fetch(`/api/chat/sessions/${session.id}`)
+            .then(res => res.ok ? res.json() as Promise<SessionResponse> : null)
+            .catch(() => null);
+          setRecoverySession(latest?.session ?? session);
+        } else {
+          navGuardRef.current?.navigate(() => router.push(`/chat/${session.id}`));
+        }
       } catch (error) {
         if (error instanceof DOMException && error.name === 'AbortError') {
           // Aborted — either the user hit stop, or the page unmounted (session
@@ -1530,6 +1549,20 @@ function NewChatPageInner() {
       />
     </>
   );
+
+  if (recoverySession) {
+    return <ChatView
+      sessionId={recoverySession.id}
+      initialMessages={messages}
+      modelName={recoverySession.model}
+      providerId={recoverySession.provider_id}
+      runtimePin={recoverySession.runtime_pin}
+      initialRuntimeBindingState={recoverySession.runtime_binding_state}
+      initialRouteRevision={recoverySession.route_revision}
+      initialPermissionProfile={permissionProfile}
+      initialMode={mode as 'code' | 'plan' | 'ask'}
+    />;
+  }
 
   return (
     <div className="flex h-full min-h-0 flex-col">

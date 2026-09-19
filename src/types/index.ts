@@ -256,6 +256,8 @@ export interface Message {
   content: string; // JSON string of MessageContentBlock[] for structured content
   created_at: string;
   token_usage: string | null; // JSON string of TokenUsage
+  /** Renderer-only evidence: this live reply must not be replaced by DB history. */
+  saveUnconfirmed?: boolean;
   /**
    * Durable lifecycle of the assistant transcript row. Older/synthetic rows may
    * omit it and are treated as completed. A `streaming` row is an incremental
@@ -467,12 +469,20 @@ export interface ExternalSource {
 }
 
 // Structured message content blocks (stored as JSON in messages.content)
-export type MessageContentBlock =
+export interface NativeStepHistory {
+  version: 1;
+  providerId: string;
+  modelId: string;
+  messages: import('ai').ModelMessage[];
+}
+
+export type MessageContentBlock = (
   | { type: 'text'; text: string }
   | { type: 'thinking'; thinking: string }
   | { type: 'tool_use'; id: string; name: string; input: unknown }
   | { type: 'tool_result'; tool_use_id: string; content: string; is_error?: boolean; media?: MediaBlock[]; sources?: ExternalSource[] }
-  | { type: 'code'; language: string; code: string };
+  | { type: 'code'; language: string; code: string }
+) & { /** Opaque Native replay state, never rendered as text. */ nativeStep?: NativeStepHistory };
 
 // Helper to parse message content - returns blocks or wraps plain text
 export function parseMessageContent(content: string): MessageContentBlock[] {
@@ -633,6 +643,7 @@ export type ProviderRuntimeCompat =
   | 'claude_code_experimental'
   | 'openrouter_anthropic_skin'
   | 'codepilot_only'
+  | 'native_only'
   | 'codex_account'
   | 'media_only'
   | 'unknown';
@@ -1203,6 +1214,7 @@ export interface SkillResponse {
 // ==========================================
 
 export type SSEEventType =
+  | 'native_step'        // private replay state for server-side persistence
   | 'text'               // text content delta
   | 'thinking'           // extended thinking content delta
   | 'tool_use'           // tool invocation info
@@ -1814,6 +1826,8 @@ export type StreamPhase = 'active' | 'completed' | 'error' | 'stopped';
 
 export interface SessionStreamSnapshot {
   sessionId: string;
+  /** Received the explicit server persistence warning; completed is not a save guarantee. */
+  saveUnconfirmed?: boolean;
   phase: StreamPhase;
   streamingContent: string;
   streamingThinkingContent: string;

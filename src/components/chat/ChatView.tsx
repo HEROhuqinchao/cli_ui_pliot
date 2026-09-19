@@ -194,6 +194,9 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
         }
         const dbMessages: Message[] = data.messages;
         setMessages(current => {
+          // Check inside the updater: a save warning may arrive while the fetch
+          // is in flight. Preserve it across this and later successful turns.
+          if (current.some(m => m.saveUnconfirmed)) return current;
           const localCommands = current.filter(m => m.id.startsWith('cmd-'));
           if (localCommands.length === 0) return dbMessages;
           const merged = [...dbMessages, ...localCommands];
@@ -858,7 +861,9 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
     onStreamCompleted: handleStreamCompleted,
   });
 
-  const initializedRef = useRef(false);
+  // State was already seeded in useState. Do not overwrite an unmounted-stream
+  // reply appended by useStreamSubscription during this same mount.
+  const initializedRef = useRef(initialMessages.length > 0);
   useEffect(() => {
     if (initialMessages.length > 0 && !initializedRef.current) {
       initializedRef.current = true;

@@ -4,11 +4,17 @@
  * Other locale files must implement `Record<TranslationKey, string>`.
  */
 const en = {
+  'chat.notice.geminiOptions.title': 'Gemini thinking settings adjusted',
+  'chat.notice.geminiOptions.message': 'Gemini 3.8 Flash always uses thinking. Available levels are Low, Medium and High; higher levels are sent as High.',
+  'chat.notice.outputTruncated.title': 'Response reached the output limit',
+  'chat.notice.outputTruncated.message': 'The response may be incomplete. Your received text is kept; send a follow-up to continue writing.',
+  'provider.nativeOnlyReason': 'Available in CodePilot Native. Codex and Claude Code support has not been enabled for this provider.',
   'chat.error.oauthEffortUnavailable': 'This OpenAI account no longer offers the selected reasoning effort. Choose an available effort in the model selector and retry.',
   'provider.tokenDanceMessagesUnavailable': 'The bundled TokenDance catalog has not confirmed Anthropic Messages support for this model. Use Native or Codex.',
   'provider.tokenDanceCompatLabel': 'Multi-protocol · per model',
   'provider.tokenDanceCompatTooltip': 'Native/Codex use Chat Completions; Claude Code uses Messages for supported models. Availability varies by model.',
   'provider.tokenDanceAnthropicCompatTooltip': 'This connection uses Messages in Native/Codex. Claude Code availability follows each model’s confirmed Messages support.',
+  'chat.error.saveUnconfirmed': 'This reply could not be confirmed as saved and may be missing after a refresh. Copy any content you need before refreshing or restarting the app.',
   'chat.error.tokenDanceTopUp': 'TokenDance balance is insufficient. Top up your account at https://tokendance.space/ and retry; your API key is still valid.',
   'chat.error.tokenDanceReauthorize': 'TokenDance API key is unavailable. Open Settings → Providers, edit this TokenDance connection and authorize again or replace its API key.',
   'chat.error.tokenDanceQuota': 'TokenDance API key has reached its periodic limit. Wait for the quota to reset, or edit this connection in Settings → Providers and authorize a new key.',

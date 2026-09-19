@@ -1774,6 +1774,40 @@ export const VENDOR_PRESETS: VendorPreset[] = [
     },
   },
 
+  // Gemini Developer API (AI Studio), verified contract 2026-09-18.
+  // Separate from Vertex/Claude and the image-only product.
+  {
+    key: 'google-ai-studio',
+    name: 'Google AI Studio',
+    description: 'Gemini API — writing and tools in CodePilot Native',
+    descriptionZh: 'Gemini API — 在 CodePilot Native 中写作和调用工具',
+    protocol: 'google',
+    authStyle: 'api_key',
+    baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+    defaultEnvOverrides: {},
+    defaultModels: [{
+      modelId: 'gemini-3.8-flash',
+      displayName: 'Gemini 3.8 Flash',
+      capabilities: {
+        reasoning: true, toolUse: true, vision: true,
+        contextWindow: 1_048_576,
+        supportsEffort: true,
+        supportedEffortLevels: ['low', 'medium', 'high'],
+        defaultEffortLevel: 'medium',
+        thinkingMode: 'always',
+      },
+    }],
+    fields: ['api_key'],
+    iconKey: 'google',
+    meta: {
+      apiKeyUrl: 'https://aistudio.google.com/api-keys',
+      docsUrl: 'https://ai.google.dev/gemini-api/docs/models/gemini-3.8-flash',
+      billingModel: 'pay_as_you_go',
+      notes: ['Use an AI Studio API key. Currently available in CodePilot Native only.'],
+      notesZh: ['使用 AI Studio API Key，目前仅支持 CodePilot Native。'],
+    },
+  },
+
   // ── Google Gemini (Image) ──
   {
     key: 'gemini-image',
@@ -2358,6 +2392,7 @@ export function canSearchUpstreamModels(
 }
 
 function inferProtocolFromLegacyFields(providerType: string, baseUrl: string): Protocol {
+  if (providerType === 'google') return 'google';
   if (providerType === 'anthropic') return 'anthropic';
   if (providerType === 'openai-compatible') return 'openai-compatible';
   if (providerType === 'openrouter') return 'openrouter';

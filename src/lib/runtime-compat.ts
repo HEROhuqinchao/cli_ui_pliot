@@ -74,6 +74,11 @@ export function getProviderCompat(record: ProviderCompatRecord): ProviderRuntime
   if (record.provider_type === 'gemini-image' || record.provider_type === 'openai-image') {
     return 'media_only';
   }
+  // Google text support is Native-only until each bridge preserves signed
+  // history. Never let an unmatched Google preset fall through to Claude.
+  if (record.protocol === 'google' || (!record.protocol && record.provider_type === 'google')) {
+    return 'native_only';
+  }
   const preset: VendorPreset | undefined = findMatchingPresetForRecord(record);
   if (!preset) return 'unknown';
   if (isTokenDanceBaseUrl(record.base_url) && (preset.key === 'tokendance' || preset.key === 'tokendance-anthropic')) return 'claude_code_experimental';
@@ -182,6 +187,12 @@ export function getModelCompat(args: {
   // the zh-CN form by default to match the rest of `reasons.*`.
 
   switch (providerCompat) {
+    case 'native_only':
+      compat.codepilot_runtime_compatible = true;
+      supported.add('codepilot_runtime');
+      reasons.claude_code = translate(args.reasonLocale ?? 'en', 'provider.nativeOnlyReason');
+      reasons.codex_runtime = reasons.claude_code;
+      break;
     case 'claude_code_ready':
       // Anthropic official / Bedrock / Vertex — `@ai-sdk/anthropic` can also
       // talk to these directly without the Claude Code subprocess, so the
@@ -307,6 +318,7 @@ export function compatLabel(compat: ProviderRuntimeCompat, isZh: boolean, provid
     return translate(isZh ? 'zh' : 'en', 'provider.tokenDanceCompatLabel');
   }
   switch (compat) {
+    case 'native_only':             return 'CodePilot Native';
     case 'claude_code_ready':        return isZh ? 'Claude Code 直连' : 'Claude Code direct';
     case 'claude_code_verified':     return isZh ? 'Claude Code 兼容' : 'Claude Code compat';
     case 'claude_code_experimental': return isZh ? 'Claude Code 实验' : 'Claude Code experimental';
@@ -326,6 +338,7 @@ export function compatTooltip(compat: ProviderRuntimeCompat, isZh: boolean, prov
       ? 'provider.tokenDanceAnthropicCompatTooltip' : 'provider.tokenDanceCompatTooltip');
   }
   switch (compat) {
+    case 'native_only': return translate(isZh ? 'zh' : 'en', 'provider.nativeOnlyReason');
     case 'claude_code_ready':
       return isZh
         ? '官方 Anthropic API / Bedrock / Vertex，Claude Code 直接接入，工具 / thinking 完整支持'
@@ -372,6 +385,7 @@ export function compatTooltip(compat: ProviderRuntimeCompat, isZh: boolean, prov
  */
 export function compatTone(compat: ProviderRuntimeCompat): string {
   switch (compat) {
+    case 'native_only':             return 'bg-primary/10 text-primary';
     case 'claude_code_ready':        return 'bg-status-success-muted text-status-success-foreground';
     case 'claude_code_verified':     return 'bg-status-info-muted text-status-info-foreground';
     case 'claude_code_experimental': return 'bg-status-warning-muted text-status-warning-foreground';
@@ -392,6 +406,7 @@ export function compatTone(compat: ProviderRuntimeCompat): string {
  *  next to a muted-foreground label. */
 export function compatDotColor(compat: ProviderRuntimeCompat): string {
   switch (compat) {
+    case 'native_only':             return 'bg-primary';
     case 'claude_code_ready':        return 'bg-status-success-foreground';
     case 'claude_code_verified':     return 'bg-status-info-foreground';
     case 'claude_code_experimental': return 'bg-status-warning-foreground';

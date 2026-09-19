@@ -3283,6 +3283,10 @@ export async function testProviderConnection(config: {
   if (config.protocol === 'xai') {
     return testXaiConnection(config);
   }
+  if (config.protocol === 'google') {
+    const { testGoogleConnection } = await import('./google-connection-test');
+    return testGoogleConnection({ ...config, modelName: model });
+  }
 
   // Reject third-party / custom Anthropic providers without a base URL.
   // Otherwise the fallback to https://api.anthropic.com would test the

@@ -13,7 +13,6 @@ import {
   getSession,
   getSetting,
   updateSdkSessionId,
-  updateSessionModel,
   syncSdkTasks,
   isLockOwner,
   updateMessageStreamCheckpoint,
@@ -29,6 +28,7 @@ import { saveMediaToLibrary } from '@/lib/media-saver';
 import type { SSEEvent, TokenUsage, MessageContentBlock, MediaBlock, ExternalSource } from '@/types';
 import { isRuntimeId } from '@/lib/runtime/runtime-id';
 import { attachNormalizedTurnUsage } from '@/lib/runtime/turn-usage';
+import { attachNativeStep, parseNativeStepHistory } from './native-step-history';
 
 const ASSISTANT_CHECKPOINT_INTERVAL_MS = 120;
 const NON_SUCCESSFUL_TERMINAL_FINISH_REASONS = new Set(['interrupted', 'inProgress']);
@@ -41,7 +41,7 @@ function serializeAssistantBlocks(blocks: readonly MessageContentBlock[]): strin
   const cleanedBlocks = blocks;
   const hasStructuredBlocks = cleanedBlocks.some(
     (block) =>
-      block.type === 'tool_use'
+      Boolean(block.nativeStep) || block.type === 'tool_use'
       || block.type === 'tool_result'
       || block.type === 'thinking'
   );
@@ -75,7 +75,7 @@ function buildAssistantSnapshot(
  *
  * Session ownership (I1/DP1 ownership gate): `lockId` is this turn's
  * session-lock owner token (minted at route.ts :85). EVERY session-level write
- * below — sdk_session_id / model / SDK tasks / the assistant `addMessage` — is
+ * below — sdk_session_id / SDK tasks / the assistant `addMessage` — is
  * gated on `isLockOwner(sessionId, lockId)`. A superseded turn (its lock taken
  * over by a newer send after Stop→watchdog release) reaches here LATE and must
  * NOT write: its writes would clobber the new owner's state and (DP1) splice its
@@ -96,6 +96,8 @@ export async function collectStreamResponse(
   onComplete?: () => void,
   opts?: {
     suppressNotifications?: boolean;
+    /** Terminal DB writes have settled; post-save model calls are still background work. */
+    onPersistenceSettled?: (saved: boolean) => void;
     /** Phase 2 semantic title generation. Present only when this turn is the
      *  session's FIRST real user turn (the route sets it from the fallback-title
      *  CAS return value). Fired below only on a clean, persisted completion. */
@@ -236,6 +238,15 @@ export async function collectStreamResponse(
               currentText += event.data;
               if (thinkingText) thinkingPhaseEnded = true;
               persistCheckpoint();
+            } else if (event.type === 'native_step') {
+              const step = await parseNativeStepHistory(JSON.parse(event.data));
+              if (step) {
+                if (thinkingText) contentBlocks.push({ type: 'thinking', thinking: thinkingText });
+                if (currentText) contentBlocks.push({ type: 'text', text: currentText });
+                thinkingText = ''; currentText = ''; thinkingPhaseEnded = false;
+                attachNativeStep(contentBlocks, step);
+                persistCheckpoint(true);
+              }
             } else if (event.type === 'tool_use') {
               if (thinkingText) thinkingPhaseEnded = true;
               // Flush any accumulated text before the tool use block
@@ -314,21 +325,20 @@ export async function collectStreamResponse(
                 // skip malformed tool_result data
               }
             } else if (event.type === 'status') {
-              // Capture SDK session_id and model from init event and persist them.
+              // Persist the continuation reference, never the reported model:
+              // status.model is an upstream observation, not the committed
+              // picker route. Overwriting it breaks alias-based second turns.
               // I1/DP1 owner gate: a superseded turn must not write session-level
-              // state — skip both writes (diagnostic-log only) if we no longer own
+              // state — skip the write (diagnostic-log only) if we no longer own
               // the lock.
               try {
                 const statusData = JSON.parse(event.data);
-                if (statusData.session_id || statusData.model) {
+                if (statusData.session_id) {
                   if (!isLockOwner(sessionId, lockId)) {
-                    console.warn(`[chat/route] stale owner (lockId superseded), skipping status session_id/model write for session ${sessionId}`);
+                    console.warn(`[chat/route] stale owner (lockId superseded), skipping status session_id write for session ${sessionId}`);
                   } else {
                     if (statusData.session_id) {
                       updateSdkSessionId(sessionId, statusData.session_id);
-                    }
-                    if (statusData.model) {
-                      updateSessionModel(sessionId, statusData.model);
                     }
                   }
                 }
@@ -485,6 +495,9 @@ export async function collectStreamResponse(
       }
     }
   } finally {
+    // Publish before any asynchronous completion effects. A later notification
+    // or cleanup failure must not turn a confirmed DB write into a save warning.
+    opts?.onPersistenceSettled?.(lastSavedAssistantMsgId !== null || contentBlocks.length === 0);
     // ── Server-side completion detection (reliable path) ──
     // After persisting the assistant message, check for onboarding/checkin
     // fences and process them directly on the server. This ensures completion

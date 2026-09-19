@@ -1,3 +1,4 @@
+import { CHAT_SAVE_UNCONFIRMED } from './chat-collection-response';
 import { TOKENDANCE_RECOVERY_ERRORS } from './tokendance';
 import { translateActive, type TranslationKey } from '@/i18n';
 import { MODEL_SELECTION_ERRORS } from './model-selection-error';
@@ -12,6 +13,7 @@ export function localizeModelSelectionError(
   message: string,
   t: (key: TranslationKey) => string = translateActive,
 ): string {
+  if (message === CHAT_SAVE_UNCONFIRMED) return t('chat.error.saveUnconfirmed');
   for (const code of Object.keys(keys) as Array<keyof typeof keys>) {
     message = message.replace(`[${code}] ${MODEL_SELECTION_ERRORS[code]}`, t(keys[code]));
   }

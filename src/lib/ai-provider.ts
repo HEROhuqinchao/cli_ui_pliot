@@ -25,6 +25,7 @@ import { createAnthropic } from '@ai-sdk/anthropic';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createXai } from '@ai-sdk/xai';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
+import { GEMINI_FLASH_MODEL, geminiFlashMiddleware } from './google-model-options';
 import { createAmazonBedrock } from '@ai-sdk/amazon-bedrock';
 import { createVertexAnthropic } from '@ai-sdk/google-vertex/anthropic';
 import {
@@ -411,7 +412,10 @@ function createLanguageModel(config: AiSdkConfig, isThirdPartyProxy: boolean): L
         baseURL: config.baseUrl,
         ...(hasHeaders ? { headers: config.headers } : {}),
       });
-      return google(config.modelId);
+      const model = google(config.modelId);
+      return config.modelId === GEMINI_FLASH_MODEL
+        ? wrapLanguageModel({ model, middleware: geminiFlashMiddleware })
+        : model;
     }
 
     case 'bedrock': {

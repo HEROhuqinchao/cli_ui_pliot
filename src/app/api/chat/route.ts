@@ -3,7 +3,7 @@ import { streamClaude } from '@/lib/claude-client';
 import { resolveInTreeAttachmentPath } from '@/lib/in-tree-attachment';
 import { addMessage, bindSessionForExecution, commitSessionCompaction, getActiveProvider, getDefaultProviderId, getHandoffForTargetSession, getMessages, getProvider, getSession, getSessionSummary, updateSessionTitle, updateSdkSessionId, updateSessionProvider, acquireSessionLock, renewSessionLock, releaseSessionLock, setSessionRuntimeStatus, isLockOwner } from '@/lib/db';
 import { deriveConversationTitle } from '@/lib/conversation-title';
-import { resolveProviderForSession } from '@/lib/provider-resolver';
+import { resolveChatMessageRoute } from '@/lib/chat-message-route';
 import { resolveRuntimeForSession } from '@/lib/chat-runtime';
 import { notifySessionStart } from '@/lib/telegram-bot';
 import { collectStreamResponse } from '@/lib/chat-collect-stream-response';
@@ -11,7 +11,8 @@ import { loadCodePilotMcpServers, loadAllMcpServers } from '@/lib/mcp-loader';
 import { assembleContext } from '@/lib/context-assembler';
 import { buildContextCompressedStatus } from '@/lib/context-compressor';
 import type { SendMessageRequest, FileAttachment, ClaudeStreamOptions } from '@/types';
-import { wrapController } from '@/lib/safe-stream';
+import { createChatCollectionResponse, createChatPersistenceSignal, observeChatCollection } from '@/lib/chat-collection-response';
+import { reportChatCollectionFailure } from '@/lib/telemetry/chat-collection-failure';
 import { ensureSchedulerRunning } from '@/lib/task-scheduler';
 import { predictNativeRuntime } from '@/lib/runtime';
 import { hasCodePilotProvider } from '@/lib/provider-presence';
@@ -201,7 +202,13 @@ export async function POST(request: NextRequest) {
         { status: 409, headers: { 'Content-Type': 'application/json' } },
       );
     }
-    if ((provider_id && provider_id !== session.provider_id) || (model && model !== session.model)) {
+    const resolved = resolveChatMessageRoute({
+      provider_id: session.provider_id,
+      model: session.model,
+      requestProviderId: provider_id || undefined,
+      requestModel: model || undefined,
+    }, effectiveSessionRuntime);
+    if (!resolved) {
       releaseSessionLock(session_id, lockId);
       activeSessionId = undefined;
       activeLockId = undefined;
@@ -215,15 +222,6 @@ export async function POST(request: NextRequest) {
         { status: 409, headers: { 'Content-Type': 'application/json' } },
       );
     }
-    const resolved = resolveProviderForSession(
-      {
-        provider_id: session.provider_id || '',
-        model: session.model || '',
-        requestProviderId: provider_id || undefined,
-        requestModel: model || undefined,
-      },
-      { runtime: effectiveSessionRuntime, callScene: 'interactive_chat' },
-    );
     if (resolved.invalidReason) {
       releaseSessionLock(session_id, lockId);
       activeSessionId = undefined;
@@ -958,10 +956,12 @@ export async function POST(request: NextRequest) {
     }, 60_000);
 
     // Save assistant message in background, with cleanup callback to release lock
-    collectStreamResponse(streamForCollect, session_id, lockId, telegramNotifyOpts, () => {
+    const persistence = createChatPersistenceSignal();
+    void observeChatCollection(collectStreamResponse(streamForCollect, session_id, lockId, telegramNotifyOpts, () => {
       settleLock('idle');
     }, {
       suppressNotifications: !!autoTrigger,
+      onPersistenceSettled: persistence.settle,
       // Phase 2 semantic title. Non-null only on the first real user turn.
       // The provider/runtime handed over here are THIS session's resolved
       // values — the same ones that answered the message — so generation can
@@ -974,6 +974,16 @@ export async function POST(request: NextRequest) {
             model: resolved.upstreamModel || resolved.model || effectiveModel || undefined,
           }
         : undefined,
+    }), (error) => {
+      // Covers failures before the collector reaches its persistence boundary.
+      // Resolving again after a confirmed save leaves that result unchanged.
+      persistence.settle(false);
+      try {
+        void reportChatCollectionFailure(error);
+      } finally {
+        // Finalization/reporting failures must still clear renewal/watchdog resources.
+        settleLock('interrupted');
+      }
     });
 
     // codex-stop-recovery Phase 3 — Stop/abort watchdog. The normal path settles
@@ -997,34 +1007,20 @@ export async function POST(request: NextRequest) {
     // If auto-compression happened, prepend a notification event to the stream.
     // The message is human-readable so the browser status bar shows something
     // meaningful, and includes structured data for future rich UI handling.
-    const responseStream = compressionOccurred
-      ? new ReadableStream<string>({
-          async start(controllerRaw) {
-            const controller = wrapController(controllerRaw);
-            controller.enqueue(`data: ${JSON.stringify({
-              type: 'status',
-              data: JSON.stringify(buildContextCompressedStatus({
-                messagesCompressed: compressionStats?.messagesCompressed ?? 0,
-                tokensSaved: compressionStats?.tokensSaved ?? 0,
-                trigger: 'automatic',
-                sourceBoundaryRowid: compressionStats?.sourceBoundaryRowid,
-                recreatedUnderlyingSession: compressionStats?.recreatedUnderlyingSession,
-              })),
-            })}\n\n`);
-            const reader = streamForClient.getReader();
-            try {
-              while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                controller.enqueue(value);
-                if (controller.closed) break; // consumer aborted
-              }
-            } finally {
-              controller.close();
-            }
-          },
-        })
-      : streamForClient;
+    const responseStream = createChatCollectionResponse(
+      streamForClient,
+      persistence.settled,
+      compressionOccurred ? `data: ${JSON.stringify({
+        type: 'status',
+        data: JSON.stringify(buildContextCompressedStatus({
+          messagesCompressed: compressionStats?.messagesCompressed ?? 0,
+          tokensSaved: compressionStats?.tokensSaved ?? 0,
+          trigger: 'automatic',
+          sourceBoundaryRowid: compressionStats?.sourceBoundaryRowid,
+          recreatedUnderlyingSession: compressionStats?.recreatedUnderlyingSession,
+        })),
+      })}\n\n` : undefined,
+    );
 
     return new Response(responseStream, {
       headers: {

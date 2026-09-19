@@ -116,3 +116,8 @@ manual、auto、reactive 三入口通过 `commitSessionCompaction()` 原子写 s
 ## 验证与剩余边界
 
 单元合同覆盖 migration、CAS、零写入、handoff 幂等/并发、marker、child gate、usage unknown 和 compaction policy。真实三 Runtime account smoke 仍必须按执行计划 Smoke Ledger 跑；在完成之前不能宣称某个 Provider 的实际缓存命中率或费用下降百分比。
+
+
+## #685 连续回合身份修复（2026-09-14）
+
+SDK/Native `status.model` 不再覆盖 `chat_sessions.model`；报告的是执行观察值，已选 route 只由显式 mutation 改变。`src/lib/chat-message-route.ts` 固定 session Provider，兼容历史 upstream → 唯一 live row 的请求别名；不写库、不增 revision，歧义/隐藏/不同 Provider/不兼容 Runtime 仍拒绝。该逻辑共用于双聊天入口及三 Runtime，回归细节见 [执行记录](../exec-plans/completed/issue-685-route-identity.md)。真实 Windows/MiMo smoke 尚未执行。

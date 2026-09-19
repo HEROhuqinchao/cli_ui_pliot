@@ -34,6 +34,7 @@ import { getProviderCompat } from '@/lib/runtime-compat';
  * this and stops disabling rows for that tier.
  */
 export const ADAPTER_STATUS_BY_COMPAT: Record<ProviderRuntimeCompat, ProxyAdapterStatus> = {
+  native_only: 'pending',
   // Native runtime never goes through the proxy — Codex Account
   // routes through Codex's own app-server, not via codepilot_proxy.
   codex_account: 'not_applicable',
@@ -60,6 +61,7 @@ export type AdapterFamily = 'openai_compatible' | 'anthropic_compatible' | 'code
 
 /** Which adapter family a compat tier maps to. */
 export const ADAPTER_FAMILY_BY_COMPAT: Record<ProviderRuntimeCompat, AdapterFamily> = {
+  native_only: 'native',
   // Codex Account routes through Codex natively, never via the proxy.
   codex_account: 'native',
   media_only: 'native',

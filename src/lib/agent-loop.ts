@@ -30,7 +30,9 @@ import { buildAnthropicProviderOptions } from './agent-loop-anthropic-wire';
 import { buildSamplingIgnoredNotice } from './anthropic-sampling-notice';
 import { buildEffortAdjustmentNotice } from './anthropic-effort-adjustment-notice';
 import { buildXaiProviderOptions } from './xai-provider-options';
-import { getMessages } from './db';
+import { googleThinkingOptions, GEMINI_FLASH_MODEL } from './google-model-options';
+import { getMessages, getSessionSummary } from './db';
+import { filterHistoryByCompactBoundary } from './context-compressor';
 import { wrapController } from './safe-stream';
 import { buildNativeErrorEventData } from './agent-loop-error-event';
 import { buildToolErrorResultData } from './agent-loop-tool-error';
@@ -331,7 +333,13 @@ export function runAgentLoop(options: AgentLoopOptions): ReadableStream<string> 
 
         // 2. Load conversation history from DB
         const { messages: dbMessages } = getMessages(sessionId, { limit: 200, excludeHeartbeatAck: true });
-        const historyMessages = buildCoreMessages(dbMessages);
+        const summary = getSessionSummary(sessionId);
+        const retainedMessages = filterHistoryByCompactBoundary({
+          history: dbMessages, summary: summary.summary, summaryBoundaryRowid: summary.boundaryRowid,
+        });
+        const nativeHistoryRoute = config.sdkType === 'google' && resolved.provider
+          ? { providerId: resolved.provider.id, modelId: config.modelId } : undefined;
+        const historyMessages = buildCoreMessages(retainedMessages, nativeHistoryRoute);
 
         // The chat route persists the user message to DB BEFORE calling us,
         // so for normal messages it's already the last entry in historyMessages.
@@ -343,6 +351,24 @@ export function runAgentLoop(options: AgentLoopOptions): ReadableStream<string> 
         // prompt (already includes any file attachments via buildUserMessage).
         if (autoTrigger || historyMessages.length === 0 || historyMessages[historyMessages.length - 1]?.role !== 'user') {
           historyMessages.push({ role: 'user' as const, content: prompt });
+        }
+        // Native reads DB history independently of the desktop/bridge caller.
+        // Honor the same compact boundary and supply its summary as user context.
+        // Merge into the first user turn: Google's converter does not coalesce
+        // adjacent user messages. Preserve every multipart attachment as-is.
+        if (summary.summary) {
+          const summaryText = `<session-summary>\n${summary.summary}\n</session-summary>\n\n`;
+          const first = historyMessages[0];
+          if (first?.role === 'user') {
+            historyMessages[0] = {
+              ...first,
+              content: typeof first.content === 'string'
+                ? summaryText + first.content
+                : [{ type: 'text', text: summaryText }, ...first.content],
+            };
+          } else {
+            historyMessages.unshift({ role: 'user', content: summaryText });
+          }
         }
 
         // Debug: uncomment to trace message assembly issues
@@ -419,6 +445,17 @@ export function runAgentLoop(options: AgentLoopOptions): ReadableStream<string> 
             topP,
             topK,
           });
+          if (config.sdkType === 'google' && config.modelId === GEMINI_FLASH_MODEL) {
+            // Shared notice below explains why persisted sampling settings
+            // cannot apply after switching to Gemini 3.8.
+            sanitized.strippedSamplingParams.push(...Object.keys(sanitized.sampling) as Array<'temperature' | 'topP' | 'topK'>);
+            sanitized.sampling = {};
+            if (step === 1 && (thinking?.type === 'disabled' || effort === 'max' || effort === 'xhigh')) {
+              controller.enqueue(formatSSE({ type: 'status', data: JSON.stringify({
+                notification: true, code: 'GEMINI_OPTIONS_ADJUSTED', reason: 'model-contract',
+              }) }));
+            }
+          }
           const effortAdjustmentNotice = buildEffortAdjustmentNotice({
             model: config.modelId,
             sanitized,
@@ -571,6 +608,10 @@ export function runAgentLoop(options: AgentLoopOptions): ReadableStream<string> 
               xai: buildXaiProviderOptions(config.modelId, sanitized.effort),
             };
           }
+          if (config.sdkType === 'google') {
+            const google = googleThinkingOptions(config.modelId, effort);
+            if (google) providerOptions = { ...providerOptions, google };
+          }
 
           // Prune old tool results to reduce token usage
           const prunedMessages = repairIncompleteToolHistory(
@@ -612,7 +653,9 @@ export function runAgentLoop(options: AgentLoopOptions): ReadableStream<string> 
             ...sanitized.sampling,
             abortSignal: timeoutCtl.signal,
             // Codex API doesn't support max_output_tokens
-            ...(config.useResponsesApi ? {} : { maxOutputTokens: 16384 }),
+            ...(config.useResponsesApi ? {} : {
+              maxOutputTokens: config.sdkType === 'google' && config.modelId === GEMINI_FLASH_MODEL ? 65_536 : 16_384,
+            }),
             // Phase 4 ③ — redacted trace, only when explicitly enabled via
             // CODEPILOT_AISDK_TRACE=1 (null → option absent → no change).
             ...(traceIntegration
@@ -861,6 +904,12 @@ export function runAgentLoop(options: AgentLoopOptions): ReadableStream<string> 
           // can fail closed on an upstream fallback instead of echoing the
           // requested catalog route as though it were effective.
           const responseData = await result.response;
+          if (nativeHistoryRoute && responseData.messages.length > 0) {
+            controller.enqueue(formatSSE({
+              type: 'native_step',
+              data: JSON.stringify({ version: 1, ...nativeHistoryRoute, messages: responseData.messages }),
+            }));
+          }
           runtimeReportedModel = responseData.modelId?.trim() || runtimeReportedModel;
 
           // An in-band error part can finish with all AI SDK promises
@@ -877,6 +926,12 @@ export function runAgentLoop(options: AgentLoopOptions): ReadableStream<string> 
           }
 
           // Usage is accumulated in onStepFinish callback above
+          if (await result.finishReason === 'length') {
+            controller.enqueue(formatSSE({ type: 'status', data: JSON.stringify({
+              notification: true, code: 'NATIVE_OUTPUT_TRUNCATED', reason: 'length',
+            }) }));
+            break;
+          }
 
           // If no tool calls, the model is done
           if (!hasToolCalls) {

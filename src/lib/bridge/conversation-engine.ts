@@ -11,6 +11,7 @@ import path from 'path';
 import type { ChannelBinding } from './types';
 import type { SSEEvent, TokenUsage, MessageContentBlock, FileAttachment } from '@/types';
 import { streamClaude } from '../claude-client';
+import { attachNativeStep, parseNativeStepHistory } from '../native-step-history';
 import {
   addMessage,
   getMessages,
@@ -423,6 +424,15 @@ export async function consumeStream(
         }
 
         switch (event.type) {
+          case 'native_step': {
+            const step = await parseNativeStepHistory(JSON.parse(event.data));
+            if (step) {
+              if (currentText) contentBlocks.push({ type: 'text', text: currentText });
+              currentText = '';
+              attachNativeStep(contentBlocks, step);
+            }
+            break;
+          }
           case 'thinking': {
             // Accumulate thinking deltas into a thinking content block
             const delta = event.data;
@@ -614,7 +624,7 @@ export async function consumeStream(
     // Save assistant message
     if (contentBlocks.length > 0) {
       const hasStructuredBlocks = contentBlocks.some(
-        (b) => b.type === 'tool_use' || b.type === 'tool_result' || b.type === 'thinking'
+        (b) => Boolean(b.nativeStep) || b.type === 'tool_use' || b.type === 'tool_result' || b.type === 'thinking'
       );
       const content = hasStructuredBlocks
         ? JSON.stringify(contentBlocks)

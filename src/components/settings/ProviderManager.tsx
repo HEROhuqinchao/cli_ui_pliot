@@ -66,7 +66,7 @@ import {
 // remaining anthropic-thirdparty wildcard + relay/local presets fall to
 // "third-party / relay". Image providers stay in their own bucket.
 const OFFICIAL_DIRECT_API_KEYS = new Set([
-  'anthropic-official', 'deepseek', 'xai', 'bedrock', 'vertex',
+  'anthropic-official', 'deepseek', 'xai', 'bedrock', 'vertex', 'google-ai-studio',
 ]);
 const CODING_PLAN_KEYS = new Set([
   'glm-cn', 'glm-global', 'kimi', 'moonshot',
@@ -1420,8 +1420,11 @@ export function ProviderManager() {
               const codePlanPresets = QUICK_PRESETS.filter(
                 p => p.category !== 'media' && CODING_PLAN_KEYS.has(p.key),
               );
+              // TokenDance authorizes an ordinary stored API key, so keep its
+              // existing setup dialog while surfacing it beside login entries.
+              const authorizationPresets = QUICK_PRESETS.filter(p => p.key === 'tokendance');
               const thirdpartyPresets = QUICK_PRESETS.filter(
-                p => p.category !== 'media' && p.key !== 'tokendance-anthropic'
+                p => p.category !== 'media' && p.key !== 'tokendance' && p.key !== 'tokendance-anthropic'
                   && !OFFICIAL_DIRECT_API_KEYS.has(p.key)
                   && !CODING_PLAN_KEYS.has(p.key),
               );
@@ -1546,6 +1549,7 @@ export function ProviderManager() {
                       </h4>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                         {oauthEntries.map(renderOAuthButton)}
+                        {authorizationPresets.map(renderPresetButton)}
                       </div>
                       {codexError && (
                         <p className="mt-2 text-[11px] text-destructive" role="alert">

@@ -1,11 +1,17 @@
 import type { TranslationKey } from './en';
 
 const zh: Record<TranslationKey, string> = {
+  'chat.notice.geminiOptions.title': '已调整 Gemini 思考设置',
+  'chat.notice.geminiOptions.message': 'Gemini 3.8 Flash 始终开启思考，支持低、中、高三个档位；更高档位按高档发送。',
+  'chat.notice.outputTruncated.title': '回复已达到输出上限',
+  'chat.notice.outputTruncated.message': '回复可能尚未完成，已收到的正文会保留。发送后续消息可以继续写作。',
+  'provider.nativeOnlyReason': '可在 CodePilot Native 中使用，尚未开放此服务商的 Codex 和 Claude Code 支持。',
   'chat.error.oauthEffortUnavailable': '当前 OpenAI 账号已不支持所选推理档位。请在模型选择器中重新选择可用档位后重试。',
   'provider.tokenDanceMessagesUnavailable': '内置 TokenDance 目录尚未确认此模型支持 Anthropic Messages；请使用 Native 或 Codex。',
   'provider.tokenDanceCompatLabel': '多协议 · 按模型支持',
   'provider.tokenDanceCompatTooltip': 'Native/Codex 使用 Chat Completions；Claude Code 对支持的模型使用 Messages。可用性按模型判断。',
   'provider.tokenDanceAnthropicCompatTooltip': '此连接在 Native/Codex 使用 Messages；Claude Code 按各模型已确认的 Messages 支持情况显示。',
+  'chat.error.saveUnconfirmed': '这条回复未能确认保存，刷新后可能缺失。请先复制需要保留的内容，再刷新或重启应用。',
   'chat.error.tokenDanceTopUp': 'TokenDance 余额不足。请前往 https://tokendance.space/ 充值后重试，当前 API Key 仍有效。',
   'chat.error.tokenDanceReauthorize': 'TokenDance API Key 已不可用。请到设置 → 服务商，编辑此 TokenDance 连接，重新授权或替换 API Key。',
   'chat.error.tokenDanceQuota': 'TokenDance API Key 已达到周期额度。请等待额度重置，或到设置 → 服务商编辑此连接并重新授权。',
