@@ -1,4 +1,5 @@
 import type { TelemetryLayer } from './contract';
+import { telemetryCallScene, telemetryFailureKind } from './diagnostics';
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -16,6 +17,8 @@ const ALLOWED_TAGS = new Set([
   'runtime.id',
   'runtime.layer',
   'status.class',
+  'call.scene',
+  'failure.kind',
 ]);
 
 const ALLOWED_EXTRAS = new Set([
@@ -33,6 +36,7 @@ const ALLOWED_EXTRAS = new Set([
   'signal',
   'timeoutStage',
   'truncated',
+  'telemetrySuppressedCount',
   'utilityArrayBuffersBytes',
   'utilityExternalBytes',
   'utilityHeapLimitBytes',
@@ -189,6 +193,8 @@ export function sanitizeTelemetryEvent<T extends object>(
   if (options.platform) filteredTags['os.platform'] = sanitizeText(options.platform, 32);
   if (options.arch) filteredTags['os.arch'] = sanitizeText(options.arch, 32);
   for (const [key, value] of Object.entries(tags)) {
+    if (key === 'call.scene') { filteredTags[key] = telemetryCallScene(value); continue; }
+    if (key === 'failure.kind') { filteredTags[key] = telemetryFailureKind(value); continue; }
     if (ALLOWED_TAGS.has(key)) filteredTags[key] = sanitizeText(value, 64);
   }
   mutable.tags = filteredTags;
@@ -197,6 +203,10 @@ export function sanitizeTelemetryEvent<T extends object>(
   const filteredExtra: UnknownRecord = {};
   for (const [key, value] of Object.entries(extra)) {
     if (!ALLOWED_EXTRAS.has(key)) continue;
+    if (key === 'telemetrySuppressedCount') {
+      if (typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 1_000_000) filteredExtra[key] = value;
+      continue;
+    }
     filteredExtra[key] = typeof value === 'string' ? sanitizeText(value, 128) : value;
   }
   mutable.extra = filteredExtra;

@@ -1,32 +1,43 @@
-const SUCCESS_TTL_MS = 10 * 60 * 1000;
-const FAILURE_TTL_MS = 60 * 1000;
+import type { AuxiliaryExecutionStatus } from './auxiliary-provider';
 
+const SUCCESS_TTL_MS = 10 * 60 * 1000;
+export interface QuickActionGeneration {
+  suggestions: string[];
+  enhancement: AuxiliaryExecutionStatus;
+}
 interface Entry {
   workspace: string;
-  suggestions: string[];
+  identity: string;
+  result: QuickActionGeneration;
   expiresAt: number;
-  pending?: Promise<string[]>;
+  pending?: Promise<QuickActionGeneration>;
 }
 
-/** One bounded workspace slot; stale completions cannot overwrite a new workspace. */
+/** One bounded slot, keyed by current provider configuration. Never cache unknown identity. */
 export function createQuickActionSuggestionsCache(now: () => number = Date.now) {
   let current: Entry | undefined;
   return {
-    get(workspace: string, generate: () => Promise<string[]>): Promise<string[]> {
-      if (current?.workspace === workspace) {
+    async get(workspace: string, identity: string | undefined, generate: () => Promise<QuickActionGeneration>, retry = false): Promise<QuickActionGeneration> {
+      if (identity && current?.workspace === workspace && current.identity === identity) {
         if (current.pending) return current.pending;
-        if (now() < current.expiresAt) return Promise.resolve(current.suggestions);
+        // An explicit retry refreshes successful suggestions but never bypasses
+        // the actual failure cooldown. Changed configuration uses a new slot.
+        if (now() < current.expiresAt && (!retry || current.result.enhancement.status !== 'completed')) return current.result;
       }
-      const entry: Entry = { workspace, suggestions: [], expiresAt: 0 };
-      current = entry;
-      entry.pending = Promise.resolve().then(generate).then((suggestions) => {
-        entry.suggestions = suggestions;
-        entry.expiresAt = now() + (suggestions.length ? SUCCESS_TTL_MS : FAILURE_TTL_MS);
-        return suggestions;
+      const entry: Entry = { workspace, identity: identity || '',
+        result: { suggestions: [], enhancement: { status: 'unavailable', reason: 'in_flight' } }, expiresAt: 0 };
+      current = identity ? entry : undefined;
+      entry.pending = Promise.resolve().then(generate).then(result => {
+        entry.result = result;
+        entry.expiresAt = result.enhancement.status === 'completed' && result.suggestions.length
+          ? now() + SUCCESS_TTL_MS
+          : result.enhancement.status !== 'completed' ? result.enhancement.retryAt ?? now() : now();
+        return result;
       }, () => {
-        // Empty dynamic suggestions are a static-only fallback, not a fake AI result.
-        entry.expiresAt = now() + FAILURE_TTL_MS;
-        return [];
+        const result: QuickActionGeneration = { suggestions: [], enhancement: { status: 'failed', reason: 'request_failed' } };
+        entry.result = result;
+        entry.expiresAt = now();
+        return result;
       }).finally(() => { entry.pending = undefined; });
       return entry.pending;
     },
@@ -34,7 +45,7 @@ export function createQuickActionSuggestionsCache(now: () => number = Date.now) 
 }
 
 const state = globalThis as typeof globalThis & {
-  __codepilotQuickActionSuggestionsV2?: ReturnType<typeof createQuickActionSuggestionsCache>;
+  __codepilotQuickActionSuggestionsV3?: ReturnType<typeof createQuickActionSuggestionsCache>;
 };
-export const quickActionSuggestions = state.__codepilotQuickActionSuggestionsV2
+export const quickActionSuggestions = state.__codepilotQuickActionSuggestionsV3
   ??= createQuickActionSuggestionsCache();

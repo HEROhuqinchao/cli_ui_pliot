@@ -9,6 +9,7 @@ import { isTokenDanceBaseUrl, TOKENDANCE_APP_URL } from './tokendance';
 
 import type { ApiProvider } from '@/types';
 import { ModelSelectionError } from './model-selection-error';
+import { ProviderTransportError } from './provider-transport-error';
 import {
   type Protocol,
   type AuthStyle,
@@ -420,7 +421,7 @@ export function toClaudeCodeEnv(
   // send the request to a different vendor. Session routes normally catch
   // this earlier; this guard protects auxiliary/direct SDK callers too.
   if (resolved.provider && !resolved.hasCredentials) {
-    throw new Error('provider_credentials_unavailable');
+    throw new ProviderTransportError('PROVIDER_CREDENTIALS_UNAVAILABLE', 'provider_credentials_unavailable');
   }
   const env = { ...baseEnv };
   const roleModelForEnv = (modelId: string | undefined): string | undefined => {
@@ -1132,9 +1133,9 @@ function buildResolution(
   if (!provider) {
     // Environment-based provider (no DB record) — credentials come from shell env,
     // legacy DB settings, or ~/.claude/settings.json (managed by cc-switch etc.).
-    // When only settings.json has creds, we must still flag hasCredentials=true so
-    // ai-provider.ts's guard doesn't preemptively abort before the SDK runtime has
-    // a chance to load the file via settingSources.
+    // settings.json credentials keep Claude SDK available via settingSources.
+    // Native transport must separately check that its own config has credentials;
+    // this shared flag must not be treated as proof of Native authentication.
     const envHasCredentials = !!(
       process.env.ANTHROPIC_API_KEY ||
       process.env.ANTHROPIC_AUTH_TOKEN ||
@@ -1147,7 +1148,8 @@ function buildResolution(
     // Only apply global default when it belongs to the env provider (or no provider is specified)
     const applicableGlobalDefault = (globalDefaultModel && (!globalDefaultProvider || globalDefaultProvider === 'env'))
       ? globalDefaultModel : undefined;
-    const model = opts.model || opts.sessionModel || applicableGlobalDefault || getSetting('default_model') || undefined;
+    const model = opts.model || opts.sessionModel
+      || applicableGlobalDefault || getSetting('default_model') || undefined;
 
     // Env mode uses short aliases (sonnet/opus/haiku/...) in the UI.
     // Map them to full Anthropic model IDs so toAiSdkConfig can resolve

@@ -1,56 +1,56 @@
 import { it } from 'node:test';
 import assert from 'node:assert/strict';
-import { createQuickActionSuggestionsCache } from '../../lib/quick-action-suggestions';
+import { createQuickActionSuggestionsCache, type QuickActionGeneration } from '../../lib/quick-action-suggestions';
+const success = (text: string): QuickActionGeneration => ({ suggestions: [text], enhancement: { status: 'completed' } });
 
-it('cools down failures for one minute, then retries and caches success for ten minutes', async () => {
-  let time = 0;
-  let calls = 0;
+it('honors the actual retry deadline and immediately invalidates a failure after a configuration change', async () => {
+  let time = 0, calls = 0;
   const cache = createQuickActionSuggestionsCache(() => time);
-  const generate = async () => { if (++calls === 1) throw new Error('upstream failed'); return ['suggestion']; };
-  assert.deepEqual(await cache.get('workspace', generate), []);
-  time = 59_999;
-  assert.deepEqual(await cache.get('workspace', generate), []);
-  assert.equal(calls, 1);
-  time = 60_000;
-  assert.deepEqual(await cache.get('workspace', generate), ['suggestion']);
-  assert.equal(calls, 2);
-  time = 659_999;
-  await cache.get('workspace', generate);
-  assert.equal(calls, 2);
-  time = 660_000;
-  await cache.get('workspace', generate);
-  assert.equal(calls, 3);
+  const failure = { suggestions: [], enhancement: { status: 'failed' as const, reason: 'request_failed' as const, retryAt: 90000 } };
+  const generate = async () => { calls++; return failure; };
+  assert.deepEqual(await cache.get('workspace', 'config-a', generate), failure);
+  time = 70000;
+  assert.deepEqual(await cache.get('workspace', 'config-a', generate, true), failure);
+  assert.equal(calls, 1, 'retry does not override a provider deadline');
+  assert.deepEqual(await cache.get('workspace', 'config-b', async () => success('recovered immediately')), success('recovered immediately'));
 });
 
-it('shares one pending request including failure, without waiting for the failure to start coalescing', async () => {
-  let reject!: (error: Error) => void;
+it('invalidates successes by configuration, expires at ten minutes, and explicitly refreshes on retry', async () => {
+  let time = 0, calls = 0;
+  const cache = createQuickActionSuggestionsCache(() => time);
+  const generate = async () => success(`suggestion ${++calls}`);
+  await cache.get('workspace', 'a', generate);
+  time = 599999;
+  assert.deepEqual(await cache.get('workspace', 'a', generate), success('suggestion 1'));
+  assert.deepEqual(await cache.get('workspace', 'b', generate), success('suggestion 2'));
+  assert.deepEqual(await cache.get('workspace', 'b', generate, true), success('suggestion 3'));
+  time += 600000;
+  assert.deepEqual(await cache.get('workspace', 'b', generate), success('suggestion 4'));
+});
+
+it('coalesces only matching configuration requests and ignores late completions for other identities', async () => {
+  let finish!: (value: QuickActionGeneration) => void;
   let calls = 0;
   const cache = createQuickActionSuggestionsCache();
-  const generate = () => { calls++; return new Promise<string[]>((_, no) => { reject = no; }); };
-  const a = cache.get('a', generate);
-  const b = cache.get('a', generate);
+  const generate = () => { calls++; return new Promise<QuickActionGeneration>(resolve => { finish = resolve; }); };
+  const a = cache.get('workspace', 'a', generate);
+  const b = cache.get('workspace', 'a', generate);
   await Promise.resolve();
   assert.equal(calls, 1);
-  reject(new Error('failure'));
-  assert.deepEqual(await Promise.all([a, b]), [[], []]);
-  await cache.get('a', generate);
-  assert.equal(calls, 1);
+  assert.deepEqual(await cache.get('workspace', 'b', async () => success('new config')), success('new config'));
+  finish(success('old config'));
+  await Promise.all([a, b]);
+  assert.deepEqual(await cache.get('workspace', 'b', async () => { throw new Error('must cache new'); }), success('new config'));
 });
 
-it('does not reuse another workspace suggestions or let a late completion replace the active workspace', async () => {
+it('does not cache missing identity, invented fixed-duration failures, or another workspace', async () => {
   const cache = createQuickActionSuggestionsCache();
-  let resolve!: (value: string[]) => void;
-  const old = cache.get('old', () => new Promise<string[]>((yes) => { resolve = yes; }));
-  assert.deepEqual(await cache.get('new', async () => ['new suggestion']), ['new suggestion']);
-  resolve(['old suggestion']);
-  await old;
-  assert.deepEqual(await cache.get('new', async () => { throw new Error('must use cache'); }), ['new suggestion']);
-});
-
-it('a no-credentials/empty result permits recovery after the short cooldown', async () => {
-  let time = 0;
-  const cache = createQuickActionSuggestionsCache(() => time);
-  assert.deepEqual(await cache.get('a', async () => []), []);
-  time = 60_000;
-  assert.deepEqual(await cache.get('a', async () => ['configured now']), ['configured now']);
+  let calls = 0;
+  const generate = async () => success(`suggestion ${++calls}`);
+  await cache.get('workspace', undefined, generate);
+  await cache.get('workspace', undefined, generate);
+  assert.equal(calls, 2);
+  await cache.get('workspace', 'a', async () => { throw new Error('transient failure'); });
+  assert.deepEqual(await cache.get('workspace', 'a', generate), success('suggestion 3'));
+  assert.deepEqual(await cache.get('other-workspace', 'a', generate), success('suggestion 4'));
 });

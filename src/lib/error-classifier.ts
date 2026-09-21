@@ -12,6 +12,8 @@ import {
   statusClass,
 } from './telemetry/contract';
 import { markProviderFailureHandled } from './telemetry/provider-marker';
+import { telemetryCallScene } from './telemetry/diagnostics';
+import { telemetryReportBudget } from './telemetry/report-budget';
 import {
   createSafeTelemetryError,
   normalizeTelemetryFailure,
@@ -78,6 +80,9 @@ function reportToSentry(category: string, error: unknown, context: SentryReportC
     // Fire-and-forget async import — never blocks the classifier
     import('@sentry/node').then((Sentry) => {
       if (!Sentry.isInitialized()) return;
+      const budget = telemetryReportBudget.take({ failure: normalized, callScene: context.callScene,
+        providerProtocol: context.providerProtocol, providerClass: context.providerClass, runtimeId: context.runtimeId });
+      if (!budget.allowed) return;
       Sentry.withScope((scope) => {
         scope.setTag('error.category', normalized.category);
         scope.setTag('error.outcome', normalized.outcome);
@@ -86,10 +91,13 @@ function reportToSentry(category: string, error: unknown, context: SentryReportC
         scope.setTag('provider.protocol', context.providerProtocol || 'unknown');
         scope.setTag('provider.class', context.providerClass || 'unknown');
         scope.setTag('status.class', statusClass(normalized.statusCode));
+        scope.setTag('failure.kind', normalized.rootCause);
+        scope.setTag('call.scene', telemetryCallScene(context.callScene));
         scope.setExtras({
           callScene: context.callScene,
           retryExhausted: normalized.retryExhausted,
           timeoutStage: context.timeoutStage,
+          ...(budget.suppressed ? { telemetrySuppressedCount: budget.suppressed } : {}),
         });
         const useDefaultStackGrouping = shouldUseDefaultStackGrouping(normalized.outcome, error);
         if (normalized.outcome === 'unknown') scope.setTag('needs_classification', 'yes');

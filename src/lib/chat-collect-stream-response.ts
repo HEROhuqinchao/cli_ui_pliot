@@ -1,3 +1,6 @@
+import { createStreamTurnOutcome, NON_SUCCESSFUL_TERMINAL_FINISH_REASONS } from './stream-turn-outcome';
+import { enqueueCommittedMemoryTurn, getMemoryTurnUserMessageId } from './memory-lifecycle';
+import { getAssistantMemoryWorkspace } from './memory-binding';
 // Server-side SSE collection + assistant persistence for POST /api/chat.
 //
 // Extracted out of `route.ts` (Session ownership rework): Next App Router only
@@ -11,7 +14,6 @@ import { isSessionStateResultError } from '@/lib/error-classifier';
 import {
   addMessage,
   getSession,
-  getSetting,
   updateSdkSessionId,
   syncSdkTasks,
   isLockOwner,
@@ -31,7 +33,7 @@ import { attachNormalizedTurnUsage } from '@/lib/runtime/turn-usage';
 import { attachNativeStep, parseNativeStepHistory } from './native-step-history';
 
 const ASSISTANT_CHECKPOINT_INTERVAL_MS = 120;
-const NON_SUCCESSFUL_TERMINAL_FINISH_REASONS = new Set(['interrupted', 'inProgress']);
+
 /**
  * Serialize assistant blocks with the same shape used by historical rendering.
  * Checkpoints and terminal persistence must share this helper so refreshing
@@ -109,7 +111,9 @@ export async function collectStreamResponse(
     };
   },
 ) {
+  const memoryUserMessageId = getMemoryTurnUserMessageId(sessionId);
   const reader = stream.getReader();
+  const memoryOutcome = createStreamTurnOutcome();
   const contentBlocks: MessageContentBlock[] = [];
   let currentText = '';
   let thinkingText = '';
@@ -195,6 +199,7 @@ export async function collectStreamResponse(
         if (line.startsWith('data: ')) {
           try {
             const event: SSEEvent = JSON.parse(line.slice(6));
+            memoryOutcome.observe(event);
             if (event.type === 'permission_request') {
               // Permission prompts are not transcript content, but they are a
               // first-class native notification. The server-side collector is
@@ -495,6 +500,18 @@ export async function collectStreamResponse(
       }
     }
   } finally {
+    // A durable success event shared by Desktop and Bridge, independent of Runtime.
+    if (lastSavedAssistantMsgId !== null) {
+      try {
+        enqueueCommittedMemoryTurn({
+          sessionId, assistantMessageId: lastSavedAssistantMsgId, userMessageId: memoryUserMessageId ?? null,
+          successful: memoryOutcome.successful && !hasError,
+          ownerValid: isLockOwner(sessionId, lockId),
+          systemTurn: !!opts?.suppressNotifications, entryPoint: 'desktop', blocks: contentBlocks,
+        });
+      } catch { console.warn('[memory] MEMORY_JOB_ENQUEUE_FAILED'); }
+    }
+
     // Publish before any asynchronous completion effects. A later notification
     // or cleanup failure must not turn a confirmed DB write into a save warning.
     opts?.onPersistenceSettled?.(lastSavedAssistantMsgId !== null || contentBlocks.length === 0);
@@ -511,53 +528,15 @@ export async function collectStreamResponse(
       // 1. Check for onboarding-complete fence
       const completion = extractCompletion(fullText);
       if (completion) {
-        const workspacePath = getSetting('assistant_workspace_path');
         const session = getSession(sessionId);
-        if (workspacePath && session && session.working_directory === workspacePath) {
+        const workspacePath = session && getAssistantMemoryWorkspace(session);
+        if (workspacePath) {
           await processCompletionServerSide(completion, workspacePath, sessionId);
         }
       }
 
     } catch (e) {
       console.error('[chat API] Server-side completion detection failed:', e);
-    }
-
-    // Memory extraction: auto-extract durable memories every N turns (assistant projects only)
-    if (!opts?.suppressNotifications) {
-      try {
-        const workspacePath = getSetting('assistant_workspace_path');
-        const session = getSession(sessionId);
-        if (workspacePath && session && session.working_directory === workspacePath) {
-          const { shouldExtractMemory, hasMemoryWritesInResponse, extractMemories } = await import('@/lib/memory-extractor');
-
-          const fullTextForMemory = contentBlocks
-            .filter((b): b is Extract<MessageContentBlock, { type: 'text' }> => b.type === 'text')
-            .map((b) => b.text)
-            .join('');
-
-          // For memory-write detection, serialize ALL blocks (including tool_use/tool_result)
-          // so that hasMemoryWritesInResponse can see memory file paths in tool calls.
-          const fullResponseForWriteCheck = JSON.stringify(contentBlocks);
-
-          // Load buddy rarity for extraction interval
-          let buddyRarity: string | undefined;
-          try {
-            const { loadState } = await import('@/lib/assistant-workspace');
-            const st = loadState(workspacePath);
-            buddyRarity = st.buddy?.rarity;
-          } catch { /* ignore */ }
-
-          // Only extract if: interval met + AI didn't already write memory this turn
-          if (shouldExtractMemory(buddyRarity, sessionId) && !hasMemoryWritesInResponse(fullResponseForWriteCheck)) {
-            const { getMessages: getMsgs } = await import('@/lib/db');
-            const { messages: recent } = getMsgs(sessionId, { limit: 6, excludeHeartbeatAck: true });
-            const recentForExtraction = recent.map(m => ({ role: m.role, content: m.content }));
-
-            // Fire-and-forget: don't block the response
-            extractMemories(recentForExtraction, workspacePath).catch(() => {});
-          }
-        }
-      } catch { /* best effort */ }
     }
 
     // ── Phase 2: semantic title generation (background, fire-and-forget) ──

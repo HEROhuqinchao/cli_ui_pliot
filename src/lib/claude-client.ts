@@ -1,3 +1,4 @@
+import { getSessionMemoryWorkspace, canWriteSessionMemory } from '@/lib/memory-binding';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import type {
   SDKAssistantMessage,
@@ -1319,14 +1320,15 @@ export function streamClaudeSdk(options: ClaudeStreamOptions): ReadableStream<st
         // Memory MCP: always registered in assistant mode for memory search/retrieval.
         // Unlike other MCPs which are keyword-gated, memory search is a core assistant capability.
         {
-          const assistantWorkspacePath = getSetting('assistant_workspace_path');
-          if (assistantWorkspacePath && resolvedWorkingDirectory.path === assistantWorkspacePath) {
+          const memoryWorkspace = getSessionMemoryWorkspace(sessionId, resolvedWorkingDirectory.path);
+          if (memoryWorkspace) {
             const { createMemorySearchMcpServer } = await import('@/lib/memory-search-mcp');
             queryOptions.mcpServers = {
               ...(queryOptions.mcpServers || {}),
-              'codepilot-memory': createMemorySearchMcpServer(assistantWorkspacePath),
+              'codepilot-memory': createMemorySearchMcpServer(memoryWorkspace, { access: isHeartbeatMode || permissionMode === 'plan' ? 'read' : 'all', sourceSessionId: sessionId, resolvedProvider: resolved, authorizeWrite: () => !isHeartbeatMode && permissionMode !== 'plan' && canWriteSessionMemory(sessionId, memoryWorkspace) }),
             };
             enabledCapabilities.add('memory');
+            if (!isHeartbeatMode && permissionMode !== 'plan') enabledCapabilities.add('memory_write');
           }
         }
 

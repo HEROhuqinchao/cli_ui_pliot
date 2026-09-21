@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3';
+import { migrateLegacyAssistantMemoryBindings } from './assistant-memory-migration';
 import path from 'path';
 import crypto from 'crypto';
 import fs from 'fs';
@@ -84,7 +85,7 @@ const RUNTIME_OWNER_LOCK_PATH = `${DB_PATH}.runtime-owner.lock`;
 // replacing this module. Keep a code-owned revision beside that handle so a
 // newly loaded migration still runs without requiring the user to restart the
 // desktop client. Bump this value whenever initDb/migrateDb gains a migration.
-const DATABASE_SCHEMA_REVISION = '2026-09-01-runtime-thread-ownership-v2';
+const DATABASE_SCHEMA_REVISION = '2026-09-21-assistant-memory-bindings-v1';
 const LEGACY_NOTIFICATION_BACKLOG_MARKER = 'notification_delivery_legacy_backlog_v1';
 const LEGACY_NOTIFICATION_BACKLOG_MAX_AGE_MS = 60 * 60 * 1000;
 
@@ -598,6 +599,7 @@ function initDb(db: Database.Database): void {
 
   // Run migrations for existing databases
   migrateDb(db);
+  migrateLegacyAssistantMemoryBindings(db);
 }
 
 /** Safely add a column — ignores "duplicate column name" errors from concurrent workers. */
@@ -2539,6 +2541,7 @@ export function deleteSession(id: string): boolean {
   // causing FK errors when foreign_keys=ON (#Sentry 40x SqliteError).
   const txn = db.transaction(() => {
     db.prepare('DELETE FROM channel_outbound_refs WHERE codepilot_session_id = ?').run(id);
+    db.prepare('DELETE FROM settings WHERE key = ?').run(`memory.assistant-binding.${id}`);
     return db.prepare('DELETE FROM chat_sessions WHERE id = ?').run(id).changes > 0;
   });
   return txn();

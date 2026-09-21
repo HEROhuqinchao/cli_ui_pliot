@@ -1,3 +1,5 @@
+import { createStreamTurnOutcome } from '../stream-turn-outcome';
+import { enqueueCommittedMemoryTurn, getMemoryTurnUserMessageId } from '@/lib/memory-lifecycle';
 /**
  * Conversation Engine — processes inbound IM messages through Claude.
  *
@@ -195,7 +197,7 @@ export async function processMessage(
         savedContent = `[${files.length} image(s) attached] ${text}`;
       }
     }
-    addMessage(sessionId, 'user', savedContent);
+    const initiatingUserMessage = addMessage(sessionId, 'user', savedContent);
 
     // Resolve provider via unified resolver.
     // Priority chain:
@@ -365,7 +367,7 @@ export async function processMessage(
     // Consume the stream server-side (replicate collectStreamResponse pattern).
     // Permission requests are forwarded immediately via the callback during streaming
     // because the stream blocks until permission is resolved — we can't wait until after.
-    return await consumeStream(stream, sessionId, lockId, onPermissionRequest, onPartialText, onToolEvent);
+    return await consumeStream(stream, sessionId, lockId, onPermissionRequest, onPartialText, onToolEvent, initiatingUserMessage.id);
   } finally {
     // Session ownership — lockId-scoped settle: clears the renewal interval,
     // releases only THIS lockId's row, and writes runtime_status='idle' ONLY when
@@ -394,7 +396,9 @@ export async function consumeStream(
   onPermissionRequest?: OnPermissionRequest,
   onPartialText?: OnPartialText,
   onToolEvent?: OnToolEvent,
+  userMessageId?: string,
 ): Promise<ConversationResult> {
+  const memoryUserMessageId = userMessageId ?? getMemoryTurnUserMessageId(sessionId);
   const reader = stream.getReader();
   const contentBlocks: MessageContentBlock[] = [];
   let currentText = '';
@@ -406,6 +410,7 @@ export async function consumeStream(
   const seenToolResultIds = new Set<string>();
   const permissionRequests: PermissionRequestInfo[] = [];
   let capturedSdkSessionId: string | null = null;
+  const memoryOutcome = createStreamTurnOutcome();
 
   try {
     while (true) {
@@ -423,6 +428,7 @@ export async function consumeStream(
           continue;
         }
 
+        memoryOutcome.observe(event);
         switch (event.type) {
           case 'native_step': {
             const step = await parseNativeStepHistory(JSON.parse(event.data));
@@ -641,7 +647,12 @@ export async function consumeStream(
         if (!isLockOwner(sessionId, lockId)) {
           console.warn(`[conversation-engine] stale owner (lockId superseded) — DP1: dropping assistant message persist for session ${sessionId} (${content.length} chars not written)`);
         } else {
-          addMessage(sessionId, 'assistant', content, tokenUsage ? JSON.stringify(tokenUsage) : null);
+          const saved = addMessage(sessionId, 'assistant', content, tokenUsage ? JSON.stringify(tokenUsage) : null);
+          try {
+            enqueueCommittedMemoryTurn({ sessionId, assistantMessageId: saved.id, userMessageId: memoryUserMessageId ?? null,
+              successful: memoryOutcome.successful && !hasError,
+              ownerValid: isLockOwner(sessionId, lockId), entryPoint: 'bridge', blocks: contentBlocks });
+          } catch { console.warn('[memory] MEMORY_JOB_ENQUEUE_FAILED'); }
         }
       }
     }
