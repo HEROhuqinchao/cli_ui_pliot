@@ -2,7 +2,7 @@
 
 > 创建时间：2026-09-18
 > 最后更新：2026-09-22
-> 发布状态：Shipped — v0.67.16；9 月 19 日工具参数修复进入 v0.67.17 发布准备，真实 AI Studio 问候已通过，完整工具执行/Windows 会话 smoke 仍待执行。
+> 发布状态：Shipped — v0.67.17（含9月19日工具参数修复与SDK执行校验）；正式CI和公开20资产审计通过，真实AI Studio问候已通过，完整工具执行/Windows会话smoke仍待执行。
 
 ## 用户目标与取舍
 
@@ -152,3 +152,10 @@
 ## v0.67.17 发布准备（2026-09-22）
 
 用户明确授权发版。数字 duration wire schema 与 SDK 执行校验单独提交，未与 Memory 修复混合；当前完整工作区门禁5704 pass / 0 fail / 1 skip。真实问候证据沿用09-19，完整工具生成/Windows packaged smoke仍不冒称已验证。提交后由正式tag CI完成签名/公证/三平台资产门禁。
+
+
+## v0.67.17 发布结果（2026-09-22）
+
+数字duration声明修复与SDK非法调用阻断回归随 [v0.67.17](https://github.com/op7418/CodePilot/releases/tag/v0.67.17) **Shipped**，tag指向4ddcd1a0f7931fc2ba3d3a1cf2802782bdc4712e。[CI 35679941503](https://github.com/op7418/CodePilot/actions/runs/35679941503)全部成功；公开Release为Latest、immutable、非draft/prerelease，20资产及实际Mac/Windows更新包SHA-512/size/blockmap核验通过。公开universal ZIP的app与standalone版本均0.67.17。
+
+证据见 `/private/tmp/codepilot-v0.67.17-public/` 的ci.json、release.json、latest.json、audit.log、package-audit.log。真实完整工具执行与Windows会话smoke仍待执行；发布不替代这些验收。
