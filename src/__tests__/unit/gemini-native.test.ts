@@ -4,11 +4,12 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { tool, generateText } from 'ai';
+import { tool, generateText, streamText } from 'ai';
 import { z } from 'zod';
 import { getPreset, resolveProviderPresetIdentity } from '@/lib/provider-catalog';
 import { getProviderCompat, getModelCompat } from '@/lib/runtime-compat';
 import { createModel } from '@/lib/ai-provider';
+import { createMediaTools } from '@/lib/builtin-tools/media';
 import { runAgentLoop } from '@/lib/agent-loop';
 import { buildCoreMessages } from '@/lib/message-builder';
 import { collectStreamResponse } from '@/lib/chat-collect-stream-response';
@@ -43,6 +44,97 @@ function googleResponse(callTool: boolean, stream = true, finishReason = 'STOP')
 }
 
 describe('Gemini AI Studio Native integration', () => {
+  for (const grokVideoAvailable of [false, true]) {
+    it(`sends Google-compatible media declarations for a greeting (video=${grokVideoAvailable})`, async () => {
+      const p = provider();
+      let declarations: Array<{ name: string; parameters: { properties: Record<string, unknown> } }> = [];
+      globalThis.fetch = async (_url, init) => {
+        const body = JSON.parse(String(init?.body));
+        declarations = body.tools.flatMap((group: { functionDeclarations: typeof declarations }) => group.functionDeclarations);
+        return googleResponse(false, false);
+      };
+      try {
+        const { languageModel } = createModel({ callScene: 'interactive_chat', providerId: p.id, model: MODEL });
+        const result = await generateText({ model: languageModel, prompt: '你好', tools: createMediaTools({ grokVideoAvailable }), maxRetries: 0 });
+        assert.equal(result.text, 'Draft complete.');
+        assert.ok(declarations.some(declaration => declaration.name === 'codepilot_generate_image'));
+        const video = declarations.find(declaration => declaration.name === 'codepilot_generate_video');
+        assert.equal(!!video, grokVideoAvailable);
+        function checkEnums(value: unknown): void {
+          if (!value || typeof value !== 'object') return;
+          if ('enum' in value) {
+            assert.ok(Array.isArray(value.enum) && value.enum.every(item => typeof item === 'string'), 'Google parameters Schema enum values must be strings');
+          }
+          for (const child of Object.values(value)) checkEnums(child);
+        }
+        checkEnums(declarations);
+        if (video) {
+          const duration = video.parameters.properties.duration as { type: string; description: string };
+          assert.equal(duration.type, 'number');
+          assert.match(duration.description, /6.*10/);
+        }
+      } finally { globalThis.fetch = originalFetch; deleteProvider(p.id); }
+    });
+  }
+
+  it('keeps strict numeric video durations at execution validation despite the portable wire schema', () => {
+    const schema = createMediaTools({ grokVideoAvailable: true }).codepilot_generate_video.inputSchema;
+    assert.ok(schema instanceof z.ZodType);
+    for (const duration of [undefined, 6, 10]) {
+      assert.deepEqual(schema.parse({ prompt: 'A landscape', duration }), { prompt: 'A landscape', duration });
+    }
+    for (const duration of [0, 7, 6.5, -1, '6', '10', null, true]) {
+      assert.equal(schema.safeParse({ prompt: 'A landscape', duration }).success, false, `reject ${JSON.stringify(duration)}`);
+    }
+  });
+
+  for (const duration of [7, 6, 10]) {
+    it(`validates video duration ${duration} through Google SSE before SDK tool execution`, async () => {
+      const p = provider();
+      const args = { prompt: 'A landscape', duration };
+      const executions: unknown[] = [];
+      let requests = 0;
+      const tools = createMediaTools({ grokVideoAvailable: true });
+      tools.codepilot_generate_video = {
+        ...tools.codepilot_generate_video,
+        execute: async input => { executions.push(input); return 'fixture video result'; },
+      };
+      globalThis.fetch = async (url) => {
+        assert.match(String(url), /:streamGenerateContent/);
+        requests++;
+        const data = {
+          candidates: [{ content: { role: 'model', parts: [{
+            functionCall: { id: 'video_duration_fixture', name: 'codepilot_generate_video', args },
+            thoughtSignature: 'signed-video-fixture',
+          }] }, finishReason: 'STOP' }],
+          usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 5, totalTokenCount: 15 },
+        };
+        return new Response(`data: ${JSON.stringify(data)}\n\n`, { headers: { 'content-type': 'text/event-stream' } });
+      };
+      try {
+        const { languageModel } = createModel({ callScene: 'interactive_chat', providerId: p.id, model: MODEL });
+        const result = streamText({ model: languageModel, prompt: 'Generate a landscape video.', tools, maxRetries: 0 });
+        const events = [];
+        for await (const event of result.fullStream) events.push(event);
+        assert.equal(requests, 1);
+        assert.equal(events.some(event => event.type === 'error'), false);
+        const call = events.find(event => event.type === 'tool-call');
+        assert.ok(call && call.toolName === 'codepilot_generate_video');
+        if (duration === 7) {
+          assert.equal(call.invalid, true);
+          assert.ok(events.some(event => event.type === 'tool-error' && event.toolCallId === call.toolCallId));
+          assert.equal(events.some(event => event.type === 'tool-result'), false);
+          assert.deepEqual(executions, []);
+        } else {
+          assert.notEqual(call.invalid, true);
+          assert.equal(events.some(event => event.type === 'tool-error'), false);
+          assert.ok(events.some(event => event.type === 'tool-result' && event.toolCallId === call.toolCallId));
+          assert.deepEqual(executions, [args]);
+        }
+      } finally { globalThis.fetch = originalFetch; deleteProvider(p.id); }
+    });
+  }
+
   it('keeps partial tails, rejects forged roles and does not double-count opaque replay state', async () => {
     const step: NativeStepHistory = { version: 1, providerId: 'p', modelId: MODEL, messages: [
       { role: 'assistant', content: [{ type: 'text', text: 'First draft.', providerOptions: { google: { thoughtSignature: 'opaque'.repeat(1000) } } }] },
