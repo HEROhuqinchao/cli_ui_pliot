@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { bindAssistantMemory } from '../../lib/memory-binding';
 import { collectStreamResponse } from '../../lib/chat-collect-stream-response';
 import { createSession, acquireSessionLock, releaseSessionLock, isLockOwner, getMessages, getDb, createProvider, activateProvider, setSetting } from '../../lib/db';
 import { CHAT_SAVE_UNCONFIRMED, createChatCollectionResponse, createChatPersistenceSignal, observeChatCollection } from '../../lib/chat-collection-response';
@@ -76,6 +77,7 @@ it('real onboarding model work does not hold the client response open after pers
   activateProvider(provider.id);
   const session = createSession('onboarding', 'sonnet', '', workspace, 'code', provider.id);
   setSetting('assistant_workspace_path', workspace);
+  bindAssistantMemory(session.id);
   acquireSessionLock(session.id, 'slow-finally', 'test', 600);
   let release!: () => void;
   const blocked = new Promise<void>(resolve => { release = resolve; });

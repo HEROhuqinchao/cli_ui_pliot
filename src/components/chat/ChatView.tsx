@@ -156,6 +156,7 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
 
   // Whether this session's working directory matches the configured assistant workspace
   const [isAssistantProject, setIsAssistantProject] = useState(false);
+  const [assistantScopeRevision, setAssistantScopeRevision] = useState(0);
   const [assistantName, setAssistantName] = useState('');
 
   // Workspace mismatch banner state
@@ -1078,13 +1079,21 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
     (async () => {
       try {
         const res = await fetch('/api/settings/workspace');
-        if (!res.ok || cancelled) return;
+        if (cancelled) return;
+        if (!res.ok) throw new Error('Workspace scope unavailable');
         const data = await res.json();
         if (cancelled) return;
 
-        if (data.path && workingDirectory !== data.path) {
-          setIsAssistantProject(false);
-          setIsAssistantWorkspace(false);
+        const scopeRes = await fetch(`/api/chat/sessions/${sessionId}`);
+        if (cancelled) return;
+        if (!scopeRes.ok) throw new Error('Assistant scope unavailable');
+        const scope = await scopeRes.json();
+        if (cancelled) return;
+        const assistantEnabled = scope.assistantMemoryEnabled === true;
+        setIsAssistantProject(assistantEnabled);
+        setIsAssistantWorkspace(assistantEnabled);
+
+        if (!assistantEnabled && data.path && workingDirectory !== data.path) {
           const inspectRes = await fetch(`/api/workspace/inspect?path=${encodeURIComponent(workingDirectory)}`);
           if (!inspectRes.ok || cancelled) return;
           const inspectData = await inspectRes.json();
@@ -1095,14 +1104,14 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
           }
         } else {
           // workingDirectory matches assistant workspace path
-          const isAssistant = !!data.path;
+          const isAssistant = assistantEnabled;
           setIsAssistantProject(isAssistant);
           setWorkspaceMismatchPath(null);
           setIsAssistantWorkspace(isAssistant);
           // Default panel is now controlled by the user's "Default Side Panel" setting
           // in chat/[id]/page.tsx — no longer force-override for assistant workspaces.
           // Load assistant name for avatar display
-          if (data.path) {
+          if (isAssistant) {
             try {
               const summaryRes = await fetch('/api/workspace/summary');
               if (summaryRes.ok && !cancelled) {
@@ -1118,24 +1127,27 @@ export function ChatView({ sessionId, initialMessages = [], initialHasMore = fal
           }
         }
       } catch {
-        // ignore
+        if (!cancelled) { setIsAssistantProject(false); setIsAssistantWorkspace(false); }
       }
     })();
     return () => { cancelled = true; };
     // setIsAssistantWorkspace is a stable useState setter (AppShell) — safe to list.
-  }, [workingDirectory, setIsAssistantWorkspace]);
+  }, [sessionId, workingDirectory, assistantScopeRevision, setIsAssistantWorkspace]);
 
   // Listen for workspace-switched events
   useEffect(() => {
     const handler = (e: Event) => {
       const detail = (e as CustomEvent).detail;
+      setIsAssistantProject(false);
+      setIsAssistantWorkspace(false);
+      setAssistantScopeRevision(revision => revision + 1);
       if (detail?.newPath && workingDirectory && workingDirectory === detail.oldPath) {
         setWorkspaceMismatchPath(detail.newPath);
       }
     };
     window.addEventListener('assistant-workspace-switched', handler);
     return () => window.removeEventListener('assistant-workspace-switched', handler);
-  }, [workingDirectory]);
+  }, [workingDirectory, setIsAssistantWorkspace]);
 
   const handleOpenNewAssistant = useCallback(async () => {
     try {

@@ -8,6 +8,9 @@
 
 | 文件 | 主题 |
 |------|------|
+| [memory-runtime-root-cause-2026-09-21.md](memory-runtime-root-cause-2026-09-21.md) | 用户明确 Memory 与 Runtime 解耦、宠物除外；真实 SDK 离线复现 settings-only 凭据错配导致三辅助场景发网前失败（v0.67.16 同代码）；共享 Memory Core/适配/生命周期方案，读与失败写被误判已保存、Bridge 抽取缺口；保留修复前基线，#96–99 本地修复验证见[执行计划](../exec-plans/active/memory-runtime-decoupling.md) |
+| [memory-products-codepilot-2026-09-21.md](memory-products-codepilot-2026-09-21.md) | MemCode 同名身份待确认；对照 Claude-Mem / Mem0 / Graphiti / Hindsight 与现有记忆，建议先修正文漏召回和 Native 读取边界，再补来源、更正/遗忘、作用域与预算；含修复前合成复现；#96–97 本地修复验证见[执行计划](../exec-plans/active/memory-runtime-decoupling.md) |
+| [sentry-quota-audit-2026-09-21.md](sentry-quota-audit-2026-09-21.md) | 免费额度真实拆账：9/18 已重置，2026-09-21 约 12:30（Asia/Shanghai）账单快照 533/5000，非实时值；旧项目持续上报并混有其他 release，新项目占多数，辅助记忆/建议 unknown 高频；区分 accepted/丢弃/已存事件，分类缺口离线复现；#98 本地已修，发布后额度收益待观察；未变更线上配置 |
 | [jev-openrouter-adaptation-2026-09-18.md](jev-openrouter-adaptation-2026-09-18.md) | 用户决定暂不接入；Jev 属于 text→decisions：公开 endpoints 与当前 SDK 核验；建议独立辅助决策能力，目录输出类型缺口记为 tech-debt #95；OpenRouter 推理协议与真实效果待验证，未改产品代码 |
 | [gemini-ai-studio-three-runtimes-2026-09-18.md](gemini-ai-studio-three-runtimes-2026-09-18.md) | Gemini 3.8 Flash 经 AI Studio 接入 Native / Codex / Claude Code：源码核验、签名丢失离线 POC、generateContent 与 Interactions 取舍；未调用真实 API、未改产品代码 |
 | [issue-685-message-route-mismatch-2026-09-14.md](issue-685-message-route-mismatch-2026-09-14.md) | #685 SDK 实测模型覆盖 picker 路由别名；已实施保持 route 与旧会话兼容，targeted 27/27、发版 full 5584 pass / 1 skip；Shipped v0.67.16，Windows 会话真机待验 |

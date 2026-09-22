@@ -1,3 +1,4 @@
+import { bindAssistantMemory, canonicalMemoryWorkspace } from '../memory-binding';
 /**
  * Channel Router — resolves IM addresses to CodePilot sessions.
  *
@@ -7,6 +8,7 @@
 
 import type { ChannelAddress, ChannelBinding, ChannelType } from './types';
 import {
+  getDb,
   getChannelBinding,
   upsertChannelBinding,
   updateChannelBinding,
@@ -104,35 +106,43 @@ export function createBinding(
   });
 
   const displayName = address.displayName || address.chatId;
-  const session = createSession(
-    `Bridge: ${displayName}`,
-    route.modelId,
-    undefined,
-    defaultCwd,
-    'code',
-    route.providerId,
-    undefined, // permission profile
-    undefined, // source
-    // The channel identity IS the name here; a fallback derived from the
-    // first inbound message would be strictly worse information.
-    'system',
-    {
-      runtimeId: route.runtimeId,
-      state: 'bound',
-      source: 'bridge_create',
-    },
-  );
+  return getDb().transaction(() => {
+    const session = createSession(
+      `Bridge: ${displayName}`,
+      route.modelId,
+      undefined,
+      defaultCwd,
+      'code',
+      route.providerId,
+      undefined, // permission profile
+      undefined, // source
+      // The channel identity IS the name here; a fallback derived from the
+      // first inbound message would be strictly worse information.
+      'system',
+      {
+        runtimeId: route.runtimeId,
+        state: 'bound',
+        source: 'bridge_create',
+      },
+    );
 
-  return upsertChannelBinding({
-    channelType: address.channelType,
-    chatId: address.chatId,
-    codepilotSessionId: session.id,
-    sdkSessionId: '',
-    workingDirectory: defaultCwd,
-    model: route.modelId,
-    mode: 'code',
-    providerId: route.providerId,
-  });
+    // An explicit bridge directory selection (including its saved default) is
+    // the production opt-in. Fallback home/process directories never enable it.
+    const assistantRoot = canonicalMemoryWorkspace(getSetting('assistant_workspace_path'));
+    if (assistantRoot && canonicalMemoryWorkspace(defaultCwd) === assistantRoot
+        && (resolved.source === 'requested' || resolved.source === 'setting')) bindAssistantMemory(session.id);
+
+    return upsertChannelBinding({
+      channelType: address.channelType,
+      chatId: address.chatId,
+      codepilotSessionId: session.id,
+      sdkSessionId: '',
+      workingDirectory: defaultCwd,
+      model: route.modelId,
+      mode: 'code',
+      providerId: route.providerId,
+    });
+  })();
 }
 
 /**

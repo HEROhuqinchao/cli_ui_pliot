@@ -1,3 +1,5 @@
+import { MEMORY_SEARCH_SYSTEM_PROMPT, MEMORY_WRITE_SYSTEM_PROMPT } from '@/lib/memory-service';
+import { getSessionMemoryWorkspace } from '@/lib/memory-binding';
 /**
  * Codex AgentRuntime implementation.
  *
@@ -594,20 +596,19 @@ export const codexRuntime: AgentRuntime = {
           // perception_only until then (codex-user-mcp-wiring guardrail).
           const codexMcpServers: CodexMcpServersConfig = {};
           const assistantWorkspacePath = getSetting('assistant_workspace_path');
-          if (
-            assistantWorkspacePath &&
-            options.workingDirectory &&
-            // realpath-normalized compare (trailing slash / symlink safe) —
-            // same helper the route authorizes with, so "inject" and
-            // "authorized" never disagree.
-            sameRealPath(options.workingDirectory, assistantWorkspacePath)
-          ) {
-            const mem = buildCodexMemoryMcpConfig({
-              baseUrl: resolveCodexProxyBaseUrl(),
-              workspacePath: assistantWorkspacePath,
-              sessionId,
+          const memoryWorkspace = getSessionMemoryWorkspace(sessionId, options.workingDirectory);
+          if (memoryWorkspace) {
+            const memory = buildCodexMemoryMcpConfig({
+              baseUrl: resolveCodexProxyBaseUrl(), workspacePath: memoryWorkspace, sessionId,
             });
-            codexMcpServers[mem.name] = mem.entry;
+            codexMcpServers[memory.name] = memory.entry;
+            if (options.permissionMode !== 'plan') {
+              const writes = buildCodexMemoryMcpConfig({
+                baseUrl: resolveCodexProxyBaseUrl(), workspacePath: memoryWorkspace, sessionId,
+                serverName: 'codepilot_memory_write',
+              });
+              codexMcpServers[writes.name] = writes.entry;
+            }
           }
           // Widget MCP (Phase 8 #31) — keyword-gated, the SAME gate the
           // ClaudeCode path uses (`promptNeedsWidget`, shared from
@@ -769,7 +770,10 @@ export const codexRuntime: AgentRuntime = {
               ].join('\n')
             : '';
           const developerInstructions = composeCodexDeveloperInstructions(
-            options.systemPrompt,
+            [options.systemPrompt,
+              codexMcpServers.codepilot_memory ? MEMORY_SEARCH_SYSTEM_PROMPT : '',
+              codexMcpServers.codepilot_memory_write ? MEMORY_WRITE_SYSTEM_PROMPT : '',
+            ].filter(Boolean).join('\n\n'),
             accountDelegationInstructions,
           );
           const threadParams = {

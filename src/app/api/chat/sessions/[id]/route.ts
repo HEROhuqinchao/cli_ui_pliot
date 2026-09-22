@@ -1,3 +1,4 @@
+import { getAssistantMemoryWorkspace } from '@/lib/memory-binding';
 import { NextRequest } from 'next/server';
 import { deleteSession, getHandoffForTargetSession, getLatestSessionCompactionEvent, getSession, updateSessionWorkingDirectory, updateSessionTitle, updateSessionMode, updateSessionAccessLevel, clearSessionMessages, updateSdkSessionId, updateSessionPermissionProfile } from '@/lib/db';
 import { sanitizeManualTitle } from '@/lib/conversation-title';
@@ -22,6 +23,7 @@ export async function GET(
     const handoffPayload = handoff ? parseRuntimeHandoffPayload(handoff.payload_json) : undefined;
     return Response.json({
       session,
+      assistantMemoryEnabled: !!getAssistantMemoryWorkspace(session),
       ...(handoff && handoffPayload ? {
         handoff: {
           sourceSessionId: handoff.source_session_id,

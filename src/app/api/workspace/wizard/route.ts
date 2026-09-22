@@ -1,3 +1,4 @@
+import { bindAssistantMemory } from '@/lib/memory-binding';
 import { NextRequest, NextResponse } from 'next/server';
 import { resolveAutomaticSessionRoute } from '@/lib/runtime/automatic-session-route';
 
@@ -24,7 +25,7 @@ export async function POST(request: NextRequest) {
     const { initializeWorkspace, loadState, saveState } = await import('@/lib/assistant-workspace');
     const { HEARTBEAT_TEMPLATE } = await import('@/lib/heartbeat');
     const { getLocalDateString } = await import('@/lib/utils');
-    const { createSession } = await import('@/lib/db');
+    const { createSession, getDb } = await import('@/lib/db');
 
     // Ensure workspace is initialized (creates dirs + default template files)
     initializeWorkspace(workspacePath);
@@ -117,22 +118,27 @@ ${userName ? `I address the user as ${userName}.` : 'I use a friendly, respectfu
     // Create session
     const { addMessage } = await import('@/lib/db');
     const route = resolveAutomaticSessionRoute('user_onboarding');
-    const session = createSession(
-      undefined,
-      route.modelId,
-      undefined,
-      workspacePath,
-      'code',
-      route.providerId,
-      undefined,
-      undefined,
-      undefined,
-      {
-        runtimeId: route.runtimeId,
-        state: 'bound',
-        source: 'assistant_session_create',
-      },
-    );
+    const session = getDb().transaction(() => {
+      const created = createSession(
+        undefined,
+        route.modelId,
+        undefined,
+        workspacePath,
+        'code',
+        route.providerId,
+        undefined,
+        undefined,
+        undefined,
+        {
+          runtimeId: route.runtimeId,
+          state: 'bound',
+          source: 'assistant_session_create',
+        },
+      );
+
+      bindAssistantMemory(created.id);
+      return created;
+    })();
 
     // Insert celebration message into the newly created session
     try {
@@ -155,6 +161,9 @@ ${userName ? `I address the user as ${userName}.` : 'I use a friendly, respectfu
       buddy,
     });
   } catch (e) {
+    if (e instanceof Error && e.message === 'MEMORY_BINDING_SCOPE_MISMATCH') {
+      return NextResponse.json({ error: 'Assistant workspace changed; retry opening the assistant.', code: 'assistant_scope_changed' }, { status: 409 });
+    }
     console.error('[workspace/wizard] POST failed:', e);
     const message = e instanceof Error ? e.message : 'Wizard setup failed';
     return NextResponse.json({ error: message }, { status: 500 });
