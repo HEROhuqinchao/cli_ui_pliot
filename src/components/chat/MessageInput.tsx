@@ -1188,7 +1188,7 @@ export function MessageInput({
   // `bg-background/80`; macOS profile drops alpha so vibrancy shows
   // through the composer hood.
   return (
-    <div className="bg-[var(--platform-surface-bar)] backdrop-blur-lg px-4 pt-2 pb-1">
+    <div className="bg-[var(--platform-surface-bar)] backdrop-blur-lg px-4 pt-2 pb-4">
       <div className="mx-auto w-full max-w-3xl">
         <div className="relative">
           {/* Slash Command / File Popover */}
