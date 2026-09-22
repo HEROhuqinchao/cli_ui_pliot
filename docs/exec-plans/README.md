@@ -103,7 +103,7 @@
 
 | 文件 | 主题 | 状态 |
 |------|------|------|
-| [memory-runtime-decoupling.md](active/memory-runtime-decoupling.md) | Runtime 无关记忆核心/来源更正遗忘/成功回合生命周期；辅助凭据与遥测治理，用户授权全部问题修复 | 第三轮 Review passed，可独立提交；5704 pass / 1 skip，Quick actions隔离UI通过；真账号 smoke 与发布待验 |
+| [memory-runtime-decoupling.md](active/memory-runtime-decoupling.md) | Runtime 无关记忆核心/来源更正遗忘/成功回合生命周期；辅助凭据与遥测治理，用户授权全部问题修复 | 第三轮 Review passed；5704 pass / 1 skip，隔离UI通过；用户授权准备 v0.67.17，真账号 smoke 待验 |
 | [active/gemini-native-ai-studio.md](active/gemini-native-ai-studio.md) | AI Studio Gemini 3.8 Flash Native 接入、历史状态/思考参数/截断提示与 AI SDK 能力审计 | Shipped v0.67.16；数字枚举修复准备 v0.67.17；SDK 执行校验回归通过，当前 full 5704 pass / 1 skip，真实 Gemini 问候通过；完整工具执行与 Windows 会话 smoke 待执行 |
 | [active/astra-openai-oauth-compatibility.md](active/astra-openai-oauth-compatibility.md) | **Astra / OpenAI OAuth / Fable 5.1 兼容修复**：刷新并发、非阻塞目录、恢复提示、冷缓存能力与 Fable 协议 | 🟡 Code complete + Tests pass：5518 pass / 1 skip、后续旧聊天 E2E 2 pass；真实账号 smoke 待验证 |
 | [active/cli-maintenance-and-release-notes-rendering-2026-08-28.md](active/cli-maintenance-and-release-notes-rendering-2026-08-28.md) | **CLI 更新提醒、一键升级与 Release Notes 安全渲染**：按 selected binary/package-root 证明 Claude/Codex 安装渠道，same-channel latest、Windows shim/WinGet/standalone 更新、provider maintenance lease、app-update/quit lifecycle latch 与 post-version 验证；GitHub Atom HTML 经 strict sanitize 渲染 | 🟡 Review accepted，已随 `v0.67.11` Shipped；正式 package/资产门禁通过，真实 UpdateDialog、CLI before→after 与 Windows clean VM smoke 待执行 |

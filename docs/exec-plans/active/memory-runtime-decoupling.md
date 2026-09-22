@@ -187,3 +187,12 @@ Dev 启动补验（2026-09-22）：先前钥匙串等待已结束。PID27854 的
 - 审查方沙箱内4个 git init EPERM 与本轮改动无关；本地允许临时 git/loopback 的完整运行结果仍为5704 pass、0 fail、1 skip，见第二轮日志。不是跳过失败或改弱断言。
 - 本条随 Memory/辅助调用修复 commit 保存。仅提交该修复及其测试/guardrail/计划/研究；Gemini 测试、media 数值 schema、MessageInput 间距、Gemini 执行计划及其 README 索引行留在工作区，避免混入无关改动。
 - 未执行 push/tag/release，未停用 Sentry 旧 key。计划保留 active，继续跟踪真实账号手动验收与发布后24h/7d accepted 分摊。
+
+
+## v0.67.17 发布准备（2026-09-22）
+
+用户明确要求“发版”。Memory 提交 feed59c7、Gemini 修复7c1564ca、输入框间距c001adb4相互独立；三个提交均正常通过 hooks（5704 pass / 0 fail / 1 skip）。Dev 真实窗口已确认底部留白。
+
+- 版本与发布说明准备为0.67.17；真实账号、打包客户端人工验收仍记未验证，Release Notes明确披露，不把发布授权当作Smoke passed。
+- 管理员API实时确认Immutable Releases enabled=true；main与stable-release-tags active、无bypass/exclude、id/updatedAt与管理员确认状态完全一致，确认日期更新为2026-09-22。
+- 不修改Sentry旧key。正式CI负责签名/公证/三平台包健康/资产图门禁，成功后仍需复核公开Release与更新metadata；在终态与资产复核前不标Shipped。
