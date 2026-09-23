@@ -8,7 +8,7 @@
 
 实施保留用户 Markdown 和已有会话，抽出无 Runtime SDK 依赖的共享核心；模型增强明确能力与状态，基础记忆无模型也可用。单一写入与来源回执替代字符串猜测。不同 Runtime 协议可不同，数据/scope/权限/结果语义必须一致。原生会话 owner 不变；无关 Gemini/UI 改动原样保留，不混合提交。Sentry 历史保留，旧入口变更需基于实际 key 和影响核对，不为减量删除历史或吞掉产品异常。
 
-> 第三轮复审：Review passed（无 blocker），用户允许进入独立 commit。Code complete / Tests pass（5704 pass、0 fail、1 skip），Quick actions 隔离 UI smoke passed；真实账号完整客户端 smoke 未执行，尚非 Release ready，未 push/release。
+> 当前状态：Shipped — [v0.67.17](https://github.com/op7418/CodePilot/releases/tag/v0.67.17)，2026-09-22 用户明确授权发布；第三轮 Review passed，Tests pass（5704 pass、0 fail、1 skip），隔离 UI smoke 通过。正式 CI 与公开资产审计通过；真实账号完整客户端 smoke 未执行，发布事实不补记为 Smoke passed / Release ready。
 
 > 上轮复审后更新：用户已确定仅助理工作区启用 Memory 工具，保留 AI 重排并接统一执行器。复审前快照保留作历史；本轮完整门禁与额外 UI 修复验证见文末。
 
@@ -196,3 +196,12 @@ Dev 启动补验（2026-09-22）：先前钥匙串等待已结束。PID27854 的
 - 版本与发布说明准备为0.67.17；真实账号、打包客户端人工验收仍记未验证，Release Notes明确披露，不把发布授权当作Smoke passed。
 - 管理员API实时确认Immutable Releases enabled=true；main与stable-release-tags active、无bypass/exclude、id/updatedAt与管理员确认状态完全一致，确认日期更新为2026-09-22。
 - 不修改Sentry旧key。正式CI负责签名/公证/三平台包健康/资产图门禁，成功后仍需复核公开Release与更新metadata；在终态与资产复核前不标Shipped。
+
+
+## v0.67.17 发布结果（2026-09-22）
+
+- **Shipped**：[正式 Release](https://github.com/op7418/CodePilot/releases/tag/v0.67.17)，公开时间2026-09-22 03:21:36 UTC（北京时间11:21:36）。不可变tag指向4ddcd1a0f7931fc2ba3d3a1cf2802782bdc4712e；非draft、非prerelease、Latest=true、immutable=true。
+- [正式CI 35679941503](https://github.com/op7418/CodePilot/actions/runs/35679941503) 七个job全部success：源码门禁、Windows、macOS、Linux两架构、独立Intel ABI与发布。Mac签名/公证/staple、实际产物启动/原生模块检查与central资产审计通过；Windows保持已披露的unsigned NSIS。
+- 公开Release精确20个资产，Linux仅手工包；checksum覆盖19个其他资产，并逐一匹配GitHub资产SHA-256。实际下载universal ZIP、Windows NSIS、两份metadata和四份blockmap，大小/哈希均匹配；Mac feed只引用同版本universal ZIP，Windows feed只引用同版本完整NSIS，SHA-512与实际下载字节一致。
+- 从公开universal ZIP抽取检查：app.asar与standalone package版本均0.67.17，updater指向op7418/CodePilot。证据目录 `/private/tmp/codepilot-v0.67.17-public/`：ci.json、release.json、latest.json、audit.log、package-audit.log。
+- 真实账号三Runtime记忆端到端、打包客户端人工流程仍未执行；计划继续active。Sentry旧key保持不变，发布后24h/7d accepted分摊与是否停收仍待数据验收，不能以发布成功宣称线上噪音已消失。
