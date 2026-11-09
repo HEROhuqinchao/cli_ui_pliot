@@ -26,6 +26,7 @@ export type SettingsSection =
   | "providers"
   | "models"
   | "runtime"
+  | "profiles"
   | "health"
   | "usage"
   | "assistant"
@@ -57,6 +58,7 @@ export const SETTINGS_NAV_ITEMS: SettingsNavItem[] = [
   { id: "providers", label: "Providers", icon: "provider", href: "/settings/providers", i18nKey: "settings.providers" as TranslationKey },
   { id: "models", label: "Models", icon: "model", href: "/settings/models", i18nKey: "settings.models" as TranslationKey },
   { id: "runtime", label: "Runtime", icon: "runtime", href: "/settings/runtime", i18nKey: "settings.runtime" as TranslationKey },
+  { id: "profiles", label: "Agent Profiles", icon: "assistant", href: "/settings/profiles", i18nKey: "settings.profiles" as TranslationKey },
   { id: "health", label: "Health", icon: "health", href: "/settings/health", i18nKey: "settings.health" as TranslationKey },
   { id: "usage", label: "Usage", icon: "usage", href: "/settings/usage", i18nKey: "settings.usage" as TranslationKey },
   { id: "assistant", label: "Assistant", icon: "assistant", href: "/settings/assistant", i18nKey: "settings.assistant" as TranslationKey },

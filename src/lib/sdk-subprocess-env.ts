@@ -65,6 +65,15 @@ export function prepareSdkSubprocessEnv(resolved: ResolvedProvider): SdkSubproce
   // doesn't trip the SDK's "nested session" guard.
   delete sdkEnv.CLAUDECODE;
 
+  // Suppress the CLI's unconditional macOS Keychain prefetch (VUq() calls
+  // `security find-generic-password` ×2 at every subprocess startup). In
+  // DB-provider mode, credentials are already injected via env vars — the
+  // Keychain lookup is unnecessary and triggers a keychain popup per request.
+  // The guard in cli.js checks: CLAUDE_CODE_SIMPLE truthy OR --bare flag.
+  if (resolved.provider) {
+    sdkEnv.CLAUDE_CODE_SIMPLE = '1';
+  }
+
   // Windows-only: auto-detect Git Bash if not already configured.
   if (process.platform === 'win32' && !process.env.CLAUDE_CODE_GIT_BASH_PATH) {
     const gitBashPath = findGitBash();

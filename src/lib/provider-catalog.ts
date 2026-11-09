@@ -1381,6 +1381,36 @@ export const VENDOR_PRESETS: VendorPreset[] = [
     },
   },
 
+  // ── Token Hub (Alibaba internal gateway) ──
+  {
+    key: 'token-hub',
+    name: 'Token Hub',
+    description: 'Alibaba internal Anthropic-compatible gateway — custom base URL and model',
+    descriptionZh: '阿里内部 Anthropic 兼容网关 — 自定义地址和模型',
+    protocol: 'anthropic',
+    authStyle: 'auth_token',
+    baseUrl: 'https://token-hub.alibaba-inc.com/compatible',
+    defaultEnvOverrides: {
+      CLAUDE_CODE_EFFORT_LEVEL: 'max',
+      DISABLE_AUTOUPDATER: '1',
+    },
+    defaultModels: [],
+    fields: ['api_key', 'base_url', 'model_names'],
+    iconKey: 'anthropic',
+    sdkProxyOnly: true,
+    meta: {
+      apiKeyUrl: 'https://token-hub.alibaba-inc.com',
+      docsUrl: 'https://token-hub.alibaba-inc.com',
+      billingModel: 'self_hosted',
+      notes: [
+        'Base URL 不含 /v1/messages（SDK 自动拼接）',
+        '模型名需填写完整 ID（如 mdataplus_e0005b[1M]）',
+        '认证方式为 Authorization: Bearer（auth_token）',
+      ],
+      claudeCodeVerified: true,
+    },
+  },
+
   // ── DeepSeek ──
   {
     key: 'deepseek',

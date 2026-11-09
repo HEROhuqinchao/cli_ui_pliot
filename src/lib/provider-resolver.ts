@@ -433,8 +433,14 @@ export function toClaudeCodeEnv(
     if (apiKey) {
       switch (resolved.authStyle) {
         case 'auth_token':
+          // Set BOTH env vars to the actual key:
+          // - ANTHROPIC_AUTH_TOKEN: SDK client uses this for Authorization: Bearer
+          //   header (authToken takes priority over apiKey in the SDK constructor).
+          // - ANTHROPIC_API_KEY: CLI subprocess auth resolution checks this first to
+          //   determine credentials exist. Without it, the CLI falls through to
+          //   Keychain/OAuth and sends no auth header → AUTH_001.
           env.ANTHROPIC_AUTH_TOKEN = apiKey;
-          env.ANTHROPIC_API_KEY = '';  // Explicitly empty — required by Ollama and other auth_token providers
+          env.ANTHROPIC_API_KEY = apiKey;
           break;
         case 'api_key':
         default:
@@ -484,15 +490,18 @@ export function toClaudeCodeEnv(
     }
 
     // Inject env overrides (empty string = delete).
-    // Skip provider-owned Anthropic keys — they were already correctly
-    // injected above based on authStyle + role model resolution. Legacy
-    // extra_env often contains placeholder auth entries, and older gateway
-    // configs may carry bare UI aliases like ANTHROPIC_MODEL=sonnet; letting
-    // either override this resolver reintroduces stale-model failures.
-    const HOST_MANAGED_ANTHROPIC_ENV_KEYS = new Set([
+    // Auth keys are ALWAYS blocked — they were already correctly injected
+    // above based on authStyle. Model keys are blocked only when the value
+    // is a bare UI alias (e.g. "sonnet", "opus") that would cause 503s on
+    // third-party gateways. Real model IDs (containing hyphens, dots,
+    // underscores, or brackets like "mdataplus_gc6qew[1M]") pass through
+    // so users can override the role-model resolution for custom gateways.
+    const HOST_MANAGED_AUTH_KEYS = new Set([
       'ANTHROPIC_API_KEY',
       'ANTHROPIC_AUTH_TOKEN',
       'ANTHROPIC_BASE_URL',
+    ]);
+    const HOST_MANAGED_MODEL_KEYS = new Set([
       'ANTHROPIC_MODEL',
       'ANTHROPIC_REASONING_MODEL',
       'ANTHROPIC_SMALL_FAST_MODEL',
@@ -500,8 +509,12 @@ export function toClaudeCodeEnv(
       'ANTHROPIC_DEFAULT_SONNET_MODEL',
       'ANTHROPIC_DEFAULT_OPUS_MODEL',
     ]);
+    const BARE_MODEL_ALIASES = /^(sonnet|opus|haiku|claude|default)$/i;
     for (const [key, value] of Object.entries(resolved.envOverrides)) {
-      if (HOST_MANAGED_ANTHROPIC_ENV_KEYS.has(key)) continue; // already handled above
+      if (HOST_MANAGED_AUTH_KEYS.has(key)) continue; // auth already handled above
+      if (HOST_MANAGED_MODEL_KEYS.has(key) && typeof value === 'string' && BARE_MODEL_ALIASES.test(value.trim())) {
+        continue; // block bare aliases that would 503 on third-party gateways
+      }
       if (typeof value === 'string') {
         if (value === '') {
           delete env[key];

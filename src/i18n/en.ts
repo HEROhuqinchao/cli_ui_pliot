@@ -125,6 +125,7 @@ const en = {
   'settings.providers': 'Providers',
   'settings.models': 'Models',
   'settings.runtime': 'Runtime',
+  'settings.profiles': 'Agent Profiles',
   'settings.claudeCli': 'Claude Code',
   'settings.codepilot': 'CodePilot',
   'settings.version': 'Version {version}',

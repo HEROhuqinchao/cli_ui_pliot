@@ -1,6 +1,11 @@
 /**
  * agent-loop.ts — Native Agent Loop (no Claude Code CLI dependency).
  *
+ * @deprecated Phase B: This module is superseded by `execution/react-loop.ts`
+ * which uses injected dependencies from the orchestrator layer. Retained only
+ * as the legacy fallback path when CODEPILOT_ORCHESTRATOR=0. Will be removed
+ * in a future minor version once the orchestrator path is fully validated.
+ *
  * Replaces the SDK's `query()` for the self-hosted runtime path.
  * Uses Vercel AI SDK `streamText()` in a manual while-loop (not maxSteps / stopWhen)
  * so we can intercept each step for permission checks, DB persistence,

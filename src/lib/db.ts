@@ -1301,6 +1301,21 @@ function migrateDb(db: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_notification_deliveries_event_id ON notification_deliveries(event_id);
   `);
+
+  // ── Agent Profiles (plugin orchestrator) ──
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS agent_profiles (
+      id TEXT PRIMARY KEY,
+      display_name TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      version TEXT NOT NULL DEFAULT '1.0.0',
+      profile_json TEXT NOT NULL,
+      source TEXT NOT NULL DEFAULT 'user' CHECK(source IN ('builtin', 'user', 'project')),
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_agent_profiles_source ON agent_profiles(source);
+  `);
 }
 
 /**
@@ -5693,6 +5708,89 @@ export function closeDb(): void {
     }
     state.db = null;
   }
+}
+
+// ── Agent Profiles (plugin orchestrator) ───────────────────────
+
+export interface AgentProfileRow {
+  id: string;
+  display_name: string;
+  description: string;
+  version: string;
+  profile_json: string;
+  source: 'builtin' | 'user' | 'project';
+  created_at: string;
+  updated_at: string;
+}
+
+export function getAllAgentProfiles(): AgentProfileRow[] {
+  const db = getDb();
+  return db.prepare('SELECT * FROM agent_profiles ORDER BY created_at ASC').all() as AgentProfileRow[];
+}
+
+export function getAgentProfile(id: string): AgentProfileRow | undefined {
+  const db = getDb();
+  return db.prepare('SELECT * FROM agent_profiles WHERE id = ?').get(id) as AgentProfileRow | undefined;
+}
+
+export function createAgentProfile(data: {
+  id?: string;
+  display_name: string;
+  description?: string;
+  version?: string;
+  profile_json: string;
+  source?: 'builtin' | 'user' | 'project';
+}): AgentProfileRow {
+  const db = getDb();
+  const id = data.id || crypto.randomBytes(16).toString('hex');
+  const now = new Date().toISOString().replace('T', ' ').split('.')[0];
+
+  db.prepare(
+    `INSERT INTO agent_profiles (id, display_name, description, version, profile_json, source, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    id,
+    data.display_name,
+    data.description || '',
+    data.version || '1.0.0',
+    data.profile_json,
+    data.source || 'user',
+    now,
+    now,
+  );
+
+  return getAgentProfile(id)!;
+}
+
+export function updateAgentProfile(id: string, data: {
+  display_name?: string;
+  description?: string;
+  version?: string;
+  profile_json?: string;
+}): AgentProfileRow | undefined {
+  const db = getDb();
+  const existing = getAgentProfile(id);
+  if (!existing) return undefined;
+
+  const now = new Date().toISOString().replace('T', ' ').split('.')[0];
+  db.prepare(
+    `UPDATE agent_profiles SET display_name = ?, description = ?, version = ?, profile_json = ?, updated_at = ? WHERE id = ?`
+  ).run(
+    data.display_name ?? existing.display_name,
+    data.description ?? existing.description,
+    data.version ?? existing.version,
+    data.profile_json ?? existing.profile_json,
+    now,
+    id,
+  );
+
+  return getAgentProfile(id);
+}
+
+export function deleteAgentProfile(id: string): boolean {
+  const db = getDb();
+  const result = db.prepare('DELETE FROM agent_profiles WHERE id = ?').run(id);
+  return result.changes > 0;
 }
 
 // Register shutdown handlers to close the database when the process exits.
