@@ -1,16 +1,16 @@
 # 工具调用 UX 竞品调研 — Claude Code / CraftAgent / Opencode / Codex
 
 > 目标：调研四个主流 AI Coding 客户端的工具调用展示与交互设计，提炼 CodePilot 可借鉴的优化方向。
-> 关联文档：[thinking display 实现方案](./tool-call-thinking-display.md)
+> 关联文档：thinking display 实现方案（原文已删除，见 git 历史）
 
 ## 调研对象
 
 | 项目 | 技术栈 | 形态 | 源码位置 |
 |------|--------|------|---------|
-| Claude Code | TypeScript + Ink (Terminal React) | CLI/TUI | `资料/src` |
-| CraftAgent | React + Framer Motion | Electron 桌面端 + Web Viewer | `资料/craft-agents-oss-main` |
-| Opencode | SolidJS + WAAPI 动画 | Web 应用 | `资料/opencode-dev` |
-| Codex | Rust + ratatui | TUI | `资料/codex-main` |
+| Claude Code | TypeScript + Ink (Terminal React) | CLI/TUI | 本地快照（已不保留） |
+| CraftAgent | React + Framer Motion | Electron 桌面端 + Web Viewer | craft-agents-oss |
+| Opencode | SolidJS + WAAPI 动画 | Web 应用 | opencode |
+| Codex | Rust + ratatui | TUI | openai/codex |
 
 ---
 

@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, it } from 'node:test';
+import { infoPlist, writeAppZip } from './_macos-app-zip';
 
 const repoRoot = path.resolve(__dirname, '../../..');
 const assetVerifier = path.join(repoRoot, 'scripts/verify-update-assets.mjs');
@@ -25,7 +26,37 @@ function writeFile(root: string, name: string, body = `fixture:${name}`): string
   return target;
 }
 
-function writeMetadata(root: string, name: string, version: string, assetName: string): void {
+function sha256(file: string): string {
+  return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+}
+
+function writeChecksums(root: string, checksumName: string): void {
+  const names = fs.readdirSync(root).sort();
+  fs.writeFileSync(
+    path.join(root, checksumName),
+    names.map((name) => `${sha256(path.join(root, name))}  ./${name}`).join('\n'),
+  );
+}
+
+function writeMacAssets(root: string, version: string): void {
+  for (const arch of ['arm64', 'x64', 'universal']) {
+    writeFile(root, `CodePilot-${version}-${arch}.dmg`);
+    const zip = path.join(root, `CodePilot-${version}-${arch}.zip`);
+    if (arch === 'universal') writeAppZip(zip, infoPlist('13.0'));
+    else writeFile(root, path.basename(zip));
+    writeFile(root, `${path.basename(zip)}.blockmap`);
+  }
+}
+
+const MAC_MINIMUM = { minimumSystemVersion: '22.0.0' };
+
+function writeMetadata(
+  root: string,
+  name: string,
+  version: string,
+  assetName: string,
+  extra: Record<string, unknown> = {},
+): void {
   const asset = path.join(root, assetName);
   const item: Record<string, string | number> = {
     url: assetName,
@@ -35,16 +66,12 @@ function writeMetadata(root: string, name: string, version: string, assetName: s
   if (/\.AppImage$/i.test(assetName)) {
     item.blockMapSize = 64;
   }
-  fs.writeFileSync(path.join(root, name), JSON.stringify({ version, files: [item] }, null, 2));
+  fs.writeFileSync(path.join(root, name), JSON.stringify({ version, files: [item], ...extra }, null, 2));
 }
 
 function makeStableFixture(version: string): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'codepilot-stable-assets-'));
-  for (const arch of ['arm64', 'x64', 'universal']) {
-    writeFile(root, `CodePilot-${version}-${arch}.dmg`);
-    const zip = writeFile(root, `CodePilot-${version}-${arch}.zip`);
-    writeFile(root, `${path.basename(zip)}.blockmap`);
-  }
+  writeMacAssets(root, version);
   const windows = writeFile(root, `CodePilot.Setup.${version}.exe`);
   writeFile(root, `${path.basename(windows)}.blockmap`);
   for (const name of [
@@ -56,32 +83,21 @@ function makeStableFixture(version: string): string {
     `CodePilot-${version}-aarch64.rpm`,
   ]) writeFile(root, name);
 
-  writeMetadata(root, 'latest-mac.yml', version, `CodePilot-${version}-universal.zip`);
+  writeMetadata(root, 'latest-mac.yml', version, `CodePilot-${version}-universal.zip`, MAC_MINIMUM);
   writeMetadata(root, 'latest.yml', version, `CodePilot.Setup.${version}.exe`);
   writeMetadata(root, 'latest-linux.yml', version, `CodePilot-${version}-x86_64.AppImage`);
   writeMetadata(root, 'latest-linux-arm64.yml', version, `CodePilot-${version}-arm64.AppImage`);
 
-  const checksumNames = fs.readdirSync(root).sort();
-  fs.writeFileSync(
-    path.join(root, 'checksums-fixture.sha256'),
-    checksumNames.map((name) => `fixture  ${name}`).join('\n'),
-  );
+  writeChecksums(root, 'checksums-fixture.sha256');
   return root;
 }
 
 function makeMacOnlyFixture(version: string, channel: 'stable' | 'preview'): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), `codepilot-${channel}-mac-assets-`));
-  for (const arch of ['arm64', 'x64', 'universal']) {
-    writeFile(root, `CodePilot-${version}-${arch}.dmg`);
-    const zip = writeFile(root, `CodePilot-${version}-${arch}.zip`);
-    writeFile(root, `${path.basename(zip)}.blockmap`);
-  }
+  writeMacAssets(root, version);
   const metadataName = channel === 'stable' ? 'latest-mac.yml' : 'preview-mac.yml';
-  writeMetadata(root, metadataName, version, `CodePilot-${version}-universal.zip`);
-  fs.writeFileSync(
-    path.join(root, `checksums-${channel}-macos.sha256`),
-    fs.readdirSync(root).sort().map((name) => `fixture  ${name}`).join('\n'),
-  );
+  writeMetadata(root, metadataName, version, `CodePilot-${version}-universal.zip`, MAC_MINIMUM);
+  writeChecksums(root, `checksums-${channel}-macos.sha256`);
   return root;
 }
 
@@ -92,10 +108,7 @@ function makeDistributionFixture(version: string): string {
     'latest-linux-arm64.yml',
     'checksums-fixture.sha256',
   ]) fs.unlinkSync(path.join(root, name));
-  fs.writeFileSync(
-    path.join(root, 'checksums-distribution.sha256'),
-    fs.readdirSync(root).sort().map((name) => `fixture  ${name}`).join('\n'),
-  );
+  writeChecksums(root, 'checksums-distribution.sha256');
   return root;
 }
 
@@ -119,16 +132,24 @@ describe('release signing and update asset contracts', () => {
       'sharp-darwin-x64/lib/sharp-darwin-x64.node',
       'sharp-libvips-darwin-arm64/lib/libvips-cpp.8.17.3.dylib',
       'sharp-libvips-darwin-x64/lib/libvips-cpp.8.17.3.dylib',
+      'better-sqlite3/prebuilds/{darwin-arm64.node,darwin-x64.node}',
+      'node_modules/better-sqlite3-*/prebuilds/{darwin-arm64.node,darwin-x64.node}',
+      'next/node_modules/@img/{sharp-darwin-arm64/lib/sharp-darwin-arm64-0.35.5.node',
+      'sharp-darwin-x64/lib/sharp-darwin-x64-0.35.5.node',
+      'sharp-libvips-darwin-arm64/lib/libvips-cpp.8.18.7.dylib',
+      'sharp-libvips-darwin-x64/lib/libvips-cpp.8.18.7.dylib',
       'trash/lib/macos-trash',
-      '.next/server/assets/macos-trash.*',
+      'server/assets/macos-trash.*',
     ]) assert.ok(x64ArchFiles.includes(expected), `x64ArchFiles must include ${expected}`);
-    assert.doesNotMatch(x64ArchFiles, /\*\*|linux|win32|better-sqlite3|zlib-sync/);
+    assert.doesNotMatch(x64ArchFiles, /\*\*|linux|win32|zlib-sync/);
     assert.match(packageJson.scripts['electron:build'], /^node scripts\/prepare-macos-universal-runtime\.mjs &&/);
     for (const packageName of [
       '@img/sharp-darwin-arm64',
       '@img/sharp-darwin-x64',
       '@img/sharp-libvips-darwin-arm64',
       '@img/sharp-libvips-darwin-x64',
+      'node_modules/next/node_modules/@img/sharp-darwin-x64',
+      'node_modules/next/node_modules/@img/sharp-libvips-darwin-x64',
     ]) assert.ok(universalRuntimePrep.includes(packageName), `runtime prep must include ${packageName}`);
     assert.match(universalRuntimePrep, /createHash\('sha512'\)/);
     assert.doesNotMatch(universalRuntimePrep, /npm['"], \['install|--force/);
@@ -140,8 +161,8 @@ describe('release signing and update asset contracts', () => {
     assert.match(builder, /verifyUpdateCodeSignature:\s*true/);
     assert.match(builder, /rfc3161TimeStampServer:/);
     assert.match(builder, /nsis:[\s\S]*?differentialPackage:\s*true/);
-    assert.equal(packageJson.dependencies['electron-updater'], '6.8.3');
-    assert.equal(packageJson.devDependencies['electron-builder'], '26.8.1');
+    assert.equal(packageJson.dependencies['electron-updater'], '6.8.11');
+    assert.equal(packageJson.devDependencies['electron-builder'], '26.18.0');
 
     for (const workflow of [stable, previewBuild, previewRelease]) {
       assert.match(workflow, /APPLE_NOTARIZATION_KEY_BASE64/);
@@ -464,7 +485,7 @@ describe('release signing and update asset contracts', () => {
         checksumPath,
         completeChecksums
           .split('\n')
-          .filter((line) => !line.endsWith(`  CodePilot.Setup.${version}.exe`))
+          .filter((line) => !line.endsWith(`  ./CodePilot.Setup.${version}.exe`))
           .join('\n'),
       );
       const missingInstallerChecksum = spawnSync(

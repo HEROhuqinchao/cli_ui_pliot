@@ -2,7 +2,6 @@
 
 > **Status: Active contract** — 覆盖 SQLite schema 初始化、增量加列、保守 backfill、幂等与测试隔离。
 > **为什么先读**：用户真实数据在 `~/.codepilot/codepilot.db`；schema 迁移**必须 backfill，不能 DELETE 用户数据**（`feedback_db_migration_safety.md`）。一次错误的 migration 可能让用户丢失所有历史会话 / Provider 配置。
-> **已知关键文件**：`src/lib/db.ts`（schema + migration runner）；`src/types/index.ts`（DB 行类型）。
 
 ## 词汇表
 
@@ -48,17 +47,7 @@
 | 28 | `route_revision` 只在 route/binding 真实变化时每 transaction 加一；title、message、runtime ref、handoff 等无关写入不递增。route mutation 必须 CAS，失败/no-op 零写入 | `updateSessionRouteWithCas` + `bindSessionForExecution` |
 | 29 | handoff 来源与目标、边界和 payload 必须同 transaction 创建；目标创建即 `bound`，来源零修改。目标唯一与幂等 key 防重复，busy/stale route/stale transcript 都不得留下孤儿 target | `chat_session_handoffs` + `createSessionHandoff` |
 | 30 | compaction summary、coverage boundary 与 `chat_session_compaction_events` 必须原子提交；事件记录真实触发方式、辅助 route、估算值和是否重建底层 session，估算值不得进入 billing usage | `commitSessionCompaction` |
-
-## 关键文件 + 责任
-
-| 文件 | 守哪条不变量 |
-|------|--------------|
-| `src/lib/db.ts` | bootstrap schema、on-touch migration、事务 backfill、CRUD SQL、better-sqlite3 句柄管理 |
-| `src/types/index.ts` | DB 行类型与 create/update API 请求形状一致 |
-| `src/lib/provider-catalog.ts` | preset identity 的唯一/ambiguous 判定；migration 不自造另一套 matcher |
-| `src/__tests__/db-isolation.setup.ts` | 每个测试进程使用隔离数据库目录 |
-| `src/__tests__/unit/collect-owner-gate.test.ts` | 单文件直跑也先加载 DB isolation，防止 synthetic chat 写入 Dev 最近列表 |
-| `src/lib/database-integrity.ts`, `database-recovery.ts` | 启动前只读探测、DB/WAL/SHM 保全、用户确认后的空库逃生路径 |
+| 31 | provider 迁移判定 preset identity（唯一 / ambiguous）时必须复用 `provider-catalog` 的共享 identity resolver，不得在 migration 里另写一套 URL/名称 matcher | `resolveProviderPresetIdentity` + provider migration helper |
 
 ## 改动检查表
 

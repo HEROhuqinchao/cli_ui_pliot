@@ -92,7 +92,7 @@ jobs:
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
 
       - run: npm ci
@@ -171,7 +171,7 @@ jobs:
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
 
       - run: npm ci
@@ -236,8 +236,12 @@ jobs:
           # A separately generated universal ZIP becomes latest-mac.yml's
           # single feed target. The first command keeps native DMGs for manual
           # arm64/x64 bootstrap; the second overwrites metadata with builder-
-          # generated universal metadata without hand-editing YAML.
+          # generated universal metadata.
           npx electron-builder --mac --universal --config electron-builder.yml --publish never
+
+      - name: Stamp macOS minimum system version into updater metadata
+        # Must run before Checksums so checksums-macos.sha256 covers the final YAML.
+        run: node scripts/stamp-macos-minimum-system-version.mjs release latest-mac.yml
 
       - name: Notarize and staple final macOS DMGs
         timeout-minutes: 45
@@ -268,9 +272,9 @@ jobs:
           [ -n "$APP" ] || { echo "::error::CodePilot.app not found"; exit 1; }
           PLIST_VER=$(plutil -extract CFBundleShortVersionString raw "$APP/Contents/Info.plist")
           [ "$PLIST_VER" = "$EXPECTED_VERSION" ] || { echo "::error::Info.plist $PLIST_VER != $EXPECTED_VERSION"; exit 1; }
-          SQLITE=$(find "$APP/Contents/Resources" -path "*better-sqlite3*" -name "*.node" | head -1)
-          [ -n "$SQLITE" ] || { echo "::error::better-sqlite3 .node not found"; exit 1; }
-          ELECTRON_RUN_AS_NODE=1 "$APP/Contents/MacOS/CodePilot" -e "const path = require('node:path'); require(path.resolve(process.argv[1])); console.log('better-sqlite3 OK, ABI=' + process.versions.modules)" "$SQLITE"
+          SQLITE=$(find "$APP/Contents/Resources" -type d -path "*/node_modules/better-sqlite3" | head -1)
+          [ -n "$SQLITE" ] || { echo "::error::better-sqlite3 package not found"; exit 1; }
+          ELECTRON_RUN_AS_NODE=1 "$APP/Contents/MacOS/CodePilot" -e "const path = require('node:path'); const Database = require(path.resolve(process.argv[1])); const db = new Database(':memory:'); db.prepare('SELECT 1').get(); db.close(); console.log('better-sqlite3 OK, ABI=' + process.versions.modules)" "$SQLITE"
           node scripts/verify-packaged-server.mjs "$APP/Contents/MacOS/CodePilot" "$APP/Contents/Resources"
           node scripts/verify-electron-main-health.mjs "$APP/Contents/MacOS/CodePilot"
 
@@ -372,7 +376,7 @@ jobs:
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
 
       - run: npm ci
@@ -449,10 +453,10 @@ jobs:
           EXE=$(find release -name "CodePilot.Setup.*.exe" | head -1)
           [ -n "$EXE" ] || { echo "::error::no NSIS installer produced"; exit 1; }
           case "$EXE" in *"$EXPECTED_VERSION"*) ;; *) echo "::error::installer name lacks $EXPECTED_VERSION"; exit 1 ;; esac
-          SQLITE=$(find release/win-unpacked -path "*better-sqlite3*" -name "*.node" 2>/dev/null | head -1)
-          [ -n "$SQLITE" ] || { echo "::error::better-sqlite3 .node not found"; exit 1; }
+          SQLITE=$(find release/win-unpacked -type d -path "*/node_modules/better-sqlite3" 2>/dev/null | head -1)
+          [ -n "$SQLITE" ] || { echo "::error::better-sqlite3 package not found"; exit 1; }
           BIN=$(find release/win-unpacked -maxdepth 1 -name "CodePilot.exe" | head -1)
-          ELECTRON_RUN_AS_NODE=1 "$BIN" -e "const path = require('node:path'); require(path.resolve(process.argv[1])); console.log('better-sqlite3 OK, ABI=' + process.versions.modules)" "$SQLITE"
+          ELECTRON_RUN_AS_NODE=1 "$BIN" -e "const path = require('node:path'); const Database = require(path.resolve(process.argv[1])); const db = new Database(':memory:'); db.prepare('SELECT 1').get(); db.close(); console.log('better-sqlite3 OK, ABI=' + process.versions.modules)" "$SQLITE"
           node scripts/verify-packaged-server.mjs "$BIN" "$(dirname "$BIN")/resources"
           node scripts/verify-electron-main-health.mjs "$BIN"
 
@@ -533,11 +537,11 @@ jobs:
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
 
-      - name: Install RPM packaging support
-        run: sudo apt-get update && sudo apt-get install -y rpm
+      - name: Install RPM packaging support and clang 15
+        run: sudo apt-get update && sudo apt-get install -y rpm clang-15
 
       - run: npm ci
 
@@ -564,6 +568,12 @@ jobs:
 
       - name: Package Linux ${{ matrix.arch }}
         timeout-minutes: 35
+        # Electron 45's V8 headers need GCC 13+ or clang 15+ (GNU attribute after
+        # [[deprecated]], std::source_location). Jammy's GCC tops out at 12;
+        # clang 15 keeps the 22.04 glibc/libstdc++ baseline.
+        env:
+          CC: clang-15
+          CXX: clang++-15
         run: npx electron-builder --linux --${{ matrix.arch }} --config electron-builder.yml --publish never
 
       - name: Verify Linux package architecture, native ABI, and server startup
@@ -599,9 +609,9 @@ jobs:
             file "$BIN"
             exit 1
           }
-          SQLITE=$(find "$UNPACKED/resources" -path "*better-sqlite3*" -name "*.node" | head -1)
-          [ -n "$SQLITE" ] || { echo "::error::better-sqlite3 .node not found"; exit 1; }
-          ELECTRON_RUN_AS_NODE=1 "$BIN" -e "const path = require('node:path'); require(path.resolve(process.argv[1])); console.log('better-sqlite3 OK, ABI=' + process.versions.modules)" "$SQLITE"
+          SQLITE=$(find "$UNPACKED/resources" -type d -path "*/node_modules/better-sqlite3" | head -1)
+          [ -n "$SQLITE" ] || { echo "::error::better-sqlite3 package not found"; exit 1; }
+          ELECTRON_RUN_AS_NODE=1 "$BIN" -e "const path = require('node:path'); const Database = require(path.resolve(process.argv[1])); const db = new Database(':memory:'); db.prepare('SELECT 1').get(); db.close(); console.log('better-sqlite3 OK, ABI=' + process.versions.modules)" "$SQLITE"
           node scripts/verify-packaged-server.mjs "$BIN" "$UNPACKED/resources"
           xvfb-run -a node scripts/verify-electron-main-health.mjs "$BIN"
           echo "Linux build baseline: $(getconf GNU_LIBC_VERSION)"
@@ -634,7 +644,7 @@ jobs:
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
 
       - run: npm ci
@@ -674,7 +684,7 @@ jobs:
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
 
       - run: npm ci

@@ -7,9 +7,12 @@
  * extraResources (via .next/standalone/), it gets skipped.
  *
  * This hook:
- * 1. Explicitly rebuilds native modules copied through Next standalone for the
- *    target Electron ABI
- * 2. Copies the rebuilt .node files into every standalone resource location
+ * 1. Prunes better-sqlite3 v13+ N-API prebuilds inside Next standalone to the
+ *    target platform so macOS codesign/notarization never encounters foreign
+ *    ELF/PE binaries (macOS retains both darwin-arm64.node and darwin-x64.node
+ *    for @electron/universal merging).
+ * 2. Explicitly rebuilds V8/NAN native modules (zlib-sync) for the target
+ *    Electron ABI and copies the rebuilt .node files into standalone resources.
  */
 const fs = require('fs');
 const path = require('path');
@@ -39,16 +42,88 @@ module.exports = async function afterPack(context) {
 
   console.log(`[afterPack] Electron ${electronVersion}, arch=${archName}, platform=${platform}`);
 
-  // Step 1: Explicitly rebuild standalone native modules for the target
-  // Electron version. electron-builder rebuilds root node_modules, but Next's
-  // prebuilt standalone tree otherwise keeps the host ABI in every target app.
+  // Step 1: Sync better-sqlite3 v13+ N-API prebuilds in standalone resources to
+  // the exact target platform set from root node_modules/better-sqlite3/prebuilds.
+  // Next's NFT tracer only traces host-arch prebuilds (dropping darwin-x64.node
+  // on an arm64 runner while tracing foreign-OS *-arm64.node files). Copying the
+  // target-platform prebuilds and pruning foreign OS binaries guarantees both
+  // Darwin slices exist for @electron/universal and avoids codesign/notarization
+  // failures on Linux ELF / Windows PE files.
   const projectDir = process.cwd();
+  const rootSqlitePrebuildsDir = path.join(projectDir, 'node_modules', 'better-sqlite3', 'prebuilds');
+  const searchRoots = [
+    path.join(appOutDir, 'CodePilot.app', 'Contents', 'Resources', 'standalone'),
+    path.join(appOutDir, 'Contents', 'Resources', 'standalone'),
+    path.join(appOutDir, 'resources', 'standalone'),
+  ];
+
+  const allowedSqlitePrebuilds = platform === 'mac'
+    ? new Set(['darwin-arm64.node', 'darwin-x64.node'])
+    : platform === 'windows'
+      ? new Set([`win32-${archName}.node`])
+      : platform === 'linux'
+        ? new Set([`linux-${archName}.node`, `linuxmusl-${archName}.node`])
+        : null;
+  const requiredSqlitePrebuilds = platform === 'mac'
+    ? ['darwin-arm64.node', 'darwin-x64.node']
+    : platform === 'windows'
+      ? [`win32-${archName}.node`]
+      : platform === 'linux'
+        ? [`linux-${archName}.node`, `linuxmusl-${archName}.node`]
+        : [];
+
+  let syncedSqliteDirs = 0;
+  function syncBetterSqlitePrebuilds(dir) {
+    if (!fs.existsSync(dir)) return;
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const fullPath = path.join(dir, entry.name);
+      const parentName = path.basename(dir);
+      if (entry.name === 'prebuilds' && (parentName === 'better-sqlite3' || parentName.startsWith('better-sqlite3-'))) {
+        syncedSqliteDirs++;
+        if (!allowedSqlitePrebuilds) continue;
+        const files = fs.readdirSync(fullPath, { withFileTypes: true });
+        let removed = 0;
+        for (const file of files) {
+          if (!file.isFile() || !file.name.endsWith('.node')) continue;
+          if (!allowedSqlitePrebuilds.has(file.name)) {
+            fs.rmSync(path.join(fullPath, file.name), { force: true });
+            removed++;
+          }
+        }
+        let copied = 0;
+        for (const fileName of requiredSqlitePrebuilds) {
+          const targetFile = path.join(fullPath, fileName);
+          if (!fs.existsSync(targetFile)) {
+            const sourceFile = path.join(rootSqlitePrebuildsDir, fileName);
+            if (!fs.existsSync(sourceFile)) {
+              throw new Error(`[afterPack] Required better-sqlite3 prebuild missing in root node_modules: ${sourceFile}`);
+            }
+            fs.copyFileSync(sourceFile, targetFile);
+            copied++;
+          }
+        }
+        console.log(
+          `[afterPack] Synced better-sqlite3 prebuilds at ${fullPath}: removed ${removed}, copied ${copied}, kept ${requiredSqlitePrebuilds.join(', ')}`,
+        );
+        continue;
+      }
+      syncBetterSqlitePrebuilds(fullPath);
+    }
+  }
+
+  for (const root of searchRoots) {
+    syncBetterSqlitePrebuilds(root);
+  }
+  if (syncedSqliteDirs === 0) {
+    throw new Error('[afterPack] No better-sqlite3/prebuilds directory found in standalone resources');
+  }
+
+  // Step 2: Explicitly rebuild non-N-API standalone native modules (zlib-sync)
+  // for the target Electron version. electron-builder rebuilds root node_modules,
+  // but Next's prebuilt standalone tree otherwise keeps the host ABI.
   const nativeModules = [
-    {
-      packageName: 'better-sqlite3',
-      outputName: 'better_sqlite3.node',
-      source: path.join(projectDir, 'node_modules', 'better-sqlite3', 'build', 'Release', 'better_sqlite3.node'),
-    },
     {
       packageName: 'zlib-sync',
       outputName: 'zlib_sync.node',
@@ -69,7 +144,7 @@ module.exports = async function afterPack(context) {
     });
     console.log('[afterPack] Rebuild completed successfully');
   } catch (err) {
-    console.error('[afterPack] Failed to rebuild better-sqlite3:', err.message);
+    console.error('[afterPack] Failed to rebuild zlib-sync:', err.message);
     // Try alternative: use @electron/rebuild programmatically
     try {
       const { rebuild } = require('@electron/rebuild');
@@ -87,7 +162,7 @@ module.exports = async function afterPack(context) {
     }
   }
 
-  // Step 2: Verify every rebuilt .node file.
+  // Step 3: Verify every rebuilt .node file.
   for (const item of nativeModules) {
     if (!fs.existsSync(item.source)) {
       throw new Error(`[afterPack] Rebuilt ${item.outputName} not found at ${item.source}`);
@@ -96,14 +171,9 @@ module.exports = async function afterPack(context) {
     console.log(`[afterPack] Rebuilt .node file: ${item.source} (${sourceStats.size} bytes, mtime: ${sourceStats.mtime.toISOString()})`);
   }
 
-  // Step 3: Find and replace all target .node files in standalone resources.
+  // Step 4: Find and replace all target .node files in standalone resources.
   // macOS: <appOutDir>/CodePilot.app/Contents/Resources/standalone/...
   // Windows/Linux: <appOutDir>/resources/standalone/...
-  const searchRoots = [
-    path.join(appOutDir, 'CodePilot.app', 'Contents', 'Resources', 'standalone'),
-    path.join(appOutDir, 'Contents', 'Resources', 'standalone'),
-    path.join(appOutDir, 'resources', 'standalone'),
-  ];
 
   const replaced = new Map(nativeModules.map((item) => [item.outputName, 0]));
 

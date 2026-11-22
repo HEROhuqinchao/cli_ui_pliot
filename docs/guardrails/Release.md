@@ -2,7 +2,6 @@
 
 > **Status: Active contract** — 已覆盖版本 source of truth、tag/资产不可变、stable 三平台分发、macOS signed updater、Windows unsigned updater、真实 ABI/server-health、attestation 与失败后的补丁版本策略。
 > **为什么先读**：发版有严格顺序（RELEASE_NOTES → package.json version → npm install → 提交推送 → tag → CI 自动构建发布）；**不能删 tag**——一旦 tag 被删再重建，已发布的 Release 会变 Draft（`feedback_never_delete_release_tags.md`）。CI 会自动建 Release 并上传产物，不要手动建。
-> **已知关键文件**：`RELEASE_NOTES.md`、`package.json`（version 字段）、`package-lock.json`、`.github/workflows/*`（CI 发版流程）。
 
 ## 词汇表
 
@@ -18,13 +17,13 @@
 |---|--------|--------|
 | 1 | 不能删 release tag——删了再建会让已发布 Release 变 Draft，丢失下载链接 | 人 + CI |
 | 2 | 必须等用户明确指示才 `git push` + `git tag`；commit 可以正常进行 | 人（执行 Agent） |
-| 3 | RELEASE_NOTES.md 格式必须严格遵循 CLAUDE.md "Release Notes 格式" 一节 | 人 |
+| 3 | RELEASE_NOTES.md 格式必须严格遵循 `docs/rules/release.md`「Release Notes 格式」一节 | 人 |
 | 4 | 更新内容必须用用户能理解的语言，不要出现 commit hash / 函数名 / 文件路径 | 人 |
 | 5 | 下载链接必须是完整 GitHub release download URL，用户点击即可下载 | 人 |
 | 6 | tag CI 任一平台失败时不得删除/重建该 tag；修复后递增 patch 版本重新发布 | 人 + CI |
 | 7 | stable tag 的 macOS arm64/x64/universal、Windows x64、Linux x64/arm64 版本/真实 Main health/ABI/source-map 与资产门禁均通过且 Release job 成功，才能报告 Shipped | `.github/workflows/build.yml` + 执行 Agent |
 | 8 | stable/preview 的 macOS app+DMG 必须签名、公证、staple 并通过 Gatekeeper。Windows stable updater 在 signer 全配置时校验两个 CodePilot 自有 EXE 的同一 Authenticode subject/timestamp；当前完全未配置时两者必须明确为 `NotSigned`、`app-update.yml` 不得含 `publisherName`，半配置必须失败 | CI verifier |
-| 9 | macOS installer、`latest-mac.yml`/`preview-mac.yml`、ZIP blockmap 与 Windows stable installer、`latest.yml`、EXE blockmap、checksum 必须来自同一输出；metadata 只能裸 basename 精确引用当前版本，checksum 精确按文件名集合核对，旧版本/额外 payload、缺失/错 hash/重复 basename/stagingPercentage 均阻断 | `verify-update-assets.mjs` |
+| 9 | macOS installer、`latest-mac.yml`/`preview-mac.yml`、ZIP blockmap 与 Windows stable installer、`latest.yml`、EXE blockmap、checksum 必须来自同一输出；metadata 只能裸 basename 精确引用当前版本，checksum 精确按文件名集合核对，旧版本/额外 payload、缺失/错 hash/重复 basename/stagingPercentage 均阻断。mac metadata 唯一的自动后处理是 Checksums 之前写入 `minimumSystemVersion`（Darwin 版本，等于 ZIP 内 app 的要求）；每条 checksum 都按真实文件重算 | `verify-update-assets.mjs` + `stamp-macos-minimum-system-version.mjs` |
 | 10 | stable 资产发布后不可变；坏版本只发更高 patch。preview metadata 独立且 prerelease 不得覆盖 stable feed | 人 + CI |
 | 11 | 私钥只存在于 secret/signing service；轮换/丢失按 `docs/rules/release.md` runbook，publisher/Team ID 变化不得直接自动更新 | 人 + CI |
 | 12 | stable tag 发布三平台安装包；macOS official updater 消费 `latest-mac.yml`/universal ZIP，Windows official updater 消费 unsigned `latest.yml`/NSIS installer，Linux provenance 必须为 `0` 且不得发布 `latest-linux*.yml`。preview Release 仍为 macOS-only | workflow + verifier |
@@ -32,20 +31,6 @@
 | 14 | workflow 顶层只有 `contents: read`；`contents`/OIDC/attestation 写权限只授予 stable/preview 发布 job，所有 Action `uses:` 固定 40 位 commit SHA。unsigned Windows feed 还要求当天或前一 UTC 日的 Immutable Releases 管理员确认；active `main` 与 `v*` tag ruleset 必须各恰好一个、无 bypass/exclude，并分别禁止删除/非快进与删除/更新。管理员生成的 `CODEPILOT_RULESETS_CONFIRMED_STATE` 必须与 live ruleset `id` / `updated_at` 一致；Actions token 看不到 `bypass_actors` 时禁止把缺失当空。发布 job 先把完整资产图上传到可恢复 draft，全部成功后才一次切为公开 stable/prerelease | workflow + source-contract test |
 | 15 | universal 合并时，按目录选型的 SDK/Sharp Darwin 预编译文件与 already-universal Trash helper 只能由精确 `x64ArchFiles` glob 保留；`better-sqlite3` / `zlib-sync` 必须先逐架构替换再由 universal 合并，合并后的 `afterPack`（Arch=4）必须 no-op，不得把 fat binary 覆盖回单架构 | builder config + hooks + source-contract test + universal package probe |
 | 16 | 分发 DMG 容器必须在 package step 的临时 keychain 仍可用时由同一 Developer ID Application identity 签名；提交公证前先校验配置 Team，公证/staple 后再用 `codesign`、`stapler` 与 DMG 专用 Gatekeeper `open/context:primary-signature` 三重验收 | builder config + notarizer + final verifier |
-
-## 关键文件 + 责任
-
-| 文件 | 守哪条不变量 |
-|------|--------------|
-| `RELEASE_NOTES.md` | Release 正文 source of truth |
-| `package.json` | version 字段 |
-| `package-lock.json` | 同步版本号（`npm install` 后会自动更新） |
-| `.github/workflows/*` | CI 签名、公证、构建、资产审计、attestation 与上传 |
-| `scripts/after-pack.js` / `scripts/after-sign.js` | better-sqlite3 Electron ABI + macOS Developer ID identity gate |
-| `scripts/notarize-macos-dmgs.mjs` / `verify-macos-notarization.mjs` | DMG 公证/staple 与 app/DMG/ZIP Gatekeeper 门禁 |
-| `scripts/verify-windows-signing.ps1` | CodePilot installer + 顶层 app EXE publisher/timestamp 门禁；禁止递归要求第三方 EXE 同 publisher |
-| `scripts/verify-update-assets.mjs` | stable/preview metadata/hash/blockmap 原子图 |
-| `scripts/verify-github-update-rulesets.mjs` / `verify-immutable-release-ack.mjs` | 管理员 no-bypass 状态、live ruleset 防漂移与短时 Immutable 确认门禁 |
 
 ## 改动检查表
 
@@ -93,10 +78,11 @@
 |------|----------|
 | 构建产物 server 启动 | `scripts/verify-packaged-server.mjs` + `.github/workflows/build.yml` |
 | tag/version、P0 regression、macOS version/ABI/server-health/checksum | `.github/workflows/build.yml` |
-| release notes / package version drift | `scripts/lint-docs-drift.mjs` + CI verify-source |
+| release notes / package version drift | CI verify-source（tag 与 package.json 版本一致）；`lint-docs-drift.mjs` 只检查计划目录索引，不检查这一项 |
 | macOS Developer ID + notarization | `macos-signing-policy.test.ts` + final CI verifier |
 | Windows Authenticode | `release-trust-update-assets.test.ts` + final CI PowerShell verifier |
 | metadata/blockmap/checksum/channel、Action SHA、GitHub ruleset shape | `release-trust-update-assets.test.ts` + `verify-update-assets.mjs` + `verify-github-update-rulesets.mjs` |
+| mac feed 最低系统版本、写入与 checksum 顺序 | `macos-minimum-system-version.test.ts` + `stamp-macos-minimum-system-version.mjs` |
 | 真实 Main→utilityProcess→SQLite ABI | `electron-packaging-hygiene.test.ts` + `verify-electron-main-health.mjs` |
 
 ## 设计决策日志
@@ -113,3 +99,4 @@
 - 2026-08-24 — `v0.67.3` 正式 CI 的 app/原生/universal 签名与公证均通过，但最终 DMG Gatekeeper 验证发现容器只有 notarization ticket、没有可用 Developer ID signature。保留失败 tag；启用 `dmg.sign=true`，并把 DMG Team/signature 检查前移到 notary submission 之前，修复后递增 `v0.67.4`。
 - 2026-08-26 — 用户接受 Windows 无 Authenticode 自动更新并明确不申请 Microsoft/Azure/PFX 签名；Linux 延后。stable Windows official provenance 改为 `1`，发布 `latest.yml` + EXE blockmap并在 UI 明示 GitHub 单一信任根。作为补偿门禁，workflow Action 全部 pin 40-hex SHA，发布前要求管理员确认 Immutable Releases，并实时校验 active main no-delete/no-force 与 `v*` tag no-delete/no-update rulesets；`v0.67.7` 以前客户端仍需手动 bootstrap。
 - 2026-08-26 — `v0.67.8` final release job 证明 GitHub Actions 内置 token 会按官方权限模型隐藏 `bypass_actors`；保留失败 tag，不把缺字段降级成空。管理员完整响应验证 no-bypass 后生成 `CODEPILOT_RULESETS_CONFIRMED_STATE`，低权限 CI 以 live shape + `id` / `updated_at` 防漂移；不把管理员 PAT 长期放入 Actions。
+- 2026-11-21 — 放弃 macOS 12。electron-builder 不会把 `minimumSystemVersion` 写进 `latest-mac.yml`，所以三个 mac workflow 在 universal 打包后、Checksums 前用脚本追加。这是对"不手写 metadata"的唯一例外：自动执行，值来自同次构建的 app，在 checksum 之前写入，并由 central audit 校验。Release Notes 模板加入 macOS 12 用户的说明，提高最低系统的版本必须在开头写明。

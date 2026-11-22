@@ -31,7 +31,7 @@ jobs:
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
 
       - name: Version tag must match package.json
@@ -82,7 +82,7 @@ jobs:
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
 
       - run: npm ci
@@ -134,6 +134,10 @@ jobs:
           CODEPILOT_REQUIRE_DEVELOPER_ID: "1"
         run: npx electron-builder --mac --universal --config electron-builder.yml -c.publish.channel=preview --publish never
 
+      - name: Stamp macOS minimum system version into updater metadata
+        # Must run before Checksums so checksums-macos.sha256 covers the final YAML.
+        run: node scripts/stamp-macos-minimum-system-version.mjs release preview-mac.yml
+
       - name: Notarize and staple preview DMG
         timeout-minutes: 45
         env:
@@ -156,9 +160,9 @@ jobs:
           node scripts/verify-macos-notarization.mjs release 3
           PLIST_VER=$(plutil -extract CFBundleShortVersionString raw "$APP/Contents/Info.plist")
           [ "$PLIST_VER" = "$VERSION" ] || { echo "::error::Info.plist $PLIST_VER != $VERSION"; exit 1; }
-          SQLITE=$(find "$APP/Contents/Resources" -path "*better-sqlite3*" -name "*.node" | head -1)
-          [ -n "$SQLITE" ] || { echo "::error::better-sqlite3 .node not found"; exit 1; }
-          ELECTRON_RUN_AS_NODE=1 "$APP/Contents/MacOS/CodePilot" -e "const path = require('node:path'); require(path.resolve(process.argv[1])); console.log('better-sqlite3 OK, ABI=' + process.versions.modules)" "$SQLITE"
+          SQLITE=$(find "$APP/Contents/Resources" -type d -path "*/node_modules/better-sqlite3" | head -1)
+          [ -n "$SQLITE" ] || { echo "::error::better-sqlite3 package not found"; exit 1; }
+          ELECTRON_RUN_AS_NODE=1 "$APP/Contents/MacOS/CodePilot" -e "const path = require('node:path'); const Database = require(path.resolve(process.argv[1])); const db = new Database(':memory:'); db.prepare('SELECT 1').get(); db.close(); console.log('better-sqlite3 OK, ABI=' + process.versions.modules)" "$SQLITE"
           node scripts/verify-packaged-server.mjs "$APP/Contents/MacOS/CodePilot" "$APP/Contents/Resources"
           node scripts/verify-electron-main-health.mjs "$APP/Contents/MacOS/CodePilot"
 
@@ -192,7 +196,7 @@ jobs:
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
 
       - run: npm ci
@@ -210,14 +214,14 @@ jobs:
           {
             echo "## CodePilot ${VERSION} internal preview"
             echo ""
-            echo "This is a tester-only prerelease from the refactor branch."
+            echo "This is a tester-only internal prerelease."
             echo ""
             echo "- Not a stable \`v*\` release."
             echo "- Marked as GitHub prerelease and \`--latest=false\`."
             echo "- macOS preview builds use the signed \`preview-mac.yml\` prerelease channel and can update only to newer preview builds."
             echo ""
             echo "### Test focus"
-            echo "- Existing data compatibility after installing over 0.54.x or older preview packages."
+            echo "- Existing data compatibility after installing over older stable or preview packages."
             echo "- Codex runtime startup and model loading."
             echo "- Claude Code runtime model loading and first message."
             echo "- macOS tray icon visibility in light/dark mode."

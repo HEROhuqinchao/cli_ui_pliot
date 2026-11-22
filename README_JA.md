@@ -32,7 +32,7 @@
 
 | プラットフォーム | ダウンロード | アーキテクチャ |
 |---|---|---|
-| macOS | [Apple Silicon (.dmg)](https://github.com/op7418/CodePilot/releases/latest) · [Intel (.dmg)](https://github.com/op7418/CodePilot/releases/latest) | arm64 / x64 |
+| macOS (13+) | [Apple Silicon (.dmg)](https://github.com/op7418/CodePilot/releases/latest) · [Intel (.dmg)](https://github.com/op7418/CodePilot/releases/latest) | arm64 / x64 |
 | Windows | [インストーラー (.exe)](https://github.com/op7418/CodePilot/releases/latest) | x64 + arm64 |
 | Linux | ソースからビルド | x64 + arm64 |
 
@@ -92,8 +92,8 @@ CodePilot はコーディングツールとして始まりましたが、**汎�
 
 | 前提条件 | 最小バージョン |
 |---|---|
-| Node.js | 18+ |
-| npm | 9+（Node 18 に付属） |
+| Node.js | 24+ |
+| npm | 11+（Node 24 に付属） |
 
 ```bash
 git clone https://github.com/op7418/CodePilot.git
@@ -203,8 +203,6 @@ xattr -cr /Applications/CodePilot.app
 - [FAQ](https://www.codepilot.sh/docs/faq) -- よくある質問と解決方法
 
 **開発者ドキュメント:**
-- [ARCHITECTURE.md](./ARCHITECTURE.md) -- アーキテクチャ、テックスタック、ディレクトリ構成、データフロー
-- [docs/handover/](./docs/handover/) -- 設計決定、引き継ぎドキュメント
 - [docs/exec-plans/](./docs/exec-plans/) -- 実行計画、技術的負債トラッカー
 
 ---

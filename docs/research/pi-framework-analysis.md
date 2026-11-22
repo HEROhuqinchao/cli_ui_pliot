@@ -1,8 +1,8 @@
 # Pi AI 框架调研
 
 > 创建时间：2026-04-06
-> 源码位置：/Users/op7418/Documents/code/资料/pi-mono-main
-> 关联执行计划：[decouple-claude-code](../exec-plans/completed/decouple-claude-code.md)
+> 分析对象：pi-mono（本地快照已不保留；文中路径相对上游仓库根目录）
+> 关联执行计划：decouple-claude-code
 
 ## 1. 架构概览
 

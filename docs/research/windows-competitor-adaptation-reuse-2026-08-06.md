@@ -1,16 +1,16 @@
 # Windows 竞品适配可借鉴矩阵（2026-08-06）
 
-> 对应修复交接：[Windows Runtime / 路径兼容性修复交接与复查手册](../handover/windows-runtime-path-compatibility-review.md)
+> 对应修复交接：Windows Runtime / 路径兼容性修复交接与复查手册
 >
 > 本文目标不是罗列竞品功能，而是回答：哪些原则 CodePilot 已经吸收、哪些值得继续立项、哪些实现不能照搬。当前实现基线为 commit `b70c0c10`。
 
-> 2026-08-06 实施回写：本文列出的 P0/P1 已进入 [Windows Runtime 诊断、恢复与凭据加固交接](../handover/windows-runtime-recovery-hardening.md)：Path Identity、三 Runtime Doctor、Codex sandbox 分层状态、Provider secret envelope encryption，以及复制固定官方命令并打开 PowerShell 的恢复入口。真实 standalone Codex/sandbox child 和跨 OS keyring 仍按交接文档标为待真机复查，不能因代码落地改写为已验证。
+> 2026-08-06 实施回写：本文列出的 P0/P1 已进入 Windows Runtime 诊断、恢复与凭据加固交接：Path Identity、三 Runtime Doctor、Codex sandbox 分层状态、Provider secret envelope encryption，以及复制固定官方命令并打开 PowerShell 的恢复入口。真实 standalone Codex/sandbox child 和跨 OS keyring 仍按交接文档标为待真机复查，不能因代码落地改写为已验证。
 
 ## 一、证据范围
 
 本轮只把源码、官方仓库/设计文档和本仓库已有源码调研当作事实证据：
 
-- 本地快照 `资料/feishu-openclaw-plugin/`：`@larksuiteoapi/feishu-openclaw-plugin@2026.3.7`。
+- npm 包 `@larksuiteoapi/feishu-openclaw-plugin@2026.3.7`（解包件已不保留在本仓库）。
 - [Craft Agents OSS](https://github.com/craft-ai-agents/craft-agents-oss)：Windows PowerShell installer、`.exe` debug 入口、`%APPDATA%` 日志；架构细节同时引用本仓库已固定 commit 的 [竞品 Runtime / 安全调研](./competitor-runtime-security-solutions-2026-07-04.md)。
 - [OpenCode](https://github.com/anomalyco/opencode)：Scoop/Chocolatey、Windows Desktop 安装包；Runtime/状态/安全细节引用上述既有源码调研。
 - [OpenAI Codex config source](https://github.com/openai/codex/blob/main/codex-rs/config/src/config_toml.rs)：Windows path comparison、project trust、credential store mode、Windows config；沙盒结构引用 [OpenAI Windows sandbox design](https://openai.com/index/building-codex-windows-sandbox/)。

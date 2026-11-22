@@ -1,6 +1,6 @@
 # Issue #629 — resume 坏 session 的 error shape POC
 
-> 关联执行计划：[docs/exec-plans/active/v0.56.x-stability-trust.md](../../exec-plans/active/v0.56.x-stability-trust.md) Phase 2 Session/Stream cluster（#629）
+> 关联执行计划：`docs/exec-plans/active/v0.56.x-stability-trust.md`（已删除，见 git 历史）Phase 2 Session/Stream cluster（#629）
 > 看板：[docs/exec-plans/active/issue-tracker.md](../../exec-plans/active/issue-tracker.md) `#629`（🟡 残留 gap）
 > 状态：**已关闭（🟢，2026-06-26）。** POC-A（源码层）+ driver `--selftest` 5/5 绿；POC-B 4 个第三方 proxy 一致返回 `B_RESULT_ERROR` + 可判别 `errors[]`；修复 claude-client + route 双层落地（见下「修复已落地」+「复审 follow-up」），**Codex 端到端 smoke 通过：两轮坏 resume → 第二轮 fresh、不再 `No conversation found`**。
 > 三层写法（遵守 research 文档纪律）：A 外部事实（SDK 类型，含 file:line + 快照）/ B repo facts（file:line）/ C 推断与设计。刻意放 `docs/research/`、不进 `src/`，不触产品测试文件清单。
@@ -64,7 +64,7 @@
 
 **降低"清 id 会丢上下文"风险的事实：**
 
-- `docs/research/session-management-and-context-compaction.md:68`：CodePilot 已有完整 DB-based fallback（`buildFallbackContext`），SDK resume 只是优化非必需。清掉坏 `sdk_session_id` 后下一轮用 DB 历史（最近 200 条）重建——**大部分上下文仍在**，损失的是 SDK 端增量/压缩态。这降低（但未消除）误清 transient 的代价，故仍需判别、不可无脑清。
+- `docs/research/session-management-and-context-compaction.md`（已删除，见 git 历史）：CodePilot 已有完整 DB-based fallback（`buildFallbackContext`），SDK resume 只是优化非必需。清掉坏 `sdk_session_id` 后下一轮用 DB 历史（最近 200 条）重建——**大部分上下文仍在**，损失的是 SDK 端增量/压缩态。这降低（但未消除）误清 transient 的代价，故仍需判别、不可无脑清。
 
 ## C. 推断与设计（待 POC-B 验证后落地）
 

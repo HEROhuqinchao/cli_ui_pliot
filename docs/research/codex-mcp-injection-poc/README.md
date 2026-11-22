@@ -1,6 +1,6 @@
 # Codex MCP 注入 — Phase 0 POC 记录
 
-> 执行计划见 [docs/exec-plans/completed/phase-8-codex-mcp-context-injection.md](../../exec-plans/completed/phase-8-codex-mcp-context-injection.md)（已归档 2026-05-29）
+> 执行计划见 docs/exec-plans/completed/phase-8-codex-mcp-context-injection.md（已归档 2026-05-29）
 > 状态：**Phase 0 核心问题已 live 验证通过**（真实 Codex `0.133.0-alpha.1` app-server，隔离 `CODEX_HOME`）。唯一未验证项 = 模型**自主**调用（auth-gated，需 OpenAI 登录）。
 
 本目录是 Phase 8 Phase 0 的 POC 产物，刻意放在 `docs/research/`（不进 `src/`），以免触及 `codex-user-mcp-wiring.test.ts` 的文件清单与产品路径。
@@ -16,7 +16,7 @@
 | 对象 | 版本 / 日期 | 来源 |
 |------|------------|------|
 | **live Codex 二进制** | `codex-cli 0.133.0-alpha.1`（app-server 上报 cliVersion `0.133.0`） | `/Applications/Codex.app/Contents/Resources/codex`（用户机器现有，未下载新二进制） |
-| vendored Codex 源码 | 文件日期 2026-05-13；version 占位 `0.0.0-dev` | `资料/codex/` |
+| vendored Codex 源码 | 文件日期 2026-05-13；version 占位 `0.0.0-dev` | openai/codex 本地克隆（不入库） |
 | `@modelcontextprotocol/sdk` | 1.29.0 | `package.json` |
 | node | v22.22.0（`/opt/homebrew/Cellar/node@22/...`） | 运行环境 |
 

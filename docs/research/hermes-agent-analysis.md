@@ -3,14 +3,14 @@
 > **本文采用三段式结构**：外部事实（Hermes）/ 本仓库事实（CodePilot, file:line）/ 推断与建议。
 > 每条陈述必须可追溯到具体来源；推断层不得与事实层混写。
 >
-> **⚠️ 对比基线说明**：本文的 CodePilot 现状以 [`docs/handover/decouple-native-runtime.md`](../handover/decouple-native-runtime.md) 为权威来源。
+> **⚠️ 对比基线说明**：本文的 CodePilot 现状以 `docs/handover/decouple-native-runtime.md` 为权威来源。
 > `ARCHITECTURE.md:3` 的总览描述仍把主链路写成 Claude Agent SDK，尚未同步到 native runtime 切换——
 > 读者遇到两者冲突时请以交接文档为准。
 
 ## 来源钉定
 
 **Hermes 本地快照**
-- 路径：`/Users/op7418/Documents/code/资料/hermes-agent-main`
+- 项目：Hermes Agent（本地快照已不保留；下文路径均相对上游仓库根目录）
 - 快照时点：2026-04-09（对应仓内 `RELEASE_v0.8.0.md` 发布窗口）
 - 非 git 仓库（ZIP 解压），无 commit SHA；只能按路径 + 行号引用
 - Hermes 上游真正的 tag 是日期制（`v2026.4.8` 等），**不存在 `v0.8.0` tag**，只有 `RELEASE_v0.8.0.md` 这个文件名
@@ -189,7 +189,7 @@ docstring 原文定位：`agent/auxiliary_client.py:1-43`。
 
 ## 二、CodePilot 事实层（本仓库当前实现）
 
-权威基线：[`docs/handover/decouple-native-runtime.md`](../handover/decouple-native-runtime.md)。
+权威基线：`docs/handover/decouple-native-runtime.md`。
 所有引用形式为 `file:line`。
 
 ### 2.1 Agent Loop 主循环（`src/lib/agent-loop.ts:225`）
@@ -247,7 +247,7 @@ export function shouldAutoCompact(messages, contextWindowTokens): boolean {
 - `codepilot_memory_recent`：读最近 3 天 daily + 长期记忆摘要
 
 **没有**：
-- **Session 历史搜索**。`messages` 表数据完整存在 SQLite（schema 见 `docs/research/session-management-and-context-compaction.md:29-40`），
+- **Session 历史搜索**。`messages` 表数据完整存在 SQLite（schema 见 `docs/research/session-management-and-context-compaction.md`（已删除，见 git 历史）），
   但没有工具把它暴露给模型做跨会话全文检索
 
 ### 2.5 项目指令发现仅两级（`src/lib/agent-system-prompt.ts:210-236`）

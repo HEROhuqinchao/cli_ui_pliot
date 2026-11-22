@@ -46,11 +46,8 @@ const nextConfig: NextConfig = {
     // cause severe memory pressure when `next dev` restores it. Production
     // builds keep their default behavior; this only disables the dev cache.
     turbopackFileSystemCacheForDev: false,
-    // Keep local dev from taking down the machine when compiling the large
-    // Settings route graph. Dev source maps are useful but expensive here;
-    // production builds still emit their normal artifacts.
-    turbopackMemoryLimit: 1536 * 1024 * 1024,
-    // This remains false in dev. Official release builds enable output maps
+    // Dev source maps are expensive when compiling the large Settings route
+    // graph. This remains false in dev. Official release builds enable output maps
     // with productionBrowserSourceMaps so Turbopack emits real renderer/server
     // maps instead of debug IDs pointing at empty placeholder maps. Consuming
     // dependency input maps stays off: the POC showed it more than doubled
@@ -66,7 +63,10 @@ const nextConfig: NextConfig = {
   //   omits cli.js, so the SDK fails with "Claude Code executable not found at
   //   .../node_modules/@anthropic-ai/claude-agent-sdk/cli.js" in production.
   //   Sentry recorded ~247 events in 14d before this was added.
-  serverExternalPackages: ['better-sqlite3', 'discord.js', '@discordjs/ws', 'zlib-sync', '@anthropic-ai/claude-agent-sdk'],
+  // - powershell-utils (via trash's Linux/WSL path): Turbopack 16.4 resolves its
+  //   `fs.access(<SYSTEMROOT>\...\powershell.exe)` as a file reference and fails
+  //   the build on Windows hosts (vercel/next.js discussion #100516).
+  serverExternalPackages: ['better-sqlite3', 'discord.js', '@discordjs/ws', 'zlib-sync', '@anthropic-ai/claude-agent-sdk', 'powershell-utils'],
   env: {
     NEXT_PUBLIC_APP_VERSION: pkg.version,
     NEXT_PUBLIC_SENTRY_DSN: process.env.SENTRY_DSN || '',

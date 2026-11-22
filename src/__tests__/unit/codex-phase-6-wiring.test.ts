@@ -196,8 +196,11 @@ describe('RuntimePanel — three-engine picker (IA correction)', () => {
       'the refresh button must POST so same-path upgrades clear resolver/version/failure caches',
     );
     assert.match(panelSrc, /["']binary["']\s+in\s+codexAvailability/);
-    assert.match(panelSrc, /CLI 来源/);
-    assert.match(panelSrc, /CLI source/);
+    assert.match(panelSrc, /runtime\.codexDetail\.cliSource/);
+    const enSrc = fs.readFileSync(path.join(repoRoot, 'i18n/en.ts'), 'utf8');
+    const zhSrc = fs.readFileSync(path.join(repoRoot, 'i18n/zh.ts'), 'utf8');
+    assert.match(zhSrc, /'runtime\.codexDetail\.cliSource':\s*'CLI 来源'/);
+    assert.match(enSrc, /'runtime\.codexDetail\.cliSource':\s*'CLI source'/);
   });
 });
 
@@ -284,8 +287,11 @@ describe('ProviderManager — Codex Account virtual card (IA correction)', () =>
     // Phase 6 IA correction copy fix: type=chatgpt/apiKey/amazonBedrock
     // is the LOGIN METHOD, not the plan. "类型" reads as plan to users.
     // Pin the rename so a future build can't silently revert it.
-    assert.match(mgrSrc, /label:\s*isZh\s*\?\s*['"]登录方式['"]/);
-    assert.match(mgrSrc, /['"]Login method['"]/);
+    const enSrc = fs.readFileSync(path.join(repoRoot, 'i18n/en.ts'), 'utf8');
+    const zhSrc = fs.readFileSync(path.join(repoRoot, 'i18n/zh.ts'), 'utf8');
+    assert.match(mgrSrc, /label:\s*t\(['"]provider\.mgr\.loginMethod['"]\)/);
+    assert.match(zhSrc, /'provider\.mgr\.loginMethod':\s*'登录方式'/);
+    assert.match(enSrc, /'provider\.mgr\.loginMethod':\s*'Login method'/);
     // The Codex card MUST NOT render `account.type` under a "类型" /
     // "Type" label — that was the confusing original.
     const codexCardBlock = mgrSrc.match(/codexAccount\?\.kind\s*===\s*['"]logged_in['"][\s\S]+?<\/ProviderCard>/);
@@ -340,8 +346,11 @@ describe('CodexQuotaWidget — primary + secondary windows (IA correction)', () 
     // Upstream only reports usedPercent + resetsAt — there is no
     // absolute token count. UI copy must reflect that or it implies
     // data the API doesn't actually return.
-    assert.match(src, /已用\s*\$\{pct\.toFixed\(0\)\}%/);
-    assert.match(src, /\$\{pct\.toFixed\(0\)\}%\s*used/);
+    const enSrc = fs.readFileSync(path.join(repoRoot, 'i18n/en.ts'), 'utf8');
+    const zhSrc = fs.readFileSync(path.join(repoRoot, 'i18n/zh.ts'), 'utf8');
+    assert.match(src, /provider\.codexQuota\.usedPercent/);
+    assert.match(zhSrc, /'provider\.codexQuota\.usedPercent':\s*'已用 \{pct\}%'/);
+    assert.match(enSrc, /'provider\.codexQuota\.usedPercent':\s*'\{pct\}% used'/);
     assert.doesNotMatch(src, /剩余\s*\d+\s*tokens?/);
     assert.doesNotMatch(src, /remaining\s*\d+\s*tokens?/i);
   });
@@ -356,9 +365,12 @@ describe('CodexQuotaWidget — primary + secondary windows (IA correction)', () 
     // Split: the gate variable, the warning copy, and the rendered
     // type label live in separate code regions. Pin them
     // independently rather than via one wide regex.
+    const enSrc = fs.readFileSync(path.join(repoRoot, 'i18n/en.ts'), 'utf8');
+    const zhSrc = fs.readFileSync(path.join(repoRoot, 'i18n/zh.ts'), 'utf8');
     assert.match(src, /isRateLimited\s*=\s*!!snapshot\.rateLimitReachedType/);
-    assert.match(src, /已触达配额上限/);
-    assert.match(src, /Rate limit reached/);
+    assert.match(src, /provider\.codexQuota\.rateLimitReached/);
+    assert.match(zhSrc, /'provider\.codexQuota\.rateLimitReached':\s*'已触达配额上限：'/);
+    assert.match(enSrc, /'provider\.codexQuota\.rateLimitReached':\s*'Rate limit reached: '/);
   });
 });
 
@@ -397,11 +409,16 @@ describe('Models page — Codex Account read-only block (IA correction)', () => 
       path.join(repoRoot, 'components/settings/CodexAccountModelsBlock.tsx'),
       'utf8',
     );
-    assert.match(blockSrc, /仅 Codex/);
-    assert.match(blockSrc, /Codex only/);
+    const enSrc = fs.readFileSync(path.join(repoRoot, 'i18n/en.ts'), 'utf8');
+    const zhSrc = fs.readFileSync(path.join(repoRoot, 'i18n/zh.ts'), 'utf8');
+    assert.match(blockSrc, /models\.codexAccount\.badge/);
+    assert.match(zhSrc, /'models\.codexAccount\.badge':\s*'仅 Codex'/);
+    assert.match(enSrc, /'models\.codexAccount\.badge':\s*'Codex only'/);
     // Regression guard against re-bolting the suffix.
     assert.doesNotMatch(blockSrc, /仅 Codex Runtime/);
     assert.doesNotMatch(blockSrc, /Codex Runtime only/);
+    assert.doesNotMatch(zhSrc, /'models\.codexAccount\.badge':\s*'仅 Codex Runtime'/);
+    assert.doesNotMatch(enSrc, /'models\.codexAccount\.badge':\s*'Codex Runtime only'/);
   });
 
   it('block is read-only (no enable/disable Switch, no edit display name)', () => {

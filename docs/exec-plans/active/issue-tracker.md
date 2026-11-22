@@ -14,7 +14,7 @@
 
 ## 〇、v0.56.x Stability / Trust 治理 issue（2026-06-19 纳入）
 
-GitHub milestone `v0.56.x Stability / Trust`（#1）+ P0/P1 label 体系已建（见 [.github/TRIAGE.md](../../../.github/TRIAGE.md)）。以下 7 个 issue 已用**当前源码**重新核验（不采信 issue 自述根因），逐条证据与修法见 [v0.56.x-stability-trust.md](v0.56.x-stability-trust.md) 的「2026-06-19 Claude Code 源码复核」表，此处只做看板索引、不重复分析。
+GitHub milestone `v0.56.x Stability / Trust`（#1）+ P0/P1 label 体系已建（见 [.github/TRIAGE.md](../../../.github/TRIAGE.md)）。以下 7 个 issue 已用**当前源码**重新核验（不采信 issue 自述根因），逐条证据与修法见 `v0.56.x-stability-trust.md`（已删除，见 git 历史）的「2026-06-19 Claude Code 源码复核」表，此处只做看板索引、不重复分析。
 
 | Issue | 复核 | label | Phase | 状态 |
 |-------|------|-------|-------|------|
@@ -97,7 +97,7 @@ GitHub milestone `v0.56.x Stability / Trust`（#1）+ P0/P1 label 体系已建�
   - `src/lib/openai-oauth.ts`: `exchangeCodeForTokens` 改为最多 3 次重试，对 403/408/429/5xx 和网络级错误（ECONNRESET / ETIMEDOUT / ENOTFOUND / ECONNREFUSED）做指数退避（1s/2s/4s）
   - 不重试 400/401/404/422 等真正的 auth/config 错误（避免无谓重试）
   - 错误消息改用 `JSON.stringify(j)` 替代 toString，根治 `[object Object]` 序列化 bug
-  - 对照参考项目 OpenCode（`资料/opencode-dev/codex.ts:580`）的 polling 容错语义：`if (status !== 403 && status !== 404) return failed`，OpenCode 也把 403 当可重试处理
+  - 对照参考项目 OpenCode（`codex.ts:580`）的 polling 容错语义：`if (status !== 403 && status !== 404) return failed`，OpenCode 也把 403 当可重试处理
   - 新增 `openai-oauth-retry.test.ts`（14 个单测）覆盖 retry 分类逻辑
 - **根因结论：**
   - 用户在不稳定网络（VPN / 跨境）+ OpenAI auth code 边缘节点 propagation 延迟时，单次请求容易撞 403
@@ -208,7 +208,7 @@ GitHub milestone `v0.56.x Stability / Trust`（#1）+ P0/P1 label 体系已建�
 
 #### B-031 GLM-5.3 显示已添加但模型管理仍停在 5.2
 - **状态:** 🟡 2026-08-23 候选修复 Code/Tests/Build 已完成；production 用户路径保持打开，直到受影响 0.67.1 用户 smoke
-- **重开计划:** [v0.67.1 生产反馈闭环 × 全平台签名与自动更新](v0.67.1-production-feedback-signing-auto-update-2026-08-23.md)
+- **重开计划:** v0.67.1 生产反馈闭环 × 全平台签名与自动更新
 - **现象:** v0.67.0 用户在 GLM (CN) 的 Add Model 看到 GLM-5.3“已添加”，但 Models 列表仍只有旧 GLM-5.2，composer 也没有可选的 5.3 行。
 - **2026-08-23 新 Signal:** 用户明确已升级 `0.67.1`；截图中 GLM-5.3 仍显示“已添加”，Models/模型选择仍找不到，旧 GLM-5-Turbo 继续存在。该证据打回真实 legacy upgrade path；不是“尚未升级”或“仅 UI 未刷新”可以解释。
 - **2026-08-24 候选修复:** 新增 catalog `legacyFingerprints` 与五态 presence（current enabled/hidden、legacy upgrade、identity conflict、missing）；从已发布 git 历史补齐真实 sonnet→`sonnet` 的 gen-0 `GLM-4.7`、后续 `GLM-5-Turbo`/`GLM-5.2`，以及 haiku→`haiku` 的 `GLM-4.5-Air` 槽位，删除无历史来源的 sonnet→`glm-5-turbo` 猜测。只有 upstream/display/capabilities 完整吻合且无用户所有权信号的历史系统行才 compare-and-swap 升级。upstream 占用或歧义 fail-closed，不 delete/disable/覆盖用户行。2026-08-24 修复轮 review 曾证明首版遗漏 gen-0；计划先回退为“部分”，补齐 git 证据、三行 fixture 与 conflict 行为断言后才恢复为 Code complete。
@@ -334,7 +334,7 @@ GitHub milestone `v0.56.x Stability / Trust`（#1）+ P0/P1 label 体系已建�
 - **下一步:** 合并后排查 runtime MCP 注入来源 vs 运行状态 UI 来源；若不修则降级文案，别让设置页假承诺"已启用"。
 
 #### B-024 Codex Runtime 终止后无法拉起新任务
-- **计划:** [codex-stop-recovery.md](codex-stop-recovery.md)
+- **计划:** `codex-stop-recovery.md`（已完成并删除，见 git 历史）
 - **状态:** 🔴 下版发布前阻断 / 需复现与修复（P1-P3 代码和单测已完成，但真实 Stop smoke 一直未完成；2026-08-25 新 Signal 使发布门禁重新打开）
 - **现象:** Codex Runtime 正在执行任务时点击 Stop / 终止后，同一会话后续无法发送新指令，像是进程或 session 挂死；用户需要新建会话、重启或等待未知时间才能继续。
 - **2026-08-25 新 Signal（用户原始路径）:** 在“Codex 渠道 → Codex 连接 → GPT-5.6”跑任务时点击一次“终止”，随后整个页面崩溃，刷新也不能恢复。用户紧接着重试未能复现，因此目前只有一次真实用户观察；App 版本、任务所处阶段、session id、`render-process-gone` / `child-process-gone` / utility exit 与错误栈尚未取得。**不得把单次未复现写成已修复，也不得在无日志时断言仍是旧 session lock 根因。**
@@ -364,7 +364,7 @@ GitHub milestone `v0.56.x Stability / Trust`（#1）+ P0/P1 label 体系已建�
 - **现象:** Kimi for Coding 能正常回复，侧栏标题却一直停在首条消息 fallback；同版本 GLM + Claude Code 可正常生成标题。
 - **根因:** Kimi Code `/coding/` 模型为 always-thinking；标题辅助调用却强制 `MAX_THINKING_TOKENS=0`，且 `CLAUDE_CODE_MAX_OUTPUT_TOKENS=16` 由 thinking 与 final 共享，8 秒 timeout 也短于现场普通回复约 10 秒。错误被自动命名的静默降级合同吞掉，所以 UI 只呈现 fallback。
 - **修复:** 按精确官方 endpoint（`api.kimi.com/coding/`）选择 provider-managed thinking profile：移除继承的 `MAX_THINKING_TOKENS`，输出预算 2048，后台 timeout 30 秒；不按可编辑 provider 名称或 Moonshot 品牌猜测。默认 provider 继续保持 16 tokens / 8 秒 / thinking disabled，用户可见标题始终钳到 50 grapheme。
-- **验证:** 标题相关定向测试 68/68；真实现有 Kimi 凭据 synthetic wire smoke 4043ms 生成可用标题；详见 [automatic-chat-titles.md](automatic-chat-titles.md) Smoke Ledger。旧 session 已消耗一次 attempt，不自动重试，避免重复外发首条消息。
+- **验证:** 标题相关定向测试 68/68；真实现有 Kimi 凭据 synthetic wire smoke 4043ms 生成可用标题；详见 automatic-chat-titles.md Smoke Ledger。旧 session 已消耗一次 attempt，不自动重试，避免重复外发首条消息。
 
 #### B-027 Codex Account 添加失败时点击无可见反馈
 - **状态:** 🟢 UI 修复、targeted guardrail、production UI 与可启动 arm64 `.app` 失败 smoke 均完成（2026-07-20）
@@ -457,7 +457,7 @@ GitHub milestone `v0.56.x Stability / Trust`（#1）+ P0/P1 label 体系已建�
 | [#459](https://github.com/op7418/CodePilot/issues/459) | 左侧 UI 采用 Codex 文案风格 | 📋 待评估 | |
 | [#458](https://github.com/op7418/CodePilot/issues/458) | 多 OpenAI OAuth 账号 | 📋 待评估 | |
 | [#463](https://github.com/op7418/CodePilot/issues/463) | 代码界面可编辑 + 语法高亮 | 🔵 设计如此 | Claude Code 理念：AI 写 100% 代码 |
-| [#246](https://github.com/op7418/CodePilot/issues/246) | 应用内自动更新 | 🚧 Mac 已发布；Windows unsigned updater 本地完成、待仓库保护/RC；Linux 延期 | [`v0.67.7` 发布证据](v0.67.1-production-feedback-signing-auto-update-2026-08-23.md) + [Windows 后续计划](windows-unsigned-native-auto-update-2026-08-26.md)。Mac signed updater 已 Shipped；Windows 按用户选择不申请 Microsoft/PFX 签名，GitHub single-trust-root、`latest.yml`/EXE blockmap、差分回退与发布门禁代码已通过本地测试；首版仍需手动 bootstrap，且必须先完成仓库保护和真实 RC-A→RC-B；Linux 保持手动 |
+| [#246](https://github.com/op7418/CodePilot/issues/246) | 应用内自动更新 | 🚧 Mac 已发布；Windows unsigned updater 本地完成、待仓库保护/RC；Linux 延期 | `v0.67.7` 发布证据 + Windows 后续计划。Mac signed updater 已 Shipped；Windows 按用户选择不申请 Microsoft/PFX 签名，GitHub single-trust-root、`latest.yml`/EXE blockmap、差分回退与发布门禁代码已通过本地测试；首版仍需手动 bootstrap，且必须先完成仓库保护和真实 RC-A→RC-B；Linux 保持手动 |
 | FR-auto-permission | 自动权限系统：Claude Code / Codex 已支持自动权限；后续 CodePilot 也应支持根据请求内容自动分析并完成审批 | 📋 待设计 | 用户要求记录：自动权限会自动分析内容并完成审批；需定义安全边界、可审计日志、可关闭开关 |
 | FR-edit-user-message | 对话编辑：用户停止对话后，可点击自己发出的消息，在“复制”旁增加笔形编辑按钮；编辑后直接再次发送 | 📋 待设计 | 目标是避免复制、粘贴到输入框再发送；需考虑消息重放、后续 assistant 消息处理、队列/停止状态 |
 | [#254](https://github.com/op7418/CodePilot/issues/254) | 会话列表待确认状态指示 | 📋 待实现 | |

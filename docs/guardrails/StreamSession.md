@@ -4,7 +4,6 @@
 
 > **Status: Active** — 2026-07-22 因同 Runtime 子 Agent 的 tool stream、历史配对与侧栏 transcript 接线完成首次 on-touch 激活。
 > **为什么先读**：聊天主路径——双入口（`/chat` page.tsx 首消息 + `/chat/[id]` ChatView.tsx 后续）必须**独立**管理 effort / thinking / runtime override 并各自向 `/api/chat` 传递。这是上一次 SDK 0.2.111 接入的重灾区，也是即将到来的 Phase 6 上下文可视化的主要触及点。
-> **已知关键文件**：`src/lib/claude-client.ts`、`src/lib/stream-session-manager.ts`、`src/hooks/useSSEStream.ts`、`src/app/chat/page.tsx`、`src/components/chat/ChatView.tsx`。
 
 ## 词汇表
 
@@ -48,6 +47,7 @@
 | 30 | 每个父聊天第一次 execution 必须先完成 Runtime binding，再 resolve Provider 或启动 child。bound 后请求 Runtime 只能与 owner 一致；legacy/unbound 的自动执行必须在任何 transcript、工具调用和费用发生前 fail closed | `/api/chat` + `thread-execution-binding.ts` |
 | 31 | 跨 Runtime 只能以新 session handoff 继续。目标首轮从 `runtime_handoff` fragment 消费同一份有边界、可截断、已脱敏事实；不得复制原生 SDK/thread ref，也不得把 handoff card 写成用户消息 | handoff API + `handoff-payload.ts` + `ChatView.tsx` |
 | 32 | v2 usage 中 missing cache/cost 是 unknown，不是 0。Native 必须核对 provider raw usage，不能接受 AI SDK 合成的缓存零；聚合与 UI 只有在每轮 denominator/source 完整时才显示 rate/金额 | `turn-usage.ts` + collector + usage UI |
+| 33 | Codex 父 turn 的 AbortController 登记必须跨 dev HMR 保持可查，显式 Stop 才能找到并 abort；模块重载不得让取消通道丢失 | `codex/turn-interrupt-registry.ts` |
 
 ## 保存失败的后台与客户端边界（2026-09-07）
 
@@ -58,36 +58,6 @@
 - client tee branch cancel 不能取消 server collector，也不能 await 需要另一分支结束的 tee cancel Promise。所有追加 SSE/关闭走 `SingleOwnerStreamWriter`。
 - 不修改 DB 空读的 fail-closed 事务语义，不声称修复初始空读或保证数据已落库。测试必须同时覆盖正常保存和首次/兜底保存失败，并验证失败时 cleanup/lock 释放。
 - 回归：`chat-collection-response.test.ts`（真实 onboarding 处理器的模型请求被测试 fetch 阻塞时 SSE 已关闭、finally 在 onComplete 前抛错仍有 owner）、`chat-collection-telemetry.test.ts`、`chat-save-warning.spec.ts`（中英文、双入口、失败后续聊同 session、长会话裁剪、离页恢复、正常首条跳转对照）。
-
-## 关键文件 + 责任
-
-| 文件 | 守哪条不变量 |
-|------|--------------|
-| `src/lib/claude-client.ts` | SDK streaming core + capProviderId 派生 |
-| `src/lib/stream-session-manager.ts` | snapshot 生命周期 |
-| `src/hooks/useSSEStream.ts` | SSE 事件解析 + rewind point 发出规则 |
-| `src/app/chat/page.tsx` | 首消息入口 |
-| `src/components/chat/ChatView.tsx` | 后续消息入口 |
-| `src/components/chat/MessageItem.tsx` | 历史 tool 配对；保持真实 tool id；子 Agent 分流 |
-| `src/lib/token-usage-display.ts` | 历史/跨 Runtime token usage 运行时 shape 验证；缺证据隐藏，不制造 0 |
-| `src/components/chat/StreamingMessage.tsx` | 流式子 Agent 卡片分流 |
-| `src/components/ai-elements/tool-actions-group.tsx` | 流式 reasoning 行与工具活动折叠展示 |
-| `src/lib/subagent-view.ts` | requested/effective/runtime/status 的诚实归一化 |
-| `src/lib/subagent-status.ts` | Claude task lifecycle → last-wins tool_result 状态标记；async launch 非终态 |
-| `src/lib/subagent-run-context.ts` | Codex durable run 快照与只读查询结果；system snapshot 不包含 prompt/result |
-| `src/lib/workspace-sidebar.ts` | agent-run tab 内存态与 transcript 不落 localStorage |
-| `src/lib/db.ts` | 三 Runtime 的 `subagent_runs` running→terminal、parent FK/cascade、terminal immutable；进程重启 recovery owner |
-| `src/lib/tools/agent.ts` | CodePilot managed child durable lifecycle |
-| `src/lib/claude-subagent-mcp.ts` | Claude managed child durable lifecycle |
-| `src/lib/claude-stream-diagnostics.ts` | Claude stream error 的可序列化诊断事实 |
-| `src/lib/codex/proxy/builtin-bridge.ts` | Codex managed child durable lifecycle |
-| `src/lib/codex/dynamic-tool-bridge.ts` | Codex Account app-server dynamic tool 的 per-thread 路由、managed local lifecycle 去重 |
-| `src/lib/codex/turn-interrupt-registry.ts` | Codex 父 turn AbortController 的 HMR-safe 所有权与显式 Stop 传播 |
-| `src/lib/codex/app-server-manager.ts` | Codex initialize capabilities；dynamic tools 所需 experimental API 声明 |
-| `src/lib/chat-collect-stream-response.ts` | assistant checkpoint 增量写入、owner gate、同 id 终态收口 |
-| `src/components/chat/PermissionPrompt.tsx` | child permission attribution 展示 |
-| `src/lib/tool-history-integrity.ts` | Stop/partial delivery 后的 call/result 完整性、legacy replay 修复与 orphan model-input 隔离 |
-| `src/lib/single-owner-stream-writer.ts` | server-produced Web Stream 的 cancel/exit/error 单终态所有权 |
 
 ## 改动检查表
 
@@ -147,6 +117,7 @@
 - 不要把 `JSON.parse(token_usage)` 的结果直接断言成 `TokenUsage`；数据库 JSON 可合法但缺字段，UI 会在 `toLocaleString()` 二次崩溃。缺真实输入/输出计数时隐藏统计。
 - 不要把 message insert、session timestamp 和回读拆成三个自动提交语句，再用 `as Message` 假定回读必有值；必须事务内验证真实 row，失败回滚并抛稳定产品错误。
 - 不要把 renderer fetch 的断连当成用户 Stop。页面切换会自然 abort 客户端请求，但 server collector 应继续完成并持久化；取消权必须来自显式 `/api/chat/interrupt`。
+- 排查 Codex Runtime 的 stop / abort 后卡死时先看四点（前两点常是同一根因：composer 的 `isStreaming` gate ≡ `snapshot.phase === 'active'`，见 `src/lib/stream-session-manager.ts`）：① Codex app-server 进程是否还活着（`src/lib/codex/app-server-manager.ts`）；② `streamSnapshot.phase` 是否停在 `active` 没翻到终态；③ `sendMessage` 是否被 `isStreaming` 队列 gate 卡住（GitHub #578）；④ interrupt 后 thread / turn 是否未关闭。
 - 不要假设 schema 模块初始化等于真正的进程启动；Next route/module duplication 会在活进程中重复执行初始化，restart recovery 必须由独立的进程 owner 守门。
 - 不要只把 parent sessionId 放进 child permission event；独立 subprocess 没有归属字段时，多个 child 的 Write/Bash 提示看起来完全相同。
 - 不要给活跃 child 使用固定墙钟 timeout；工具调用、assistant 消息等 SDK activity 都是仍在工作的事实。必须保留 hard cap，防止持续噪声让 run 永不终止。

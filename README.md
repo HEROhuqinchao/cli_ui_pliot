@@ -34,7 +34,7 @@
 
 | Platform | Download | Architecture |
 |---|---|---|
-| macOS | [Apple Silicon (.dmg)](https://github.com/op7418/CodePilot/releases/latest) · [Intel (.dmg)](https://github.com/op7418/CodePilot/releases/latest) | arm64 / x64 |
+| macOS (13+) | [Apple Silicon (.dmg)](https://github.com/op7418/CodePilot/releases/latest) · [Intel (.dmg)](https://github.com/op7418/CodePilot/releases/latest) | arm64 / x64 |
 | Windows | [Installer (.exe)](https://github.com/op7418/CodePilot/releases/latest) | x64 |
 | Linux | [AppImage / deb / rpm](https://github.com/op7418/CodePilot/releases/latest) | x64 / arm64 |
 
@@ -96,8 +96,8 @@ CodePilot started as a coding tool but has grown into a **general-purpose AI age
 
 | Prerequisite | Minimum version |
 |---|---|
-| Node.js | 18+ |
-| npm | 9+ (ships with Node 18) |
+| Node.js | 24+ |
+| npm | 11+ (ships with Node 24) |
 
 ```bash
 git clone https://github.com/op7418/CodePilot.git
@@ -201,8 +201,6 @@ Verify the installer against `SHA256SUMS.txt` from the same official Release fir
 - [FAQ](https://www.codepilot.sh/docs/faq) -- Common issues and solutions
 
 **Developer docs:**
-- [ARCHITECTURE.md](./ARCHITECTURE.md) -- Architecture, tech stack, directory structure, data flow
-- [docs/handover/](./docs/handover/) -- Design decisions and handover documents
 - [docs/exec-plans/](./docs/exec-plans/) -- Execution plans and tech debt tracker
 
 ---
